@@ -1,6 +1,6 @@
-# Replace api.yourdomain.com with your real backend subdomain.
+# Backend subdomain (DuckDNS). Must point (A record / DuckDNS "current ip") at the VPS.
 # Caddy fetches and renews HTTPS certs automatically (needed for PayPal webhooks).
-api.yourdomain.com {
+stemsplit-api.duckdns.org {
 	reverse_proxy backend:8000
 	request_body {
 		max_size 60MB
