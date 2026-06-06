@@ -13,9 +13,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
-# Persist uploads/outputs/jobs/licenses to a mounted volume
+# Persist uploads/outputs/jobs/licenses to a mounted volume.
+# The mount itself is provided by the platform (Railway Volume / compose volume),
+# not a Dockerfile VOLUME instruction (Railway rejects that).
 ENV DATA_DIR=/data
-VOLUME ["/data"]
 
 ENV PORT=8000
 EXPOSE 8000
