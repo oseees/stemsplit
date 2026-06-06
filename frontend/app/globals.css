@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0f;
+  --foreground: #f0f0ff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(139, 92, 246, 0.4); }
+  50% { box-shadow: 0 0 40px rgba(139, 92, 246, 0.8); }
+}
+
+@keyframes wave {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.3); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-float { animation: float 3s ease-in-out infinite; }
+
+.gradient-text {
+  background: linear-gradient(135deg, #a855f7, #3b82f6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.neon-border {
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.15), inset 0 0 15px rgba(139, 92, 246, 0.05);
+}
+
+.bar {
+  display: inline-block;
+  width: 4px;
+  background: linear-gradient(to top, #a855f7, #3b82f6);
+  border-radius: 2px;
+  animation: wave 1.2s ease-in-out infinite;
+}
+.bar:nth-child(2) { animation-delay: 0.1s; height: 20px; }
+.bar:nth-child(3) { animation-delay: 0.2s; height: 32px; }
+.bar:nth-child(4) { animation-delay: 0.3s; height: 24px; }
+.bar:nth-child(5) { animation-delay: 0.4s; height: 40px; }
+.bar:nth-child(6) { animation-delay: 0.3s; height: 28px; }
+.bar:nth-child(7) { animation-delay: 0.2s; height: 36px; }
+.bar:nth-child(8) { animation-delay: 0.1s; height: 20px; }

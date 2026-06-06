@@ -1,0 +1,8 @@
+# Replace api.yourdomain.com with your real backend subdomain.
+# Caddy fetches and renews HTTPS certs automatically (needed for PayPal webhooks).
+api.yourdomain.com {
+	reverse_proxy backend:8000
+	request_body {
+		max_size 60MB
+	}
+}

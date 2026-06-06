@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID}
+      - PAYPAL_SECRET=${PAYPAL_SECRET}
+      - PAYPAL_MODE=${PAYPAL_MODE:-sandbox}
+      - PRO_PRICE=${PRO_PRICE:-9.99}
+      - PRO_CURRENCY=${PRO_CURRENCY:-USD}
+    volumes:
+      - stemsplit_data:/data
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Browser talks to the backend directly; for local compose use localhost
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  stemsplit_data:
