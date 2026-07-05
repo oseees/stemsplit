@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from app import build, duration
+from app import MAX_CLIP_SECONDS, auto_clips, build, duration
 
 
 def main():
@@ -33,6 +33,21 @@ def main():
     build(beat, [], out2, vf_extra="hue=s=0", source=clip,
           clips=[(0.0, 1.0), (1.5, 2.5)])
     assert abs(duration(out2) - 10.0) < 0.5, f"bad clip duration: {duration(out2)}"
+
+    # auto clip picking: scene-cut video (red 3s | blue 3s | green 3s) and a no-cuts fallback
+    scenes = work / "scenes.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "color=red:s=320x240:d=3,format=yuv420p", "-f", "lavfi", "-i",
+                    "color=blue:s=320x240:d=3,format=yuv420p", "-f", "lavfi", "-i",
+                    "color=green:s=320x240:d=3,format=yuv420p",
+                    "-filter_complex", "concat=n=3", str(scenes)],
+                   check=True, capture_output=True)
+    for src in (scenes, clip):  # clip = testsrc, no scene changes -> fallback path
+        picked = auto_clips(src, 30.0)
+        assert len(picked) >= 3, picked
+        src_dur = duration(src)
+        for s, e in picked:
+            assert 0 <= s < e <= src_dur + 0.1 and e - s <= MAX_CLIP_SECONDS, (src, s, e)
     print("ok:", out, out2)
 
 

@@ -1,6 +1,7 @@
 # BeatVideo — upload a beat + images/video clips, get a YouTube-ready MP4.
 # The clips are stitched silently and the beat becomes the audio track.
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -46,6 +47,28 @@ def duration(path: Path) -> float:
 
 VF = (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
       f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps={FPS},format=yuv420p")
+
+
+def scene_starts(src: Path) -> list[float]:
+    """Timestamps where ffmpeg detects a scene change (the video's own cuts)."""
+    p = subprocess.run(
+        ["ffmpeg", "-i", str(src), "-vf", "select='gt(scene,0.3)',showinfo",
+         "-f", "null", "-"], capture_output=True, text=True)
+    return [float(t) for t in re.findall(r"pts_time:([0-9.]+)", p.stderr)]
+
+
+def auto_clips(src: Path, beat_dur: float) -> list[tuple[float, float]]:
+    """Pick short clips spread across the video, preferring its own scene cuts."""
+    src_dur = duration(src)
+    length = min(4.0, src_dur)  # ponytail: fixed 4s clips, stays under the 5s cap
+    n = max(3, min(12, round(beat_dur / length)))
+    starts = [t for t in scene_starts(src) if t <= src_dur - length]
+    if len(starts) >= n:  # sample n cuts evenly across the whole video
+        starts = sorted({starts[round(i * (len(starts) - 1) / (n - 1))] for i in range(n)})
+    else:  # few/no scene changes — fall back to evenly spaced starts
+        step = max(src_dur - length, 0) / max(n - 1, 1)
+        starts = [i * step for i in range(n)]
+    return [(round(s, 2), round(s + length, 2)) for s in starts]
 
 
 def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] = None,
@@ -99,8 +122,9 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
+    auto = clips == "auto"
     clip_list: list[tuple[float, float]] = []
-    if clips:
+    if clips and not auto:
         try:
             clip_list = [(float(c["start"]), float(c["end"])) for c in json.loads(clips)]
         except (ValueError, KeyError, TypeError, json.JSONDecodeError):
@@ -110,9 +134,9 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                 raise HTTPException(400, f"bad clip range {start}-{end}")
             if end - start > MAX_CLIP_SECONDS + 0.01:  # small tolerance for float rounding
                 raise HTTPException(400, f"clips are capped at {MAX_CLIP_SECONDS}s to stay copyright-safe")
-    if clip_list and source is None:
+    if (clip_list or auto) and source is None:
         raise HTTPException(400, "clips given but no source video")
-    if not clip_list and not media:
+    if not clip_list and not auto and not media:
         raise HTTPException(400, "upload media files or select clips from a source video")
 
     work = Path(tempfile.mkdtemp(prefix="beatvideo_"))
@@ -125,9 +149,11 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             p.write_bytes(await f.read())
             media_paths.append(p)
         source_path = None
-        if clip_list:
+        if clip_list or auto:
             source_path = work / ("src" + Path(source.filename).suffix.lower())
             source_path.write_bytes(await source.read())
+        if auto:
+            clip_list = auto_clips(source_path, duration(beat_path))
         out = work / "beat_video.mp4"
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list)
     except Exception:
@@ -164,7 +190,9 @@ onto the boxes below.</p>
   <label>Music video (clips are cut from this)<input type="file" id="source" accept="video/*"></label>
   <video id="player" controls playsinline style="width:100%;margin-top:10px;border-radius:8px;display:none"></video>
   <div id="pickrow" style="display:none;margin-top:10px">
-    <div class="row">
+    <label style="font-weight:400"><input type="checkbox" id="autoPick" checked>
+      ✨ Auto-pick clips for me (uses the video's own scene cuts)</label>
+    <div class="row" id="manualrow">
       <button class="mini" id="markIn">⬇ Mark start</button>
       <button class="mini" id="markOut">⬆ Mark end + add clip</button>
     </div>
@@ -205,12 +233,19 @@ document.querySelectorAll('.card').forEach(card => {
   });
 });
 
+const autoPick = $('autoPick'), manualrow = $('manualrow');
+function syncAuto() {
+  const manual = autoPick.checked ? 'none' : '';
+  manualrow.style.display = marks.style.display = cliplist.style.display = manual;
+}
+autoPick.onchange = syncAuto;
 source.onchange = () => {
   clips.length = 0; inPoint = null; renderClips();
   if (!source.files[0]) { player.style.display = pickrow.style.display = 'none'; return; }
   player.src = URL.createObjectURL(source.files[0]);
   player.style.display = 'block'; pickrow.style.display = 'block';
   marks.textContent = 'Play the video and mark clip start/end.';
+  syncAuto();
 };
 markIn.onclick = () => {
   inPoint = player.currentTime;
@@ -237,11 +272,13 @@ function renderClips() {
 }
 go.onclick = async () => {
   if (!beat.files[0]) { msg.textContent = 'Pick a beat.'; return; }
-  if (!clips.length && !media.files.length) { msg.textContent = 'Add at least one clip or picture.'; return; }
+  const auto = source.files[0] && autoPick.checked;
+  if (!auto && !clips.length && !media.files.length) { msg.textContent = 'Add at least one clip or picture.'; return; }
   const fd = new FormData();
   fd.append('beat', beat.files[0]);
   fd.append('filter', filterSel.value);
-  if (clips.length) { fd.append('source', source.files[0]); fd.append('clips', JSON.stringify(clips)); }
+  if (auto) { fd.append('source', source.files[0]); fd.append('clips', 'auto'); }
+  else if (clips.length) { fd.append('source', source.files[0]); fd.append('clips', JSON.stringify(clips)); }
   for (const f of media.files) fd.append('media', f);
   go.disabled = true; msg.textContent = 'Rendering… this can take a minute for long beats.';
   try {
