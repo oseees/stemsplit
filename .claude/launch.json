@@ -1,0 +1,41 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "poultrypal",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "cd 'poultrypal-ai' && exec .venv/bin/uvicorn app.main:app --port 8000"],
+      "port": 8000
+    },
+    {
+      "name": "mechanic-web",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "cd 'mechanic-app/frontend' && exec env CI=1 npx expo start --web --port 8081"],
+      "port": 8081
+    },
+    {
+      "name": "rentscout",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "cd 'rentscout-lagos' && exec python3 -m http.server 8003"],
+      "port": 8003
+    },
+    {
+      "name": "beatvideo",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "cd 'beat-video-maker' && exec ../backend/venv/bin/uvicorn app:app --port 8004"],
+      "port": 8004
+    },
+    {
+      "name": "ytdl",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "cd 'yt-downloader' && exec python3 app.py"],
+      "port": 8005
+    },
+    {
+      "name": "salespal",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "cd 'sales-tracker/backend' && exec .venv/bin/uvicorn main:app --port 8002"],
+      "port": 8002
+    }
+  ]
+}
