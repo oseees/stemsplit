@@ -52,7 +52,7 @@ VF = (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
 def scene_starts(src: Path) -> list[float]:
     """Timestamps where ffmpeg detects a scene change (the video's own cuts)."""
     p = subprocess.run(
-        ["ffmpeg", "-i", str(src), "-vf", "select='gt(scene,0.3)',showinfo",
+        ["ffmpeg", "-i", str(src), "-an", "-vf", "select='gt(scene,0.3)',showinfo",
          "-f", "null", "-"], capture_output=True, text=True)
     return [float(t) for t in re.findall(r"pts_time:([0-9.]+)", p.stderr)]
 
@@ -80,8 +80,9 @@ def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] =
     if start is not None:
         pre += ["-ss", str(start), "-t", str(length)]
     vf = VF + ("," + vf_extra if vf_extra else "")
+    # ultrafast/crf23: YouTube re-encodes uploads anyway, so spend nothing on finesse
     run(["ffmpeg", "-y", *pre, "-i", str(src), "-an", "-vf", vf,
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(dst)])
+         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", str(dst)])
 
 
 def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
