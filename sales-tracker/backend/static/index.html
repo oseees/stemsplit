@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <title>SalesPal</title>
+  <meta name="robots" content="noindex" />
+  <link rel="manifest" href="/app/manifest.webmanifest" />
+  <link rel="icon" href="/icons/favicon-64.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="SalesPal" />
+  <script>
+    // Theme: explicit choice in localStorage.salespal_theme ('dark'|'light'),
+    // otherwise follow the system. Runs before first paint to avoid a flash.
+    (function () {
+      function pref() { try { return localStorage.getItem("salespal_theme"); } catch (e) { return null; } }
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      function apply() {
+        var p = pref();
+        var dark = p === "dark" || (!p && mq.matches);
+        document.documentElement.classList.toggle("dark", dark);
+        var b = document.getElementById("themeToggle");
+        if (b) b.textContent = dark ? "☀️ Light mode" : "🌙 Dark mode";
+      }
+      window.salespalToggleTheme = function () {
+        var dark = document.documentElement.classList.contains("dark");
+        try { localStorage.setItem("salespal_theme", dark ? "light" : "dark"); } catch (e) {}
+        var sheet = document.getElementById("menuSheet");
+        if (sheet) sheet.classList.remove("open");
+        apply();
+        // The pre-login landing is drawn by JS; redraw so its label updates.
+        if (document.body && document.body.classList.contains("signed-out") && window.renderLanding) window.renderLanding();
+      };
+      if (mq.addEventListener) mq.addEventListener("change", function () { if (!pref()) apply(); });
+      window.addEventListener("DOMContentLoaded", function () {
+        var b = document.getElementById("themeToggle");
+        if (b) b.onclick = window.salespalToggleTheme;
+        apply(); // set the button label now that it exists
+      });
+      apply();
+    })();
+  </script>
+  <script>
+    // First-touch acquisition: remember the referrer/utm of the very first
+    // page seen (shared with the landing via same-origin localStorage) so we
+    // can attribute a later signup to search/social/etc. Only set once.
+    (function () {
+      try {
+        var K = "salespal_attr";
+        if (!localStorage.getItem(K)) {
+          var p = new URLSearchParams(location.search);
+          localStorage.setItem(K, JSON.stringify({
+            referrer: document.referrer || "", utm_source: p.get("utm_source") || "", ts: Date.now()
+          }));
+        }
+      } catch (e) {}
+      window.salespalAttr = function () {
+        try { return JSON.parse(localStorage.getItem("salespal_attr") || "{}"); } catch (e) { return {}; }
+      };
+    })();
+  </script>
+  <link rel="stylesheet" href="/app/styles.css" />
+</head>
+<!-- Start signed-out so anonymous visitors never glimpse the dashboard chrome;
+     bootstrap() removes the class only after the session is confirmed. -->
+<body class="signed-out">
+  <!-- App bar -->
+  <header class="appbar">
+    <div class="appbar-row">
+      <div>
+        <div class="appbar-title" id="bizName">SalesPal</div>
+        <div class="appbar-sub" id="periodLabel">Last 30 days</div>
+      </div>
+      <button class="icon-btn" id="menuBtn" aria-label="Menu">&#9776;</button>
+    </div>
+    <div class="period-tabs" id="periodTabs">
+      <button data-period="week">Week</button>
+      <button data-period="month" class="active">Month</button>
+      <button data-period="year">Year</button>
+      <button data-period="all">All</button>
+    </div>
+  </header>
+
+  <!-- Slide-down menu -->
+  <div class="menu-sheet" id="menuSheet">
+    <button data-nav="products">📦 Products</button>
+    <button data-nav="orders">🛒 Orders</button>
+    <button data-nav="suppliers">🚚 Suppliers</button>
+    <button data-nav="customers">👥 Customers</button>
+    <button data-nav="settings">⚙️ Business settings</button>
+    <button data-nav="admin" id="adminNav" style="display:none">📊 Admin</button>
+    <button id="viewToggle">🖥️ Switch to Desktop view</button>
+    <button id="themeToggle">🌙 Dark mode</button>
+    <button id="installBtn" style="display:none">📲 Install app</button>
+  </div>
+
+  <main id="app"><div class="skeleton" aria-busy="true"><span class="sr-only">Loading</span>
+    <div class="sk-grid"><div class="sk sk-kpi tall"></div><div class="sk sk-kpi"></div>
+      <div class="sk sk-kpi"></div><div class="sk sk-kpi"></div></div>
+    <div class="sk sk-card"></div><div class="sk sk-card"></div></div></main>
+
+  <!-- Bottom navigation -->
+  <nav class="bottom-nav">
+    <button data-nav="home" class="active"><span>🏠</span>Home</button>
+    <button data-nav="sales"><span>🧾</span>Sales</button>
+    <button data-nav="new" class="fab"><span>＋</span></button>
+    <button data-nav="money"><span>💸</span>Expenses</button>
+    <button data-nav="insights"><span>💡</span>Insights</button>
+  </nav>
+
+  <!-- Modal host -->
+  <div class="modal-host" id="modalHost"></div>
+  <div class="toast" id="toast"></div>
+
+  <!-- Keep the fixed bottom nav pinned to the VISIBLE bottom of the screen.
+       position:fixed alone anchors to the layout viewport, so on phones the nav
+       hides behind the address bar or floats up as the bar animates. We measure
+       the Visual Viewport and translate the nav to the true visible bottom on
+       every resize AND scroll frame. Because it's a fixed element it can never
+       be clipped out of existence — worst case it nudges a frame, never
+       vanishes. Runs on class changes too (signed-out → signed-in, view toggle). -->
+  <script>
+    (function () {
+      var vv = window.visualViewport;
+      if (!vv) return; // no VisualViewport → the base bottom:0 is the best we can do
+      var nav = null, raf = 0;
+      function update() {
+        raf = 0;
+        nav = nav || document.querySelector(".bottom-nav");
+        if (!nav) return;
+        var c = document.body.classList;
+        // Only the mobile signed-in nav is a bottom bar; desktop uses a fixed
+        // left sidebar and the landing/auth pages scroll normally.
+        if (c.contains("desktop") || c.contains("signed-out")) { nav.style.transform = ""; return; }
+        // Shift the nav from the layout-viewport bottom up to the visual-viewport
+        // bottom: 0 when the address bar is hidden, negative while the bar or the
+        // on-screen keyboard covers the bottom.
+        var offset = (vv.offsetTop + vv.height) - document.documentElement.clientHeight;
+        nav.style.transform = "translateY(" + Math.round(offset) + "px)";
+      }
+      function schedule() { if (!raf) raf = requestAnimationFrame(update); }
+      vv.addEventListener("resize", schedule);
+      vv.addEventListener("scroll", schedule);
+      window.addEventListener("resize", schedule);
+      window.addEventListener("orientationchange", function () { setTimeout(update, 300); });
+      window.addEventListener("DOMContentLoaded", update);
+      // Re-pin whenever the body class flips (login/logout, desktop/mobile view).
+      try { new MutationObserver(update).observe(document.body, { attributes: true, attributeFilter: ["class"] }); } catch (e) {}
+      update();
+    })();
+  </script>
+
+  <!-- View mode: mobile (phone column) vs desktop (sidebar + wide). Default is
+       automatic by screen width; the toggle stores an explicit override. -->
+  <script>
+    (function () {
+      function pref() { try { return localStorage.getItem("salespal_view"); } catch (e) { return null; } }
+      function applyView() {
+        var m = pref();
+        var desk = m === "desktop" || (m !== "mobile" && window.innerWidth >= 900);
+        document.body.classList.toggle("desktop", desk);
+        var b = document.getElementById("viewToggle");
+        if (b) b.textContent = desk ? "📱 Switch to Mobile view" : "🖥️ Switch to Desktop view";
+      }
+      window.salespalToggleView = function () {
+        var desk = document.body.classList.contains("desktop");
+        try { localStorage.setItem("salespal_view", desk ? "mobile" : "desktop"); } catch (e) {}
+        var sheet = document.getElementById("menuSheet");
+        if (sheet) sheet.classList.remove("open");
+        applyView();
+        // The landing is drawn by JS, so redraw it to pick up the new layout.
+        if (document.body.classList.contains("signed-out") && window.renderLanding) window.renderLanding();
+      };
+      var tgl = document.getElementById("viewToggle");
+      if (tgl) tgl.onclick = window.salespalToggleView;
+      // Auto-follow screen size only while there's no explicit preference.
+      window.addEventListener("resize", function () { if (!pref()) applyView(); });
+      applyView();
+    })();
+  </script>
+  <script src="/app/app.js"></script>
+  <script>
+    // Register service worker (offline + installable)
+    if ("serviceWorker" in navigator) {
+      // If a page is already controlled, auto-reload once when a new SW takes
+      // over so code updates apply without manual cache clearing. (Skipped on
+      // first visit — no controller yet — so signup isn't interrupted.)
+      if (navigator.serviceWorker.controller) {
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
+      }
+      // updateViaCache:none → the browser always revalidates sw.js, so a new
+      // deploy (bumped CACHE) is detected on the next open and auto-reloads once.
+      window.addEventListener("load", () =>
+        navigator.serviceWorker.register("/app/sw.js", { updateViaCache: "none" }).catch(() => {}));
+    }
+    // Install affordance: menu button + a one-tap API used by the post-login
+    // prompt in app.js (maybePromptInstall).
+    (function () {
+      const btn = document.getElementById("installBtn");
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      const installed = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+      let deferred = null;
+      // "native" = Chrome's prompt is captured (true one-click), "ios" = Safari
+      // needs the Share-sheet steps, "installed" = already on the home screen.
+      window.salespalInstallState = function () {
+        let flag = null;
+        try { flag = localStorage.getItem("salespal_installed"); } catch (e) {}
+        if (installed || flag) return "installed";
+        if (deferred) return "native";
+        if (isIOS) return "ios";
+        return "none";
+      };
+      window.salespalInstall = async function () {
+        if (!deferred) return false;
+        deferred.prompt();
+        const choice = await deferred.userChoice;
+        deferred = null;
+        if (btn) btn.style.display = "none";
+        return !!(choice && choice.outcome === "accepted");
+      };
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault(); deferred = e; if (btn) btn.style.display = "block";
+        // Chrome sometimes fires this after login completes — let the pending
+        // post-login prompt know it can show now.
+        if (window.salespalOnInstallReady) {
+          const f = window.salespalOnInstallReady; window.salespalOnInstallReady = null; f();
+        }
+      });
+      window.addEventListener("appinstalled", () => {
+        try { localStorage.setItem("salespal_installed", "1"); } catch (e) {}
+        deferred = null; if (btn) btn.style.display = "none";
+      });
+      if (isIOS && !installed && btn) btn.style.display = "block";
+      if (btn) btn.onclick = async () => {
+        document.getElementById("menuSheet").classList.remove("open");
+        if (deferred) {
+          await window.salespalInstall();
+        } else if (isIOS) {
+          const t = document.getElementById("toast");
+          t.textContent = 'Tap the Share icon, then "Add to Home Screen"';
+          t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 3500);
+        }
+      };
+    })();
+  </script>
+</body>
+</html>

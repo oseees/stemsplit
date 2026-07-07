@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "salespal",
+      "runtimeExecutable": "./.venv/bin/uvicorn",
+      "runtimeArgs": ["main:app", "--host", "0.0.0.0", "--port", "8000"],
+      "cwd": "backend",
+      "port": 8000
+    }
+  ]
+}

@@ -23,5 +23,9 @@ backend/jobs/
 backend/licenses.json
 backend/*.log
 
+# SalesPal databases (live customer data — never commit)
+sales-tracker/backups/
+sales-tracker/backend/data/
+
 # OS
 .DS_Store

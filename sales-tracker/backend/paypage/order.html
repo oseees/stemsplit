@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="robots" content="noindex" />
+  <title>Place an order</title>
+  <link rel="icon" href="/icons/favicon-64.png" />
+  <style>
+    :root {
+      --indigo: #4f46e5; --indigo-d: #4338ca; --ink: #0f172a; --muted: #64748b;
+      --line: #e2e8f0; --bg: #f1f5f9; --card: #ffffff; --green: #16a34a; --green-bg: #dcfce7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--ink);
+      min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+      padding: 24px 16px calc(120px + env(safe-area-inset-bottom));
+    }
+    .wrap { width: 100%; max-width: 460px; }
+    .brand { text-align: center; margin-bottom: 18px; }
+    .brand .logo { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 18px; color: var(--indigo); }
+    .brand .logo span { font-size: 22px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; box-shadow: 0 8px 30px rgba(15,23,42,.06); }
+    .biz { font-size: 22px; font-weight: 800; margin: 0 0 2px; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+    .sec-title { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin: 18px 0 8px; }
+    .prod { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .prod:last-child { border-bottom: none; }
+    .prod .info { flex: 1; min-width: 0; }
+    .prod .nm { font-weight: 700; font-size: 15px; }
+    .prod .meta { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .stepper { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
+    .step-btn {
+      width: 34px; height: 34px; border: 1px solid var(--line); background: #fff; color: var(--indigo);
+      font-size: 20px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .step-btn:first-child { border-radius: 9px 0 0 9px; }
+    .step-btn:last-child { border-radius: 0 9px 9px 0; }
+    .step-btn[disabled] { opacity: .4; cursor: default; }
+    .qty { width: 40px; text-align: center; font-weight: 700; font-size: 15px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); height: 34px; line-height: 34px; }
+    .field { margin-top: 12px; }
+    .field label { display: block; font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 5px; }
+    .field input, .field textarea {
+      width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px;
+      font-size: 16px; background: #fff; color: var(--ink); font-family: inherit;
+    }
+    .field textarea { min-height: 54px; resize: vertical; }
+    .bar {
+      position: fixed; left: 0; right: 0; bottom: 0; background: var(--card);
+      border-top: 1px solid var(--line); padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      display: flex; align-items: center; gap: 12px;
+    }
+    .bar .total { flex: 1; }
+    .bar .total .k { font-size: 12px; color: var(--muted); }
+    .bar .total .v { font-size: 20px; font-weight: 800; }
+    .btn {
+      border: none; border-radius: 12px; cursor: pointer; background: var(--indigo); color: #fff;
+      font-size: 16px; font-weight: 700; padding: 14px 20px; -webkit-tap-highlight-color: transparent;
+    }
+    .btn:hover { background: var(--indigo-d); }
+    .btn[disabled] { opacity: .5; cursor: default; }
+    .btn.full { display: block; width: 100%; margin-top: 16px; }
+    .center { text-align: center; }
+    .msg { color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .ok-badge {
+      display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px;
+      border-radius: 50%; background: var(--green-bg); color: var(--green); font-size: 34px; margin: 4px auto 10px;
+    }
+    .foot { text-align: center; color: var(--muted); font-size: 12px; margin-top: 20px; }
+    .foot a { color: var(--indigo); text-decoration: none; }
+    .spinner { width: 26px; height: 26px; border: 3px solid var(--line); border-top-color: var(--indigo); border-radius: 50%; margin: 30px auto; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><div class="logo"><span>🛒</span> SalesPal</div></div>
+    <div class="card" id="card"><div class="spinner"></div></div>
+    <div class="foot" id="foot">Powered by <a href="/" target="_blank">SalesPal</a></div>
+  </div>
+
+  <script>
+    var token = decodeURIComponent(location.pathname.replace(/^\/order\//, "").replace(/\/$/, ""));
+    var card = document.getElementById("card");
+    var SHOP = null;
+    var CART = {};  // product_id -> qty
+
+    function esc(s) {
+      return (s == null ? "" : String(s)).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+    function money(v) {
+      return (SHOP && SHOP.currency ? SHOP.currency : "₦") +
+        (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function fmtQty(n) { return Number(n) % 1 === 0 ? String(n) : Number(n).toFixed(2); }
+
+    function messageView(title, body) {
+      card.innerHTML = '<div class="center"><div class="biz" style="text-align:center">' +
+        esc(title) + '</div><p class="msg">' + esc(body) + '</p></div>';
+      var bar = document.getElementById("bar"); if (bar) bar.remove();
+    }
+
+    function cartTotal() {
+      var t = 0;
+      SHOP.products.forEach(function (p) { t += (CART[p.id] || 0) * p.price; });
+      return t;
+    }
+    function cartCount() {
+      var n = 0; for (var k in CART) n += CART[k] > 0 ? 1 : 0; return n;
+    }
+
+    function refreshTotals() {
+      var bar = document.getElementById("bar");
+      if (bar) {
+        bar.querySelector(".v").textContent = money(cartTotal());
+        var b = document.getElementById("placeBtn");
+        b.disabled = cartCount() === 0;
+        b.textContent = cartCount() === 0 ? "Add items" : "Review order";
+      }
+    }
+
+    function setQty(id, q, stock) {
+      q = Math.max(0, Math.min(q, stock));
+      CART[id] = q;
+      var el = document.getElementById("q_" + id);
+      if (el) el.textContent = fmtQty(q);
+      var minus = document.getElementById("minus_" + id);
+      var plus = document.getElementById("plus_" + id);
+      if (minus) minus.disabled = q <= 0;
+      if (plus) plus.disabled = q >= stock;
+      refreshTotals();
+    }
+
+    function shopView() {
+      var html = '<h1 class="biz">' + esc(SHOP.business_name) + '</h1>' +
+        '<p class="sub">Choose what you\'d like — you only see what\'s in stock.</p>' +
+        '<div class="sec-title">Available items</div>';
+      if (!SHOP.products.length) {
+        html += '<p class="msg">Nothing is in stock right now. Please check back soon.</p>';
+        card.innerHTML = html;
+        return;
+      }
+      SHOP.products.forEach(function (p) {
+        html +=
+          '<div class="prod"><div class="info"><div class="nm">' + esc(p.name) + '</div>' +
+          '<div class="meta">' + money(p.price) + ' · ' + fmtQty(p.stock) + ' available</div></div>' +
+          '<div class="stepper">' +
+          '<button class="step-btn" id="minus_' + p.id + '" data-id="' + p.id + '" data-d="-1" disabled>−</button>' +
+          '<span class="qty" id="q_' + p.id + '">0</span>' +
+          '<button class="step-btn" id="plus_' + p.id + '" data-id="' + p.id + '" data-d="1">+</button>' +
+          '</div></div>';
+      });
+      card.innerHTML = html;
+
+      Array.prototype.forEach.call(card.querySelectorAll(".step-btn"), function (btn) {
+        btn.onclick = function () {
+          var id = +btn.getAttribute("data-id");
+          var d = +btn.getAttribute("data-d");
+          var p = SHOP.products.find(function (x) { return x.id === id; });
+          setQty(id, (CART[id] || 0) + d, p.stock);
+        };
+      });
+
+      var bar = document.createElement("div");
+      bar.className = "bar"; bar.id = "bar";
+      bar.innerHTML = '<div class="total"><div class="k">Total</div><div class="v">' + money(0) + '</div></div>' +
+        '<button class="btn" id="placeBtn" disabled>Add items</button>';
+      document.body.appendChild(bar);
+      document.getElementById("placeBtn").onclick = checkoutView;
+    }
+
+    function checkoutView() {
+      var lines = SHOP.products.filter(function (p) { return (CART[p.id] || 0) > 0; });
+      var html = '<h1 class="biz">Your order</h1>' +
+        '<p class="sub">From ' + esc(SHOP.business_name) + '</p>';
+      lines.forEach(function (p) {
+        html += '<div class="prod"><div class="info"><div class="nm">' + esc(p.name) + '</div>' +
+          '<div class="meta">' + fmtQty(CART[p.id]) + ' × ' + money(p.price) + '</div></div>' +
+          '<div style="font-weight:700">' + money(CART[p.id] * p.price) + '</div></div>';
+      });
+      html +=
+        '<div class="field"><label>Your name *</label><input id="cName" placeholder="Name" autocomplete="name"></div>' +
+        '<div class="field"><label>Phone (so they can reach you)</label><input id="cPhone" inputmode="tel" placeholder="e.g. 0803…" autocomplete="tel"></div>' +
+        '<div class="field"><label>Note (optional)</label><textarea id="cNote" placeholder="Delivery address, preferences…"></textarea></div>' +
+        '<button class="btn full" id="submitBtn">Place order · ' + money(cartTotal()) + '</button>' +
+        '<button class="btn full" id="backBtn" style="background:#fff;color:var(--indigo);border:1.5px solid var(--indigo)">← Back to items</button>';
+      card.innerHTML = html;
+      var bar = document.getElementById("bar"); if (bar) bar.remove();
+      document.getElementById("backBtn").onclick = function () { shopView(); refreshTotals();
+        SHOP.products.forEach(function (p) { if (CART[p.id]) setQty(p.id, CART[p.id], p.stock); }); };
+      document.getElementById("submitBtn").onclick = submitOrder;
+    }
+
+    async function submitOrder() {
+      var btn = document.getElementById("submitBtn");
+      var name = document.getElementById("cName").value.trim();
+      if (!name) { document.getElementById("cName").focus(); return; }
+      var items = SHOP.products.filter(function (p) { return (CART[p.id] || 0) > 0; })
+        .map(function (p) { return { product_id: p.id, qty: CART[p.id] }; });
+      btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        var r = await fetch("/api/shop/" + encodeURIComponent(token) + "/order", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_name: name,
+            customer_phone: document.getElementById("cPhone").value.trim(),
+            note: document.getElementById("cNote").value.trim(),
+            items: items,
+          }),
+        });
+        var d = await r.json();
+        if (!r.ok) throw new Error(d.detail || "Please try again");
+        successView(name, d);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Try again";
+        alert(e.message || "Something went wrong. Please try again.");
+      }
+    }
+
+    function successView(name, d) {
+      card.innerHTML = '<div class="center"><div class="ok-badge">✓</div>' +
+        '<div class="biz" style="text-align:center">Order sent!</div>' +
+        '<p class="msg">Thanks ' + esc(name.split(" ")[0]) + '! <strong>' + esc(SHOP.business_name) +
+        '</strong> has your order' + (d && d.total ? ' for ' + money(d.total) : '') +
+        ' and will reach out to confirm.</p><p class="msg">You can close this page.</p></div>';
+      var bar = document.getElementById("bar"); if (bar) bar.remove();
+    }
+
+    async function load() {
+      try {
+        var r = await fetch("/api/shop/" + encodeURIComponent(token));
+        if (r.status === 404) { messageView("Shop not available", "This order link is invalid or the shop isn't taking orders right now."); return; }
+        SHOP = await r.json();
+        shopView();
+      } catch (e) {
+        messageView("Something went wrong", "Please refresh the page.");
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

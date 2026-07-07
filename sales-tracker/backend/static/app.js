@@ -1,0 +1,2336 @@
+// SalesPal frontend — vanilla JS SPA
+const state = { period: "month", view: "home", settings: { currency: "₦" } };
+const app = document.getElementById("app");
+
+// ---------- helpers ----------
+function _handle401(p, status) {
+  // Expired/absent session: drop to the auth screen — except for the auth
+  // endpoints themselves, whose 401s are real errors to show inline.
+  if (status === 401 && !p.startsWith("/api/auth/")) { requireAuthUI(); return true; }
+  return false;
+}
+async function _detail(r) { try { return (JSON.parse(await r.text())).detail || ""; } catch (e) { return ""; } }
+// Surface a clean, human message from an error response (FastAPI's `detail`),
+// never the raw JSON envelope.
+async function _err(r) { return new Error((await _detail(r)) || "Something went wrong"); }
+// Lightweight GET cache so re-tapping tabs, switching periods, or filtering
+// feels instant: serve the last response immediately (within TTL) and refresh
+// in the background; any write (api.send) clears the cache so changes show at
+// once. No polling in the app, so caching reads is safe.
+const _getCache = new Map();   // path -> { at, data }
+const _inflight = new Set();
+const GET_TTL = 15000;
+function apiCacheClear() { _getCache.clear(); }
+
+async function _rawGet(p, quiet) {
+  const r = await fetch(p);
+  if (quiet) {                 // background refresh: update cache, no UI side effects
+    if (!r.ok) return undefined;
+  } else {
+    if (_handle401(p, r.status)) throw new Error("__auth__");
+    if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
+    if (!r.ok) throw await _err(r);
+  }
+  const data = await r.json();
+  _getCache.set(p, { at: Date.now(), data });
+  return data;
+}
+function _bgRefresh(p) {
+  if (_inflight.has(p)) return;
+  _inflight.add(p);
+  _rawGet(p, true).catch(() => {}).finally(() => _inflight.delete(p));
+}
+
+const api = {
+  async get(p, opts) {
+    const hit = _getCache.get(p);
+    if (!(opts && opts.fresh) && hit && (Date.now() - hit.at) < GET_TTL) {
+      _bgRefresh(p);           // serve instantly, keep the cache warm for next time
+      return hit.data;
+    }
+    return _rawGet(p, false);
+  },
+  async send(p, method, body) {
+    const r = await fetch(p, { method, headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined });
+    if (_handle401(p, r.status)) throw new Error("__auth__");
+    if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
+    if (!r.ok) throw await _err(r);
+    const data = await r.json();
+    apiCacheClear();           // a write may change dashboards/lists → drop caches
+    return data;
+  },
+};
+const cur = () => state.settings.currency || "₦";
+const money = (v) => cur() + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = (s) => (s == null ? "" : String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])));
+const fmtDate = (d) => { try { return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return d; } };
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function openModal(html) {
+  const host = document.getElementById("modalHost");
+  host.innerHTML = `<div class="modal-backdrop"></div><div class="modal">
+    <div class="modal-handle"></div>${html}</div>`;
+  host.classList.add("open");
+  host.querySelector(".modal-backdrop").onclick = closeModal;
+}
+function closeModal() {
+  const host = document.getElementById("modalHost");
+  host.classList.remove("open"); host.innerHTML = "";
+}
+// Swap the contents of an already-open sheet without replaying the slide-up
+// (used to fill a skeleton once its data arrives); opens fresh if none is up.
+function updateModal(html) {
+  const host = document.getElementById("modalHost");
+  const modal = host.querySelector(".modal");
+  if (host.classList.contains("open") && modal) {
+    modal.innerHTML = `<div class="modal-handle"></div>${html}`;
+  } else {
+    openModal(html);
+  }
+}
+
+// Minimal markdown -> HTML for AI output
+function md(src) {
+  const lines = src.split("\n"); let html = "", inList = false;
+  const inline = (t) => esc(t)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`(.+?)`/g, "<code>$1</code>");
+  for (let raw of lines) {
+    const l = raw.trim();
+    if (l.startsWith("## ")) { if (inList) { html += "</ul>"; inList = false; } html += `<h2>${inline(l.slice(3))}</h2>`; }
+    else if (l.startsWith("- ") || /^\d+\.\s/.test(l)) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inline(l.replace(/^(-|\d+\.)\s/, ""))}</li>`;
+    } else if (l === "") { if (inList) { html += "</ul>"; inList = false; } }
+    else { if (inList) { html += "</ul>"; inList = false; } html += `<p>${inline(l)}</p>`; }
+  }
+  if (inList) html += "</ul>";
+  return html;
+}
+
+// ---------- auth ----------
+let _authMode = "signup"; // "signup" | "login"
+
+let _pricing = null; // cached public pricing for the landing page
+let _buyPlan = null; // plan a logged-out visitor chose to buy from the landing
+
+// Visitor picked a paid plan on the landing → quick signup, then straight to pay.
+function startBuy(plan) { _buyPlan = plan; setAuthMode("signup"); }
+// Free "Get started" path → make sure no pending paid plan lingers.
+function startFree() { _buyPlan = null; setAuthMode("signup"); }
+
+function requireAuthUI() {
+  document.body.classList.add("signed-out");
+  document.getElementById("menuSheet").classList.remove("open");
+  if (location.hash === "#login") { // deep link from the marketing page
+    history.replaceState({}, "", location.pathname);
+    setAuthMode("login");
+    return;
+  }
+  renderLanding();
+}
+
+// ---------- landing / pricing (pre-login) ----------
+async function renderLanding() {
+  _buyPlan = null; // returning to the landing cancels any in-progress purchase
+  if (!_pricing) {
+    try { _pricing = await api.get("/api/pricing"); } catch (e) { _pricing = null; }
+  }
+  const features = [
+    ["🧾", "Invoices in seconds", "Create &amp; share professional invoices on WhatsApp."],
+    ["📊", "Know your profit", "Track sales, expenses &amp; profit at a glance."],
+    ["💬", "Payment reminders", "Nudge customers on WhatsApp with one tap."],
+    ["📦", "Stock &amp; customers", "Manage products and customers in one place."],
+    ["🤖", "AI business advice", "Get weekly insights tailored to your numbers."],
+    ["🔒", "Private &amp; yours", "Your own account &amp; data — nobody else sees it."],
+  ];
+  app.innerHTML = `
+    <div class="landing">
+      <header class="land-hero compact">
+        <div class="land-top">
+          <div class="land-logo">SalesPal</div>
+          <div class="land-top-right">
+            <a class="land-view" onclick="salespalToggleTheme()">${document.documentElement.classList.contains("dark") ? "☀️ Light" : "🌙 Dark"}</a>
+            <a class="land-view" onclick="salespalToggleView()">${document.body.classList.contains("desktop") ? "📱 Mobile" : "🖥️ Desktop"}</a>
+            <a class="land-login" onclick="setAuthMode('login')">Log in</a>
+          </div>
+        </div>
+        <h1>Grow your business from your phone.</h1>
+        <p class="land-sub">Invoices, sales, profit &amp; AI advice — go Pro and unlock everything.</p>
+      </header>
+
+      <section class="land-section pricing-first">
+        <h2>Choose your plan</h2>
+        <p class="land-sub2">Unlimited invoices &amp; products, AI advice and weekly reports.</p>
+        ${pricingCardsHtml(_pricing, { buy: true })}
+        <div class="land-free">
+          <button class="btn ghost" onclick="startFree()">Prefer to try first? Start free →</button>
+          <div class="land-fine">Free includes core invoicing, sales &amp; expenses. Upgrade anytime — Pro simply lapses if you don't renew.</div>
+        </div>
+      </section>
+
+      <section class="land-section">
+        <h2>Everything you get</h2>
+        <div class="feat-grid">
+          ${features.map(([i, t, d]) => `
+            <div class="feat">
+              <div class="feat-i">${i}</div>
+              <div class="feat-t">${t}</div>
+              <div class="feat-d">${d}</div>
+            </div>`).join("")}
+        </div>
+      </section>
+
+      <footer class="land-foot">
+        <button class="btn" onclick="document.querySelector('.pricing-first').scrollIntoView({behavior:'smooth'})">See plans ↑</button>
+        <div class="land-foot-link">Already have an account? <a onclick="setAuthMode('login')">Log in</a></div>
+      </footer>
+    </div>`;
+}
+
+// Reusable pricing cards. opts: { ctaLabel, onClick(key) , payable }
+function pricingCardsHtml(pricing, opts) {
+  opts = opts || {};
+  const plans = (pricing && pricing.plans) || [
+    { key: "monthly", naira: "₦3,000", per: "/month", label: "Monthly" },
+    { key: "yearly", naira: "₦30,000", per: "/year", label: "Yearly", save: "2 months free" },
+    { key: "earlybird", naira: "₦20,000", per: "/year", label: "Early Bird", save: "Founding rate" },
+  ];
+  // Early Bird is the cheapest yearly rate, so it's the best value while slots
+  // remain; once it sells out, Yearly takes over the "Best value" highlight.
+  const eb = plans.find(p => p.key === "earlybird");
+  const ebAvailable = eb && eb.available !== false;
+  const bestKey = ebAvailable ? "earlybird" : "yearly";
+  return `<div class="price-grid">${plans.map(p => {
+    const soldOut = p.key === "earlybird" && p.available === false;
+    const isBest = p.key === bestKey && !soldOut;
+    const badge = soldOut ? `<span class="price-badge out">Sold out</span>`
+      : isBest ? `<span class="price-badge best">Best value</span>`
+      : (p.key === "earlybird" && typeof p.remaining === "number"
+          ? `<span class="price-badge">${p.remaining} left</span>` : "");
+    let save = p.save;
+    if (p.key === "earlybird" && !soldOut && typeof p.remaining === "number") {
+      save = `Founding rate · only ${p.remaining} left`;
+    }
+    const solid = isBest ? "" : "ghost";
+    const cta = soldOut
+      ? `<button class="btn ghost" disabled>Sold out</button>`
+      : opts.payable
+        ? `<button class="btn ${solid}" onclick="startCheckout('${p.key}')">Pay ${p.naira}</button>`
+        : opts.buy
+          ? `<button class="btn ${solid}" onclick="startBuy('${p.key}')">Get ${p.label}</button>`
+          : `<button class="btn ${solid}" onclick="${opts.onClick || ""}">${opts.ctaLabel || "Choose"}</button>`;
+    return `
+      <div class="price-card ${isBest ? "featured" : ""} ${soldOut ? "sold" : ""}">
+        ${badge}
+        <div class="price-name">${p.label}</div>
+        <div class="price-amt">${p.naira}<span>${p.per || ""}</span></div>
+        ${save ? `<div class="price-save">${save}</div>` : ""}
+        <ul class="price-feats">
+          <li>🤖 AI advice &amp; reports</li>
+          <li>🧾 Unlimited invoices</li>
+          <li>📦 Unlimited products</li>
+        </ul>
+        ${cta}
+      </div>`;
+  }).join("")}</div>`;
+}
+
+function setAuthMode(m) { _authMode = m; renderAuth(); }
+function toggleAuthMode() { setAuthMode(_authMode === "signup" ? "login" : "signup"); }
+
+function _buyPlanInfo() {
+  if (!_buyPlan) return null;
+  const plans = (_pricing && _pricing.plans) || [];
+  return plans.find(p => p.key === _buyPlan) || { label: "Pro", naira: "" };
+}
+
+function renderAuth() {
+  const mode = _authMode;                 // "signup" | "login" | "reset"
+  const signup = mode === "signup";
+  const reset = mode === "reset";
+  const buy = _buyPlanInfo();             // set when a paid plan was picked on the landing
+  const tagline = buy ? `You're getting <strong>${buy.label}</strong>`
+    : signup ? "Create your free account"
+    : reset ? "Reset your password" : "Welcome back";
+  const btnLabel = buy ? `Continue to payment →`
+    : signup ? "Create account" : reset ? "Set new password" : "Log in";
+  const passLabel = reset ? "New password" : "Password";
+  const passPh = signup || reset ? "At least 6 characters" : "Your password";
+  app.innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-logo">SalesPal</div>
+        <div class="auth-tagline">${tagline}</div>
+        ${buy ? `<div class="auth-buy">${buy.naira}${buy.per || ""} · secure payment by Paystack next</div>` : ""}
+        <form onsubmit="doAuth(event)">
+          ${signup ? `<div class="field"><label>Business name</label>
+            <input id="auBiz" placeholder="e.g. Ada's Store" autocomplete="organization"></div>` : ""}
+          <div class="field"><label>${signup || reset ? "Email" : "Email or username"}</label>
+            <input id="auEmail" type="${signup || reset ? "email" : "text"}" placeholder="${signup || reset ? "you@email.com" : "email, or attendant username"}" autocomplete="username" required></div>
+          ${reset ? `<div class="field"><label>Reset code</label>
+            <input id="auCode" placeholder="Paste the code you were given" required></div>` : ""}
+          <div class="field"><label>${passLabel}</label>
+            <input id="auPass" type="password" placeholder="${passPh}"
+              autocomplete="${signup || reset ? "new-password" : "current-password"}" required>
+            <label class="auth-show"><input type="checkbox" onchange="document.getElementById('auPass').type = this.checked ? 'text' : 'password'"> Show password</label>
+          </div>
+          <div class="auth-err" id="auErr"></div>
+          <button class="btn" type="submit" id="auBtn">${btnLabel}</button>
+        </form>
+        <div class="auth-switch">
+          ${signup ? `Already have an account? <a onclick="setAuthMode('login')">Log in</a>`
+            : reset ? `<a onclick="setAuthMode('login')">Back to log in</a>`
+            : `New here? <a onclick="setAuthMode('signup')">Create one</a>
+               <span class="auth-sep">·</span> <a onclick="setAuthMode('reset')">Forgot password?</a>`}
+        </div>
+        <div class="auth-switch"><a onclick="renderLanding()">← Back to home</a></div>
+      </div>
+    </div>`;
+}
+
+async function doAuth(ev) {
+  ev.preventDefault();
+  const errEl = document.getElementById("auErr");
+  const btn = document.getElementById("auBtn");
+  errEl.textContent = "";
+  const mode = _authMode;
+  const email = document.getElementById("auEmail").value.trim();
+  const password = document.getElementById("auPass").value;
+  btn.disabled = true;
+  btn.textContent = mode === "signup" ? "Creating…" : mode === "reset" ? "Saving…" : "Logging in…";
+  try {
+    let path, body;
+    if (mode === "signup") {
+      path = "/api/auth/register";
+      const attr = (window.salespalAttr && window.salespalAttr()) || {};
+      body = { email, password, business_name: document.getElementById("auBiz").value.trim(),
+               referrer: attr.referrer || "", utm_source: attr.utm_source || "" };
+    } else if (mode === "reset") {
+      path = "/api/auth/reset";
+      body = { email, token: document.getElementById("auCode").value.trim(), new_password: password };
+    } else {
+      path = "/api/auth/login";
+      body = { email, password };
+    }
+    const user = await api.send(path, "POST", body);
+    document.body.classList.remove("signed-out");
+    // Buying from the landing: account is created/logged in → go straight to pay.
+    if (_buyPlan && mode !== "reset") {
+      const plan = _buyPlan; _buyPlan = null;
+      await bootstrap(user);                 // load state (incl. plan) behind the scenes
+      btn.textContent = "Opening payment…";
+      await startCheckout(plan);             // redirects to Paystack; if it fails, falls through
+      return;                                // we're either redirecting or already in the app
+    }
+    await bootstrap(user);
+    setTimeout(maybePromptInstall, 800);     // one-tap Add-to-Home-Screen offer
+  } catch (e) {
+    errEl.textContent = e.message || "Something went wrong";
+    btn.disabled = false;
+    btn.textContent = mode === "signup" ? "Create account" : mode === "reset" ? "Set new password" : "Log in";
+  }
+}
+
+// ---------- one-tap "Add to Home Screen" (shown once, right after login) ----------
+function maybePromptInstall() {
+  if (document.body.classList.contains("signed-out")) return;
+  let done = null;
+  try { done = localStorage.getItem("salespal_install_prompt_done"); } catch (e) {}
+  if (done) return;
+  const st = window.salespalInstallState ? window.salespalInstallState() : "none";
+  if (st === "installed") return;
+  if (st === "none") {
+    // Chrome may not have offered the install prompt yet — show when it does.
+    window.salespalOnInstallReady = maybePromptInstall;
+    return;
+  }
+  try { localStorage.setItem("salespal_install_prompt_done", "1"); } catch (e) {}
+  const ios = st === "ios";
+  openModal(`
+    <div style="text-align:center">
+      <img src="/icons/icon-192.png" alt="" width="64" height="64" style="border-radius:16px" />
+      <h2 style="margin:12px 0 6px">Put SalesPal on your home screen</h2>
+      <p style="color:var(--muted);font-size:14px;margin:0 0 16px">
+        Opens in one tap like a normal app — full screen, works offline.</p>
+      ${ios
+        ? `<div class="card" style="text-align:left;font-size:14px;margin-bottom:12px">
+             1. Tap the <b>Share</b> button <span style="opacity:.7">(square with ↑)</span><br/>
+             2. Choose <b>&ldquo;Add to Home Screen&rdquo;</b></div>
+           <button class="btn" id="instOk">Got it</button>`
+        : `<button class="btn" id="instGo">📲 Add to Home Screen</button>`}
+      <button class="btn ghost" id="instLater" style="margin-top:10px">Maybe later</button>
+    </div>`);
+  const go = document.getElementById("instGo");
+  if (go) go.onclick = async () => {
+    closeModal();
+    const ok = await (window.salespalInstall ? window.salespalInstall() : false);
+    if (ok) toast("SalesPal added to your home screen 🎉");
+  };
+  const okBtn = document.getElementById("instOk");
+  if (okBtn) okBtn.onclick = closeModal;
+  const later = document.getElementById("instLater");
+  if (later) later.onclick = closeModal;
+}
+
+function isPro() { return !!(state.plan && state.plan.is_pro); }
+
+function showUpgrade(reason) {
+  closeModal();
+  const msg = reason && reason !== "__upgrade__" ? reason : "";
+  const canPay = !!(state.plan && state.plan.billing_enabled);
+  const pricing = state.plan && state.plan.pricing;
+  openModal(`
+    <h2>⭐ SalesPal Pro</h2>
+    ${msg ? `<p style="color:var(--muted);font-size:14px;margin:0 0 14px">${esc(msg)}</p>` : ""}
+    ${canPay
+      ? `${pricingCardsHtml(pricing, { payable: true })}
+         <p style="font-size:12px;color:var(--muted);text-align:center;margin:10px 0 0">Card, bank transfer or USSD · secured by Paystack</p>`
+      : `<div class="card"><ul class="pro-list">
+           <li>🤖 AI advice &amp; weekly reports</li>
+           <li>🧾 Unlimited invoices</li>
+           <li>📦 Unlimited products</li>
+         </ul></div>
+         <p style="font-size:13px;color:var(--muted);text-align:center;margin:0 0 12px">💳 In-app payment is coming soon — you'll be able to upgrade right here.</p>
+         <button class="btn" onclick="closeModal()">Got it</button>`}`);
+}
+
+async function startCheckout(plan) {
+  plan = plan || "monthly";
+  const btns = document.querySelectorAll(".price-card .btn");
+  btns.forEach(b => { b.disabled = true; });
+  try {
+    const r = await api.send("/api/billing/checkout", "POST", { plan });
+    window.location.href = r.authorization_url;
+  } catch (e) {
+    if (e.message === "__upgrade__" || e.message === "__auth__") return;
+    toast(e.message || "Couldn't start payment");
+    btns.forEach(b => { b.disabled = false; });
+  }
+}
+
+async function handlePaymentReturn() {
+  const params = new URLSearchParams(location.search);
+  if (!params.get("paid")) return;
+  const ref = params.get("reference") || params.get("trxref");
+  history.replaceState({}, "", location.pathname); // clean the URL
+  if (!ref) return;
+  try {
+    const info = await api.get("/api/billing/verify?reference=" + encodeURIComponent(ref));
+    state.plan = info;
+    if (info.paid) {
+      const until = info.plan_expires_at ? fmtDate(info.plan_expires_at) : "";
+      openModal(`<h2>🎉 You're on Pro!</h2>
+        <p style="font-size:15px;margin:0 0 14px">Thanks for upgrading. AI insights and unlimited invoices are unlocked${until ? ` until <strong>${until}</strong>` : ""}.</p>
+        <button class="btn" onclick="closeModal()">Start using Pro</button>`);
+      render();
+    } else {
+      toast("Payment wasn't completed");
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function bootstrap(user, prefetch) {
+  // The page loads with body.signed-out (dashboard chrome hidden) — reveal it
+  // only now that the server has confirmed a valid session.
+  document.body.classList.remove("signed-out");
+  state.me = user;
+  if (user.is_attendant) return bootstrapAttendant(user, prefetch);
+  document.getElementById("bizName").textContent = user.business_name || "SalesPal";
+  // Consume the requests init() already kicked off in parallel (fall back to a
+  // fresh fetch if bootstrap was called directly, e.g. right after login).
+  prefetch = prefetch || {};
+  state.settings = (await prefetch.settings) || await api.get("/api/settings").catch(() => state.settings);
+  state.plan = (await prefetch.plan) || await api.get("/api/plan").catch(() => state.plan);
+  state.pay = (await prefetch.pay) || await api.get("/api/pay/status").catch(() => state.pay);
+  state.orders = (await prefetch.orders) || await api.get("/api/orders/status").catch(() => state.orders);
+  const adminNav = document.getElementById("adminNav");
+  if (adminNav) adminNav.style.display = (state.plan && state.plan.is_owner) ? "block" : "none";
+  // keep this device's new-order alert subscription fresh (no prompt)
+  if (state.orders && state.orders.enabled) pushSubscribe(true);
+  await loadShops(await prefetch.shops);
+  state.view = "home";
+  document.querySelectorAll(".bottom-nav button").forEach(b =>
+    b.classList.toggle("active", b.dataset.nav === "home"));
+  render();
+}
+
+// ================= SHOP ATTENDANT (limited login) =========================
+// A stripped-down app for shop staff: record sales (with payment mode) and see
+// stock — no profit, insights, settings, or shop switching. The backend also
+// hard-enforces this (deny-by-default allowlist), so this is UX, not security.
+let _payMode = "cash";
+
+async function bootstrapAttendant(user, prefetch) {
+  document.body.classList.add("attendant");
+  state.settings = (prefetch && await prefetch.settings) || await api.get("/api/settings").catch(() => ({})) || {};
+  document.getElementById("bizName").textContent = user.business_name || "SalesPal";
+  const sub = document.getElementById("periodLabel");
+  if (sub) sub.textContent = `${user.shop_name || ""} · ${user.staff_name || "Attendant"}`;
+  const tabs = document.getElementById("periodTabs"); if (tabs) tabs.style.display = "none";
+  const bn = document.getElementById("bizName"); bn.onclick = null; bn.style.cursor = "default";
+  const mb = document.getElementById("menuBtn"); if (mb) mb.style.display = "none";
+  // Rebuild the bottom nav for the attendant's four actions + a quick logout.
+  const nav = document.querySelector(".bottom-nav");
+  nav.innerHTML = `
+    <button data-nav="home" class="active"><span>🏠</span>Home</button>
+    <button data-nav="sales"><span>🧾</span>Sales</button>
+    <button data-nav="new" class="fab"><span>＋</span></button>
+    <button data-nav="stock"><span>📦</span>Stock</button>
+    <button data-nav="logout"><span>🚪</span>Log out</button>`;
+  nav.querySelectorAll("button").forEach(b => {
+    b.onclick = () => {
+      if (b.dataset.nav === "new") return attendantSaleModal();
+      if (b.dataset.nav === "logout") return logout();
+      attendantSetView(b.dataset.nav);
+    };
+  });
+  state.view = "home";
+  renderAttendant();
+}
+
+function attendantSetView(v) {
+  if (v === "new") return attendantSaleModal();
+  if (v === "logout") return logout();
+  state.view = v;
+  document.querySelectorAll(".bottom-nav button").forEach(b =>
+    b.classList.toggle("active", b.dataset.nav === v));
+  renderAttendant();
+}
+
+async function renderAttendant() {
+  app.innerHTML = SKELETON;
+  try {
+    const r = ({ home: viewAttendantHome, sales: viewSales, stock: viewStock })[state.view] || viewAttendantHome;
+    await r();
+  } catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return;
+    app.innerHTML = `<div class="card"><div class="empty">⚠️<br>${esc(e.message)}</div></div>`;
+  }
+}
+
+async function viewAttendantHome() {
+  const invoices = await api.get("/api/invoices");
+  const today = new Date().toISOString().slice(0, 10);
+  const todays = invoices.filter(i => (i.date || "").slice(0, 10) === today);
+  const collected = todays.reduce((s, i) => s + (i.total - (i.balance || 0)), 0);
+  app.innerHTML = `
+    <div class="card" style="text-align:center">
+      <div style="font-size:13px;color:var(--muted)">${esc(state.me.shop_name || "")} · ${esc(state.me.staff_name || "Attendant")}</div>
+      <button class="btn" style="margin:14px 0 2px;font-size:17px;padding:16px" onclick="attendantSaleModal()">＋ Record a sale</button>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="label">Today's sales</div><div class="value">${todays.length}</div></div>
+      <div class="kpi"><div class="label">Collected today</div><div class="value">${money(collected)}</div></div>
+    </div>
+    <div class="card"><div class="section-title">Today's sales</div>
+      ${todays.length ? todays.map(i => `
+        <div class="list-row" onclick="attendantInvoice(${i.id})">
+          <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
+            <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
+          <div style="text-align:right"><div class="amount">${money(i.total)}</div>
+            <span class="badge ${i.status}">${i.status}</span></div>
+        </div>`).join("") : `<div class="empty">No sales yet today. Tap ＋ to record one.</div>`}
+    </div>`;
+}
+
+async function viewStock() {
+  const products = await api.get("/api/products");
+  app.innerHTML = `<div class="card"><div class="section-title">Stock</div>
+    ${products.length ? products.map(p => {
+      const low = p.low_stock_at > 0 && p.stock_qty <= p.low_stock_at;
+      return `<div class="list-row">
+        <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low</span>' : ""}</div>
+          <div class="meta">Price ${money(p.unit_price)}</div></div>
+        <div class="amount ${low ? "neg" : ""}">${(+p.stock_qty).toLocaleString()} left</div></div>`;
+    }).join("") : `<div class="empty"><div class="big">📦</div>No products yet</div>`}
+  </div>`;
+}
+
+async function attendantSaleModal() {
+  saleItems = [];
+  const products = await api.get("/api/products");
+  window._products = products;
+  if (!products.length) { toast("No products yet — ask the owner to add stock"); return; }
+  _payMode = "cash";
+  openModal(`
+    <h2>Record a sale</h2>
+    <div class="field"><label>Customer (optional)</label>
+      <input id="saleCustomer" placeholder="Name, or leave blank for walk-in"></div>
+    <div class="section-title">Items</div>
+    <div id="saleItems"></div>
+    <button class="btn outline btn-sm" style="margin-bottom:12px" onclick="addProductItem()">＋ Add item</button>
+    <div class="card" style="background:var(--tint)"><div class="list-row"><div class="main">Total</div>
+      <div class="amount" id="saleTotal">${money(0)}</div></div></div>
+    <div class="section-title">Payment</div>
+    <div class="seg" id="payMode">
+      <button data-mode="cash" class="active" onclick="setPayMode('cash')">💵 Cash</button>
+      <button data-mode="transfer" onclick="setPayMode('transfer')">🏦 Transfer</button>
+      <button data-mode="owing" onclick="setPayMode('owing')">🕓 Owing</button>
+    </div>
+    <button class="btn" style="margin-top:14px" onclick="attendantSaveSale()">Save sale</button>`);
+  addProductItem();
+}
+
+function setPayMode(m) {
+  _payMode = m;
+  document.querySelectorAll("#payMode button").forEach(b => b.classList.toggle("active", b.dataset.mode === m));
+}
+
+async function attendantSaveSale() {
+  const items = saleItems.filter(it => it.product_id && it.qty > 0);
+  if (!items.length) return toast("Add at least one item");
+  const customer_name = document.getElementById("saleCustomer").value.trim();
+  const owing = _payMode === "owing"; // no payment → no receipt to offer
+  let res;
+  try {
+    res = await api.send("/api/invoices", "POST", {
+      customer_name: customer_name || null,
+      // unit_cost is ignored server-side for attendants (refilled from product)
+      items: items.map(it => ({ product_id: it.product_id, description: it.description,
+        qty: it.qty, unit_price: it.unit_price, unit_cost: 0 })),
+    });
+  } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save"); return; }
+  // Payment mode: cash/transfer → record full payment with that method; owing → leave unpaid.
+  if (_payMode !== "owing") {
+    try { await api.send(`/api/invoices/${res.id}/payments`, "POST",
+      { amount: res.total, method: _payMode === "cash" ? "Cash" : "Transfer" }); } catch (e) { /* sale still saved */ }
+  }
+  closeModal(); toast(`Sale saved · ${res.invoice_no}`);
+  _payMode = "cash";
+  if (!owing) receiptOffer(res.id);
+  render();
+}
+
+async function attendantInvoice(id) {
+  openModal(`<div class="loading">Loading…</div>`);
+  let inv;
+  try { inv = await api.get(`/api/invoices/${id}`); }
+  catch (e) { if (e.message === "__auth__" || e.message === "__upgrade__") { closeModal(); return; } closeModal(); toast(e.message || "Couldn't load"); return; }
+  const items = (inv.items || []).map(it => `<div class="list-row">
+      <div style="flex:1;min-width:0"><div class="main">${esc(it.description)}</div>
+        <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
+      <div class="amount">${money(it.qty * it.unit_price)}</div></div>`).join("");
+  const owing = inv.balance > 0.01;
+  updateModal(`<h2>${esc(inv.customer_name || "Walk-in")}</h2>
+    <p style="font-size:13px;color:var(--muted);margin:-6px 0 12px">${inv.invoice_no} · ${fmtDate(inv.date)}</p>
+    ${items}
+    <div class="list-row" style="border-top:1px solid var(--line);margin-top:4px">
+      <div class="main"><strong>Total</strong></div><div class="amount"><strong>${money(inv.total)}</strong></div></div>
+    ${owing ? `<div class="list-row"><div class="main neg">Balance owing</div><div class="amount neg">${money(inv.balance)}</div></div>
+      <div class="section-title">Mark paid</div>
+      <div class="btn-row">
+        <button class="btn" onclick="attendantPay(${id},${inv.balance},'Cash')">💵 Cash</button>
+        <button class="btn secondary" onclick="attendantPay(${id},${inv.balance},'Transfer')">🏦 Transfer</button>
+      </div>`
+      : `<div style="margin:8px 0"><span class="badge paid">Paid</span></div>`}
+    <button class="btn outline" style="margin-top:14px" onclick="shareReceipt(${id},'png')">📤 Send receipt</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Close</button>`);
+}
+
+async function attendantPay(id, amount, method) {
+  try { await api.send(`/api/invoices/${id}/payments`, "POST", { amount, method }); }
+  catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't record"); return; }
+  closeModal(); toast(`Marked paid (${method}) ✓`); receiptOffer(id); render();
+}
+
+// ---------- shops (multi-shop switcher) ----------
+async function loadShops(prefetched) {
+  try {
+    const r = prefetched || await api.get("/api/shops");
+    if (!r) throw new Error("no shops");
+    state.shops = r.shops || [];
+    state.activeShop = r.active_shop_id || 0;
+    state.canAddShop = !!r.can_add;
+  } catch (e) { state.shops = []; state.activeShop = 0; state.canAddShop = false; }
+  updateShopBar();
+}
+
+function activeShopName() {
+  if (!state.activeShop) return "All shops";
+  const s = (state.shops || []).find(x => x.id === state.activeShop);
+  return s ? s.name : (state.settings.business_name || "My Shop");
+}
+
+function updateShopBar() {
+  const el = document.getElementById("bizName");
+  if (!el) return;
+  el.innerHTML = esc(activeShopName()) + ' <span class="shop-caret">▾</span>';
+  el.onclick = shopSwitcher;
+  el.style.cursor = "pointer";
+}
+
+function shopSwitcher() {
+  const shops = state.shops || [];
+  const rows = shops.map(s => `
+    <button class="shop-opt ${s.id === state.activeShop ? "active" : ""}" onclick="switchShop(${s.id})">
+      <span>🏪 ${esc(s.name)}</span>${s.id === state.activeShop ? '<span class="shop-check">✓</span>' : ""}
+    </button>`).join("");
+  const allOpt = shops.length > 1 ? `
+    <button class="shop-opt ${!state.activeShop ? "active" : ""}" onclick="switchShop(0)">
+      <span>📊 All shops (overview)</span>${!state.activeShop ? '<span class="shop-check">✓</span>' : ""}
+    </button>` : "";
+  openModal(`
+    <h2>Your shops</h2>
+    <div class="shop-list">${rows}${allOpt}</div>
+    <button class="btn" onclick="addShop()">➕ Add a shop${state.canAddShop ? "" : " (Pro)"}</button>`);
+}
+
+async function switchShop(id) {
+  try { await api.send("/api/shops/active", "POST", { shop_id: id }); }
+  catch (e) { if (e.message !== "__upgrade__") toast(e.message); return; }
+  state.activeShop = id;
+  closeModal(); updateShopBar(); render();
+}
+
+async function addShop() {
+  if (!state.canAddShop) { closeModal(); showUpgrade("Running multiple shops is a Pro feature — one login, all your businesses."); return; }
+  const name = prompt("Name your new shop (e.g. Second Branch):");
+  if (name === null) return;
+  try {
+    const r = await api.send("/api/shops", "POST", { name: (name || "").trim() });
+    await loadShops();
+    state.activeShop = r.id; updateShopBar();
+    closeModal(); render(); toast("Shop added");
+  } catch (e) { if (e.message !== "__upgrade__") toast(e.message); }
+}
+
+// New data always belongs to a specific shop; block creation in All-shops view.
+function requireShop() {
+  if (state.activeShop) return true;
+  toast("Pick a shop to add to");
+  shopSwitcher();
+  return false;
+}
+
+async function logout() {
+  try { await api.send("/api/auth/logout", "POST"); } catch (e) { /* ignore */ }
+  location.reload();
+}
+
+// ---------- navigation ----------
+function setView(v) {
+  if (state.me && state.me.is_attendant) return attendantSetView(v);
+  state.view = v;
+  document.querySelectorAll(".bottom-nav button").forEach(b =>
+    b.classList.toggle("active", b.dataset.nav === v));
+  document.getElementById("menuSheet").classList.remove("open");
+  render();
+}
+
+document.querySelectorAll(".bottom-nav button").forEach(b => {
+  b.onclick = () => { if (b.dataset.nav === "new") return newSaleModal(); setView(b.dataset.nav); };
+});
+document.getElementById("menuBtn").onclick = () =>
+  document.getElementById("menuSheet").classList.toggle("open");
+// Only nav buttons switch views; #viewToggle / #installBtn keep their own handlers.
+document.querySelectorAll(".menu-sheet button[data-nav]").forEach(b =>
+  b.onclick = () => setView(b.dataset.nav));
+
+document.querySelectorAll("#periodTabs button").forEach(b => {
+  b.onclick = () => {
+    state.period = b.dataset.period;
+    document.querySelectorAll("#periodTabs button").forEach(x => x.classList.toggle("active", x === b));
+    const labels = { week: "Last 7 days", month: "Last 30 days", year: "This year", all: "All time" };
+    document.getElementById("periodLabel").textContent = labels[state.period];
+    if (state.view === "home" || state.view === "insights") render();
+  };
+});
+
+// ---------- render router ----------
+// Shimmer placeholder shown while a view loads (replaces a bare "Loading…").
+const SKELETON = `<div class="skeleton" aria-busy="true"><span class="sr-only">Loading</span>
+  <div class="sk-grid"><div class="sk sk-kpi tall"></div><div class="sk sk-kpi"></div>
+    <div class="sk sk-kpi"></div><div class="sk sk-kpi"></div></div>
+  <div class="sk sk-card"></div><div class="sk sk-card"></div></div>`;
+
+async function render() {
+  if (state.me && state.me.is_attendant) return renderAttendant();
+  app.innerHTML = SKELETON;
+  try {
+    const r = ({ home: viewHome, sales: viewSales, money: viewMoney,
+      insights: viewInsights, products: viewProducts, customers: viewCustomers,
+      orders: viewOrders, suppliers: viewSuppliers, settings: viewSettings, admin: viewAdmin })[state.view] || viewHome;
+    await r();
+  } catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return; // overlay already shown
+    app.innerHTML = `<div class="card"><div class="empty">⚠️<br>${esc(e.message)}</div></div>`;
+  }
+}
+
+// ---------- ADMIN (owner-only usage dashboard) ----------
+async function viewAdmin() {
+  const s = await api.get("/api/admin/stats");
+  const stat = (label, val, sub) => `
+    <div class="kpi"><div class="label">${label}</div><div class="value">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+  const srcLabel = { search: "🔍 Search", social: "📱 Social", direct: "↗️ Direct",
+                     unknown: "• Unknown" };
+  const label = (k) => srcLabel[k] || ("🔗 " + k);
+  const totalSrc = (s.sources || []).reduce((a, x) => a + x.count, 0) || 1;
+  const srcRows = (s.sources || []).map(x => {
+    const pct = Math.round((x.count / totalSrc) * 100);
+    return `<div class="list-row">
+      <div><div class="main">${esc(label(x.source))}</div>
+        <div class="meta">${pct}% of signups</div></div>
+      <div class="amount">${x.count}</div>
+    </div>`;
+  }).join("") || `<div class="empty">No signups yet</div>`;
+  const rows = (s.recent || []).map(u => `
+    <div class="list-row">
+      <div><div class="main">${esc(u.business_name || "—")}</div>
+        <div class="meta">${esc(u.email)} · joined ${fmtDate(u.created_at)}${u.signup_source ? " · " + esc(label(u.signup_source)) : ""}</div></div>
+      <div style="text-align:right">
+        <span class="badge ${u.plan === "pro" ? "paid" : "unpaid"}">${u.plan}</span>
+        <div class="meta">${u.last_login_at ? "seen " + fmtDate(u.last_login_at) : "never"}</div></div>
+    </div>`).join("") || `<div class="empty">No accounts yet</div>`;
+  app.innerHTML = `
+    <div class="section-title">Accounts</div>
+    <div class="kpi-grid">
+      ${stat("Total accounts", s.total_accounts)}
+      ${stat("Have signed in", s.signed_in_accounts)}
+      ${stat("Pro (paying)", s.pro_accounts)}
+      ${stat("Active this week", s.active_7d, "logged in ≤7 days")}
+    </div>
+    <div class="kpi-grid">
+      ${stat("New signups (7d)", s.signups_7d)}
+      ${stat("New signups (30d)", s.signups_30d)}
+      ${stat("Total shops", s.total_shops)}
+      ${stat("Total invoices", s.total_invoices)}
+    </div>
+    <div class="card"><div class="section-title">Where signups come from</div>${srcRows}</div>
+    <div class="card"><div class="section-title">Recent signups</div>${rows}</div>
+    <div class="card"><div class="section-title">💾 Backup</div>
+      ${backupNudge(s.last_backup_at)}
+      <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Download a full copy of the database (every account, all data). Do this weekly and keep it somewhere safe — it's the only way to recover if the server's disk is lost.</p>
+      <a class="btn secondary" href="/api/admin/backup" download>⬇️ Download backup</a></div>`;
+}
+// Warning when the last backup is stale (>7 days) or was never taken.
+function backupNudge(at) {
+  const days = at ? Math.floor((Date.now() - new Date(at)) / 86400000) : null;
+  if (days !== null && days <= 7)
+    return `<p style="font-size:13px;margin:0 0 10px" class="pos">✅ Last backup: ${days === 0 ? "today" : days + " day" + (days > 1 ? "s" : "") + " ago"}</p>`;
+  return `<p style="font-size:13px;margin:0 0 10px" class="neg">⚠️ ${at ? `Last backup was ${days} days ago` : "No backup has ever been taken"} — download one now.</p>`;
+}
+
+// ---------- HOME / dashboard ----------
+async function viewHome() {
+  const [d, products, claims, orders] = await Promise.all([
+    api.get(`/api/dashboard?period=${state.period}`),
+    api.get("/api/products"),
+    (state.pay && state.pay.transfer_enabled) ? api.get("/api/pay/claims/pending").catch(() => []) : Promise.resolve([]),
+    (state.orders && state.orders.enabled) ? api.get("/api/orders/pending").catch(() => []) : Promise.resolve([]),
+  ]);
+  const netClass = d.net_profit >= 0 ? "pos" : "neg";
+  app.innerHTML = `
+    ${(claims && claims.length) ? `<div class="card alert" style="border:1.5px solid var(--accent, #4f46e5)">
+      <div class="section-title">⚡ ${claims.length} payment${claims.length > 1 ? "s" : ""} to confirm</div>
+      ${claims.map(c => `<div class="list-row" onclick="invoiceDetail(${c.invoice_id})">
+        <div><div class="main">${esc(c.invoice_no)}</div><div class="meta">Customer says they've transferred</div></div>
+        <div class="amount">${money(c.amount)}</div></div>`).join("")}
+    </div>` : ""}
+    ${(orders && orders.length) ? `<div class="card alert" style="border:1.5px solid var(--indigo)" onclick="setView('orders')">
+      <div class="section-title">🛒 ${orders.length} new order${orders.length > 1 ? "s" : ""} to review</div>
+      ${orders.map(o => `<div class="list-row" onclick='event.stopPropagation(); orderDetail(${attrJson(o)})'>
+        <div style="flex:1;min-width:0"><div class="main">${esc(o.customer_name || "Customer")}</div>
+          <div class="meta">${o.items.length} item${o.items.length > 1 ? "s" : ""} · ${fmtDate(o.created_at)}</div></div>
+        <div class="amount">${money(o.total)}</div></div>`).join("")}
+    </div>` : ""}
+    <div class="kpi-grid">
+      <div class="kpi primary">
+        <div class="label">Net profit</div>
+        <div class="value">${money(d.net_profit)}</div>
+        <div class="sub">${d.margin_pct}% margin · ${d.num_sales} sales</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Revenue</div>
+        <div class="value">${money(d.revenue)}</div>
+        <div class="sub">Avg sale ${money(d.avg_sale)}</div>
+      </div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="label">Cost of goods</div><div class="value">${money(d.cogs)}</div></div>
+      <div class="kpi"><div class="label">Expenses</div><div class="value">${money(d.expenses)}</div></div>
+      <div class="kpi"><div class="label">Collected</div><div class="value">${money(d.collected)}</div></div>
+      <div class="kpi"><div class="label">Outstanding</div>
+        <div class="value ${d.outstanding > 0 ? 'neg' : ''}">${money(d.outstanding)}</div>
+        <div class="sub">${d.unpaid_invoices} unpaid</div></div>
+    </div>
+    ${goalCardHtml(d)}
+    ${(d.low_stock && d.low_stock.length) ? `<div class="card alert" onclick="setView('products')">
+      <div class="section-title">⚠️ Low stock — time to restock</div>
+      ${d.low_stock.map(p => `<div class="list-row">
+        <div style="flex:1;min-width:0"><div class="main">${esc(p.name)}</div></div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+          <div class="amount neg">${p.stock_qty} left</div>
+          ${(p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'>📞 Supplier</button>` : ""}
+        </div></div>`).join("")}
+    </div>` : ""}
+    <div class="card">
+      <div class="card-head">
+        <div class="section-title" style="margin:0">📦 Stock levels</div>
+        <button class="add-btn" onclick="productModal()" aria-label="Add product">＋</button>
+      </div>
+      ${products.length ? products.slice().sort((a, b) => a.stock_qty - b.stock_qty).map(p => {
+        const low = p.low_stock_at > 0 && p.stock_qty <= p.low_stock_at;
+        return `<div class="list-row" onclick='productModal(${attrJson(p)})'>
+          <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low</span>' : ''}</div>
+            <div class="meta">${low ? 'Reorder soon' : 'In stock'}</div></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            ${(low && p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'>📞 Supplier</button>` : ""}
+            <div class="amount ${low ? 'neg' : ''}">${p.stock_qty}</div></div></div>`;
+      }).join("") : `<div class="empty">No products yet — tap ＋ to add one</div>`}
+    </div>
+    <div class="card">
+      <div class="section-title">Revenue & profit trend</div>
+      ${trendChart(d.trend, d.net_profit)}
+    </div>
+    <div class="card">
+      <div class="section-title">Top products</div>
+      ${d.top_products.length ? d.top_products.map(p => `
+        <div class="list-row">
+          <div><div class="main">${esc(p.description)}</div>
+            <div class="meta">${p.qty} sold · ${money(p.profit)} profit</div></div>
+          <div class="amount">${money(p.revenue)}</div>
+        </div>`).join("") : `<div class="empty">No sales yet</div>`}
+    </div>
+    <button class="btn" onclick="newSaleModal()">＋ Record a sale</button>`;
+}
+
+// ---------- Profit goal (per shop) ----------
+// The active shop's monthly goal, stashed at render so the edit modal can
+// prefill it (0 on the All-shops overview, where the card is read-only).
+let _currentGoal = 0;
+// Card on Home: progress toward this calendar month's profit goal. Tapping it
+// fetches AI tips on closing the gap; the ✎ button edits/removes the goal.
+// On the All-shops overview the goal is the combined total and read-only.
+function goalCardHtml(d) {
+  const g = d.goal;
+  if (!g || !g.target) {
+    _currentGoal = 0;
+    return `<div class="card" onclick="goalModal()">
+      <div class="section-title" style="margin:0">🎯 Set a monthly profit goal</div>
+      <p style="font-size:13px;color:var(--muted);margin:6px 0 0">See how close you are each day — and get tips to hit it.${state.activeShop ? "" : " Each shop has its own."}</p>
+    </div>`;
+  }
+  const combined = !!g.combined;
+  _currentGoal = combined ? 0 : g.target;
+  const pct = Math.max(0, Math.min(100, Math.round(g.month_profit / g.target * 100)));
+  const hit = g.month_profit >= g.target;
+  const left = Math.max(0, g.target - g.month_profit);
+  const monthName = new Date().toLocaleString("en", { month: "long" });
+  const title = combined ? `📊 ${monthName} goal · all shops` : `🎯 ${monthName} profit goal`;
+  const editBtn = combined ? "" : `<button class="add-btn" onclick="event.stopPropagation(); goalModal()" aria-label="Edit goal">✎</button>`;
+  return `<div class="card" onclick="goalTips()">
+    <div class="card-head">
+      <div class="section-title" style="margin:0">${title}</div>
+      ${editBtn}
+    </div>
+    <div class="goal-bar"><div class="goal-fill ${hit ? "hit" : ""}" style="width:${pct}%"></div></div>
+    <div class="goal-meta">
+      <span><strong>${money(g.month_profit)}</strong> of ${money(g.target)}</span>
+      <span class="${hit ? "pos" : ""}">${hit ? "🎉 Goal reached!" : `${pct}% · ${money(left)} to go`}</span>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:8px 0 0">${combined ? "Combined across your shops · open a shop to change its goal · " : ""}💡 Tap for tips to ${hit ? "finish even stronger" : "hit your goal"} ›</p>
+  </div>`;
+}
+function goalModal() {
+  // Goals live on a specific shop — from the All-shops overview, ask them to pick one.
+  if (!state.activeShop) { toast("Open a specific shop to set its goal"); shopSwitcher(); return; }
+  const cur = _currentGoal || 0;
+  openModal(`<h2>🎯 Monthly profit goal</h2>
+    <p style="font-size:13px;color:var(--muted);margin:-6px 0 14px">Net profit you're aiming for at <strong>${esc(activeShopName())}</strong> each month. Progress resets on the 1st.</p>
+    <div class="field"><label>Goal amount</label><input id="goalAmt" type="number" inputmode="decimal" value="${cur || ""}" placeholder="e.g. 100000"></div>
+    <button class="btn" onclick="saveGoal()">Save goal</button>
+    ${cur ? `<button class="btn ghost" style="margin-top:10px" onclick="saveGoal(0)">Remove goal</button>` : ""}`);
+}
+async function saveGoal(v) {
+  const amt = v !== undefined ? v : (parseFloat(document.getElementById("goalAmt").value) || 0);
+  if (amt < 0) return toast("Goal must be 0 or more");
+  try { await api.send("/api/goal", "PUT", { amount: amt }); }
+  catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't save goal"); return; }
+  closeModal(); toast(amt > 0 ? "Goal set — go get it! 🎯" : "Goal removed"); render();
+}
+async function goalTips(refresh) {
+  openModal(`<h2>💡 Hit your goal</h2><div class="loading">${refresh ? "Claude is refreshing your advice…" : "Loading your advice…"}</div>`);
+  try {
+    // fresh:true → always reflect what's saved (bypass the 15s GET cache); the
+    // backend serves the stored advice unless refresh regenerates it.
+    const r = await api.get("/api/insights/goal-tips" + (refresh ? "?refresh=1" : ""), { fresh: true });
+    const saved = r.saved_at ? `<div class="goal-meta" style="margin-top:12px">Saved ${fmtDate(r.saved_at)}</div>` : "";
+    updateModal(`<h2>💡 Hit your goal</h2><div class="md">${md(r.text)}</div>${saved}
+      <button class="btn" style="margin-top:14px" onclick="goalTips(true)">🔄 Generate new advice</button>
+      <button class="btn secondary" style="margin-top:10px" onclick="closeModal()">Close</button>`);
+  } catch (e) {
+    // 402 → showUpgrade already swapped in the upgrade modal; leave it up.
+    if (e.message === "__upgrade__" || e.message === "__auth__") return;
+    closeModal(); toast(e.message || "Couldn't load tips");
+  }
+}
+
+function trendChart(trend, netProfit = 0) {
+  if (!trend || !trend.length) return `<div class="empty">No data</div>`;
+  const profitColor = netProfit < 0 ? "#dc2626" : "#16a34a"; // red only on a real loss
+  const W = 480, H = 130, pad = 6;
+  const max = Math.max(1, ...trend.map(t => Math.max(t.revenue, t.profit)));
+  const min = Math.min(0, ...trend.map(t => t.profit));
+  const range = max - min || 1;
+  const x = (i) => pad + i * (W - 2 * pad) / Math.max(1, trend.length - 1);
+  const y = (v) => H - pad - (v - min) / range * (H - 2 * pad);
+  const line = (key, color) => {
+    const pts = trend.map((t, i) => `${x(i).toFixed(1)},${y(t[key]).toFixed(1)}`).join(" ");
+    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>`;
+  };
+  const zeroY = y(0);
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart" preserveAspectRatio="none">
+    <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="#e5e7eb" stroke-width="1"/>
+    ${line("revenue", "#4f46e5")}${line("profit", profitColor)}
+  </svg>
+  <div style="display:flex;gap:16px;font-size:12px;color:var(--muted);margin-top:6px">
+    <span style="color:#4f46e5">●</span> Revenue
+    <span style="color:${profitColor}">●</span> Profit${netProfit < 0 ? " (loss)" : ""}</div>`;
+}
+
+// ---------- SALES / invoices ----------
+let salesQuery = "", salesStatus = "all", salesSort = "newest";
+// ponytail: sorts the in-memory list — fine until a user has thousands of invoices, then sort server-side
+const SALES_SORTS = {
+  newest: (a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id,
+  oldest: (a, b) => (a.date || "").localeCompare(b.date || "") || a.id - b.id,
+  high: (a, b) => (b.total || 0) - (a.total || 0),
+  low: (a, b) => (a.total || 0) - (b.total || 0),
+};
+async function viewSales() {
+  window._invoices = await api.get("/api/invoices");
+  const tabs = ["all", "unpaid", "overdue", "paid"];
+  app.innerHTML = `
+    <button class="btn" onclick="newSaleModal()" style="margin-bottom:12px">＋ New sale / invoice</button>
+    <div class="field" style="margin-bottom:10px">
+      <input id="salesSearch" placeholder="🔍 Search customer or invoice #" value="${esc(salesQuery)}"
+        oninput="salesQuery=this.value;renderSalesList()"></div>
+    <div class="seg">
+      ${tabs.map(s => `<button data-st="${s}" class="${salesStatus === s ? 'active' : ''}"
+        onclick="setSalesStatus('${s}')">${s[0].toUpperCase() + s.slice(1)}</button>`).join("")}
+    </div>
+    <div class="card"><div class="card-head"><div class="section-title" style="margin:0">Invoices</div>
+      <select id="salesSort" onchange="salesSort=this.value;renderSalesList()" aria-label="Sort sales">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="high">Highest amount</option>
+        <option value="low">Lowest amount</option>
+      </select></div><div id="salesList"></div></div>`;
+  document.getElementById("salesSort").value = salesSort;
+  renderSalesList();
+}
+// Switch the status filter without touching the network — just re-filter the
+// invoices already in memory and update the active pill.
+function setSalesStatus(s) {
+  salesStatus = s;
+  document.querySelectorAll(".seg button[data-st]").forEach(b =>
+    b.classList.toggle("active", b.dataset.st === s));
+  renderSalesList();
+}
+function renderSalesList() {
+  const all = window._invoices || [];
+  const q = salesQuery.trim().toLowerCase();
+  const list = all.filter(i => {
+    if (salesStatus === "overdue" && !isOverdue(i)) return false;
+    if (salesStatus !== "all" && salesStatus !== "overdue" && i.status !== salesStatus) return false;
+    if (q && !((i.customer_name || "").toLowerCase().includes(q)
+      || (i.invoice_no || "").toLowerCase().includes(q))) return false;
+    return true;
+  }).sort(SALES_SORTS[salesSort] || SALES_SORTS.newest);
+  const host = document.getElementById("salesList");
+  if (!all.length) {
+    host.innerHTML = `<div class="empty"><div class="big">🧾</div>No sales yet.<br>Tap ＋ to record your first one.</div>`;
+    return;
+  }
+  host.innerHTML = list.length ? list.map(i => `
+    <div class="list-row" onclick="invoiceDetail(${i.id})">
+      <div><div class="main">${esc(i.customer_name || "Walk-in")}${!state.activeShop && i.shop_name ? ` <span class="shop-tag">${esc(i.shop_name)}</span>` : ""}</div>
+        <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}${isOverdue(i) ? ` · <span class="neg">overdue</span>` : ""}</div></div>
+      <div style="text-align:right">
+        <div class="amount">${money(i.total)}</div>
+        <span class="badge ${i.status}">${i.status}</span></div>
+    </div>`).join("") : `<div class="empty">No matching invoices</div>`;
+}
+
+async function invoiceDetail(id) {
+  if (state.me && state.me.is_attendant) return attendantInvoice(id);
+  // Show the sheet immediately with a skeleton so the tap feels instant, then
+  // fill it once the invoice loads (served from cache when seen recently).
+  openModal(`<div class="skeleton" aria-busy="true"><span class="sr-only">Loading</span>
+    <div class="sk sk-card" style="height:24px;width:55%;margin-bottom:14px"></div>
+    <div class="sk sk-card"></div><div class="sk sk-card"></div>
+    <div class="sk sk-card" style="height:44px"></div></div>`);
+  let inv;
+  try { inv = await api.get(`/api/invoices/${id}`); }
+  catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") { closeModal(); return; }
+    closeModal(); toast(e.message || "Couldn't load invoice"); return;
+  }
+  const items = inv.items.map(it => `
+    <div class="list-row"><div><div class="main">${esc(it.description)}</div>
+      <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
+      <div class="amount">${money(it.qty * it.unit_price)}</div></div>`).join("");
+  const pays = inv.payments.map(p => `
+    <div class="list-row"><div><div class="main">${money(p.amount)}</div>
+      <div class="meta">${fmtDate(p.date)}${p.method ? " · " + esc(p.method) : ""}</div></div></div>`).join("")
+    || `<div class="empty">No payments yet</div>`;
+  const overdue = isOverdue(inv);
+  const due = inv.due_date
+    ? ` · <span class="${overdue ? 'neg' : ''}">Due ${fmtDate(inv.due_date)}${overdue ? ' (overdue)' : ''}</span>`
+    : "";
+  updateModal(`
+    <h2>${inv.invoice_no} <span class="badge ${inv.status}">${inv.status}</span></h2>
+    <div class="meta" style="color:var(--muted);font-size:13px;margin-bottom:12px">
+      ${esc(inv.customer ? inv.customer.name : "Walk-in customer")} · ${fmtDate(inv.date)}${due}</div>
+    ${(inv.claims || []).map(cl => `
+      <div class="card" style="border:1.5px solid var(--accent, #4f46e5);background:var(--tint)">
+        <div style="font-weight:700;margin-bottom:4px">⚡ Customer says they've paid</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">They reported sending <strong>${money(cl.amount)}</strong> by bank transfer. Confirm once it shows in your account.</div>
+        <div class="btn-row">
+          <button class="btn success" onclick="confirmClaim(${id}, ${cl.id})">✓ Confirm received</button>
+          <button class="btn outline" onclick="dismissClaim(${id}, ${cl.id})">Not yet</button>
+        </div>
+      </div>`).join("")}
+    <div class="card">${items}
+      <div class="list-row"><div class="main">Total</div><div class="amount">${money(inv.total)}</div></div>
+      <div class="list-row"><div>Paid</div><div class="amount pos">${money(inv.paid)}</div></div>
+      <div class="list-row"><div>Balance</div><div class="amount ${inv.balance > 0 ? 'neg' : 'pos'}">${money(inv.balance)}</div></div>
+    </div>
+    <div class="card"><div class="section-title">Payments</div>${pays}</div>
+    ${inv.balance > 0.01 ? `<button class="btn success" style="margin-bottom:10px" onclick="markPaid(${id}, ${inv.balance})">✓ Mark as paid</button>` : ""}
+    ${inv.balance > 0.01 && state.pay && (state.pay.connected || state.pay.transfer_enabled) ? `<button class="btn" style="margin-bottom:10px" onclick='sharePaymentLink(${attrJson({ id: inv.id, invoice_no: inv.invoice_no, balance: inv.balance, pay_url: inv.pay_url, customer: inv.customer })})'>💳 Send payment link on WhatsApp</button>` : ""}
+    <div class="btn-row" style="margin-bottom:10px">
+      <button class="btn" onclick="shareInvoice(${id})">📤 Share</button>
+      <a class="btn secondary" href="/api/invoices/${id}/pdf" target="_blank">📄 PDF</a>
+    </div>
+    <div class="btn-row" style="margin-bottom:10px">
+      <button class="btn outline" onclick="shareInvoiceImage(${id},'png')">🖼️ PNG</button>
+      <button class="btn outline" onclick="shareInvoiceImage(${id},'jpg')">🖼️ JPG</button>
+      ${inv.paid > 0.01 ? `<button class="btn outline" onclick="receiptOffer(${id}, 'Send a receipt')">🧾 Receipt</button>` : ""}
+    </div>
+    ${inv.balance > 0.01
+      ? `<button class="btn whatsapp" style="margin-bottom:10px" onclick='whatsappReminder(${attrJson(inv)})'>💬 WhatsApp reminder</button>`
+      : ""}
+    ${inv.balance > 0.01 ? `<button class="btn secondary" style="margin-bottom:10px" onclick="paymentModal(${id}, ${inv.balance})">Record part payment</button>` : ""}
+    <button class="btn danger" onclick="if(confirm('Delete this invoice?')){deleteInvoice(${id})}">Delete</button>`);
+}
+
+async function deleteInvoice(id) {
+  await api.send(`/api/invoices/${id}`, "DELETE");
+  closeModal(); toast("Invoice deleted"); render();
+}
+
+// Safely embed JSON in a single-quoted HTML attribute (escape apostrophes).
+function attrJson(obj) { return JSON.stringify(obj).replace(/'/g, "&#39;"); }
+
+// Normalise a phone for wa.me (digits only; Nigerian local 0XXXXXXXXXX -> 234XXXXXXXXXX).
+function waNumber(phone) {
+  let d = (phone || "").replace(/\D/g, "");
+  if (d.length === 11 && d.startsWith("0")) d = "234" + d.slice(1);
+  return d;
+}
+
+// Save a phone onto a customer without clobbering their other fields.
+async function _saveCustomerPhone(custId, phone) {
+  try {
+    const all = await api.get("/api/customers");
+    const c = all.find(x => x.id === custId);
+    if (!c) return;
+    await api.send(`/api/customers/${custId}`, "PUT",
+      { name: c.name, email: c.email || null, phone, address: c.address || null });
+  } catch (e) { /* non-fatal */ }
+}
+
+// Resolve the customer's WhatsApp number: use the saved phone, otherwise ask
+// once and remember it on the customer. Returns a wa.me-ready number or null.
+function _waResolveNumber(cust) {
+  let phone = cust && cust.phone;
+  if (!phone) {
+    const typed = prompt(
+      `Enter ${cust && cust.name ? cust.name + "'s" : "the customer's"} WhatsApp number\n(e.g. 0803… or +234803…):`);
+    if (!typed || !typed.trim()) return null;
+    phone = typed.trim();
+    if (cust && cust.id) _saveCustomerPhone(cust.id, phone); // remember it (background)
+  }
+  const num = waNumber(phone);
+  if (!num) { toast("That doesn't look like a valid number"); return null; }
+  return num;
+}
+
+// Open WhatsApp to a number with a prefilled message. Called SYNCHRONOUSLY from
+// the tap (no await before it) so phones deep-link straight into the chat — a
+// delayed/scripted navigation to wa.me only loads its web "download" page.
+function _openWhatsApp(num, msg) {
+  window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank");
+}
+
+function whatsappReminder(inv) {
+  const num = _waResolveNumber(inv.customer);
+  if (!num) return;
+  const biz = (state.settings && state.settings.business_name) || "us";
+  const who = inv.customer && inv.customer.name ? inv.customer.name : "there";
+  const due = inv.due_date ? ` (due ${fmtDate(inv.due_date)})` : "";
+  const msg = `Hi ${who}, a friendly reminder from ${biz}: invoice ${inv.invoice_no} `
+    + `has an outstanding balance of ${money(inv.balance)}${due}. `
+    + `Kindly arrange payment when you can. Thank you!`
+    + (inv.pay_url ? `\n\nPay securely here: ${inv.pay_url}` : "");
+  _openWhatsApp(num, msg);
+}
+
+// Open the customer's WhatsApp chat so the owner can voice/video call them —
+// the call icons sit at the top of the chat. WhatsApp gives no web link that
+// auto-starts a call, so opening the chat in the tap gesture is the reliable
+// path (a delayed/scripted wa.me nav only loads the "download" page).
+function whatsappCall(cust) {
+  const num = _waResolveNumber(cust);
+  if (!num) return;
+  window.open(`https://wa.me/${num}`, "_blank");
+}
+
+// Build a tel: dial string — prefer the international +234… form when we can
+// normalise it, else dial the digits as entered (the OS dialer handles locals).
+function telNumber(phone) {
+  const intl = waNumber(phone);
+  if (intl && (intl.startsWith("234") || intl.length >= 12)) return "+" + intl;
+  return (phone || "").replace(/[^\d+]/g, "");
+}
+
+// Dial the customer directly with the phone's own dialer (a normal cellular
+// call, not WhatsApp). tel: doesn't unload the app — the OS intercepts it.
+function phoneCall(cust) {
+  const num = telNumber(cust && cust.phone);
+  if (!num) { toast("No number to call"); return; }
+  window.location.href = "tel:" + num;
+}
+
+function isOverdue(inv) {
+  return !!inv.due_date && inv.balance > 0.01
+    && inv.due_date < new Date().toISOString().slice(0, 10);
+}
+
+async function markPaid(id, balance) {
+  await api.send(`/api/invoices/${id}/payments`, "POST",
+    { amount: balance, method: "Marked paid" });
+  toast("Marked as paid ✓");
+  receiptOffer(id);
+  render();
+}
+
+async function shareInvoice(id) {
+  const pdfUrl = `${location.origin}/api/invoices/${id}/pdf`;
+  try {
+    const inv = await api.get(`/api/invoices/${id}`);
+    const biz = state.settings.business_name || "SalesPal";
+    const who = inv.customer ? inv.customer.name : "";
+    const title = `Invoice ${inv.invoice_no}`;
+    const text = `${biz} — Invoice ${inv.invoice_no}${who ? " for " + who : ""}\n`
+      + `Total: ${money(inv.total)}`
+      + (inv.balance > 0.01 ? `\nBalance due: ${money(inv.balance)}` : " (paid in full)");
+
+    // Best: share the actual PDF file via the native share sheet (WhatsApp, email…)
+    let file = null;
+    try {
+      const blob = await (await fetch(pdfUrl)).blob();
+      file = new File([blob], `${inv.invoice_no}.pdf`, { type: "application/pdf" });
+    } catch (e) { /* fall back to link sharing */ }
+
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title, text });
+      return;
+    }
+    if (navigator.share) { await navigator.share({ title, text, url: pdfUrl }); return; }
+
+    // Desktop / unsupported: copy a link to the PDF
+    await navigator.clipboard.writeText(pdfUrl);
+    toast("Invoice link copied to clipboard");
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // user dismissed the share sheet
+    toast("Couldn't share — opening the PDF instead");
+    window.open(pdfUrl, "_blank");
+  }
+}
+
+function paymentModal(id, balance) {
+  // Amount starts EMPTY (not pre-filled with the full balance) so a part payment
+  // isn't accidentally saved as payment-in-full. Full settlement has its own
+  // "✓ Mark as paid" button. Placeholder suggests a partial amount.
+  openModal(`
+    <h2>Record part payment</h2>
+    <p style="font-size:13px;color:var(--muted);margin:-6px 0 14px">Outstanding balance: <strong>${money(balance)}</strong></p>
+    <div class="field"><label>Amount received now</label>
+      <input id="payAmt" type="number" inputmode="decimal" placeholder="e.g. ${Math.max(1, Math.round(balance / 2))}" autofocus /></div>
+    <div class="field"><label>Method (optional)</label>
+      <input id="payMethod" placeholder="Cash, transfer, card…" /></div>
+    <button class="btn" onclick="savePayment(${id}, ${balance})">Save payment</button>`);
+}
+async function savePayment(id, balance) {
+  const amount = parseFloat(document.getElementById("payAmt").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  if (balance != null && amount > balance + 0.01
+      && !confirm(`That's more than the ${money(balance)} balance. Record ${money(amount)} anyway?`)) return;
+  const r = await api.send(`/api/invoices/${id}/payments`, "POST",
+    { amount, method: document.getElementById("payMethod").value });
+  toast(r.balance > 0.01 ? `Recorded — ${money(r.balance)} still due` : "Paid in full ✓");
+  receiptOffer(id);
+  render();
+}
+
+// ---------- shareable images (invoice / receipt) ----------
+// Share an image through the native share sheet (WhatsApp shows it inline);
+// fall back to opening it in a tab where the user can long-press / save.
+async function shareImageFile(url, filename, title, text) {
+  const mime = filename.endsWith(".jpg") ? "image/jpeg" : "image/png";
+  try {
+    let file = null;
+    try {
+      const blob = await (await fetch(url)).blob();
+      file = new File([blob], filename, { type: mime });
+    } catch (e) { /* fall through to opening the URL */ }
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title, text });
+      return;
+    }
+    window.open(url, "_blank");
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // user dismissed the share sheet
+    window.open(url, "_blank");
+  }
+}
+
+async function shareInvoiceImage(id, fmt) {
+  const inv = await api.get(`/api/invoices/${id}`);
+  const biz = state.settings.business_name || "SalesPal";
+  await shareImageFile(`/api/invoices/${id}/image?fmt=${fmt}`,
+    `${inv.invoice_no}.${fmt}`, `Invoice ${inv.invoice_no}`,
+    `${biz} — Invoice ${inv.invoice_no} · Total ${money(inv.total)}`);
+}
+
+async function shareReceipt(id, fmt) {
+  const inv = await api.get(`/api/invoices/${id}`);
+  const biz = state.settings.business_name || "SalesPal";
+  // On a part-payment, the caption urges settling the balance; else a thank-you.
+  const due = inv.balance > 0.01
+    ? `${biz} — payment received for invoice ${inv.invoice_no}. `
+      + `Balance outstanding: ${money(inv.balance)}${inv.due_date ? ` (due ${fmtDate(inv.due_date)})` : ""}. `
+      + `Kindly settle it when you can — thank you!`
+    : `${biz} — payment received in full for invoice ${inv.invoice_no}. Thank you for your business!`;
+  await shareImageFile(`/api/invoices/${id}/receipt?fmt=${fmt}`,
+    `Receipt-${inv.invoice_no}.${fmt}`, `Receipt — ${inv.invoice_no}`, due);
+}
+
+// After a payment is recorded (or from the invoice), show the receipt itself —
+// ready to send. On a part payment it displays the balance-due receipt so it's
+// one tap into WhatsApp via the share sheet.
+async function receiptOffer(id, heading) {
+  openModal(`<h2>${heading || "Payment recorded ✓"}</h2>
+    <div class="loading">Preparing receipt…</div>`);
+  let inv = null;
+  try { inv = await api.get(`/api/invoices/${id}`); }
+  catch (e) { if (e.message === "__auth__" || e.message === "__upgrade__") return; }
+  const part = inv && inv.balance > 0.01;
+  const title = heading || (part ? "Part payment recorded ✓" : "Payment recorded ✓");
+  const sub = part
+    ? `Balance of <strong>${money(inv.balance)}</strong> still due — this receipt shows it and asks the customer to pay.`
+    : `Send the customer their receipt with a thank-you message.`;
+  updateModal(`<h2>${title}</h2>
+    <p style="color:var(--muted);font-size:14px;margin:0 0 12px">${sub}</p>
+    <img src="/api/invoices/${id}/receipt?fmt=png&t=${Date.now()}" alt="Receipt"
+      style="width:100%;border:1px solid var(--line);border-radius:12px;margin-bottom:12px" />
+    <button class="btn" onclick="shareReceipt(${id},'png')">📤 Send receipt</button>
+    <button class="btn secondary" style="margin-top:10px" onclick="shareReceipt(${id},'jpg')">Download JPG</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Done</button>`);
+}
+
+// ---------- NEW SALE ----------
+let saleItems = [];
+async function newSaleModal() {
+  if (state.me && state.me.is_attendant) return attendantSaleModal();
+  if (!requireShop()) return;
+  saleItems = [];
+  const [products, customers] = await Promise.all([
+    api.get("/api/products"), api.get("/api/customers")]);
+  window._products = products;
+  const custList = customers.map(c => `<option value="${esc(c.name)}">`).join("");
+  openModal(`
+    <h2>New sale</h2>
+    <div class="field"><label>Customer name</label>
+      <input id="saleCustomer" list="custList" autocomplete="off"
+        placeholder="Type a name (or leave blank for walk-in)">
+      <datalist id="custList">${custList}</datalist></div>
+    <div class="section-title">Items</div>
+    <div id="saleItems"></div>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button class="btn outline btn-sm" onclick="addProductItem()">＋ Add product</button>
+      <button class="btn outline btn-sm" onclick="addCustomItem()">＋ Custom item</button>
+    </div>
+    <div class="field"><label>Due date (optional)</label><input id="saleDue" type="date"></div>
+    <div class="field"><label>Notes (optional)</label><textarea id="saleNotes"></textarea></div>
+    <div class="card" style="background:var(--tint)">
+      <div class="list-row"><div class="main">Total</div>
+        <div class="amount" id="saleTotal">${money(0)}</div></div></div>
+    <button class="btn" onclick="saveSale()">Save sale & create invoice</button>`);
+  if (products.length) addProductItem(); else addCustomItem();
+}
+
+function renderSaleItems() {
+  const host = document.getElementById("saleItems");
+  host.innerHTML = saleItems.map((it, i) => {
+    const prodOpts = (window._products || []).map(p =>
+      `<option value="${p.id}" ${p.id === it.product_id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+    return `<div class="line-item">
+      <div class="li-head"><strong>Item ${i + 1}</strong>
+        <button class="li-remove" onclick="removeItem(${i})">Remove</button></div>
+      ${it.custom
+        ? `<div class="field"><input placeholder="Description" value="${esc(it.description)}"
+             oninput="updItem(${i},'description',this.value)"></div>`
+        : `<div class="field"><select onchange="pickProduct(${i},this.value)">${prodOpts}</select></div>`}
+      <div class="field-row">
+        <div class="field"><label>Qty</label>
+          <input type="number" inputmode="decimal" value="${it.qty}" oninput="updItem(${i},'qty',this.value)"></div>
+        <div class="field"><label>Price</label>
+          <input type="number" inputmode="decimal" value="${it.unit_price}" oninput="updItem(${i},'unit_price',this.value)"></div>
+        ${it.custom ? `<div class="field"><label>Cost</label>
+          <input type="number" inputmode="decimal" value="${it.unit_cost}" oninput="updItem(${i},'unit_cost',this.value)"></div>` : ""}
+      </div></div>`;
+  }).join("");
+  const total = saleItems.reduce((s, it) => s + it.qty * it.unit_price, 0);
+  document.getElementById("saleTotal").textContent = money(total);
+}
+function addProductItem() {
+  const p = (window._products || [])[0];
+  if (!p) return addCustomItem();
+  saleItems.push({ product_id: p.id, description: p.name, qty: 1, unit_price: p.unit_price, unit_cost: p.unit_cost, custom: false });
+  renderSaleItems();
+}
+function addCustomItem() {
+  saleItems.push({ product_id: null, description: "", qty: 1, unit_price: 0, unit_cost: 0, custom: true });
+  renderSaleItems();
+}
+function pickProduct(i, pid) {
+  const p = (window._products || []).find(x => x.id == pid);
+  if (p) { Object.assign(saleItems[i], { product_id: p.id, description: p.name, unit_price: p.unit_price, unit_cost: p.unit_cost }); }
+  renderSaleItems();
+}
+function updItem(i, k, v) {
+  saleItems[i][k] = (k === "qty" || k === "unit_price" || k === "unit_cost") ? (parseFloat(v) || 0) : v;
+  if (k === "qty" || k === "unit_price") {
+    const total = saleItems.reduce((s, it) => s + it.qty * it.unit_price, 0);
+    document.getElementById("saleTotal").textContent = money(total);
+  }
+}
+function removeItem(i) { saleItems.splice(i, 1); renderSaleItems(); }
+
+async function saveSale() {
+  const items = saleItems.filter(it => it.description && it.qty > 0);
+  if (!items.length) return toast("Add at least one item");
+  const customer_name = document.getElementById("saleCustomer").value.trim();
+  const res = await api.send("/api/invoices", "POST", {
+    customer_name: customer_name || null,
+    due_date: document.getElementById("saleDue").value || null,
+    notes: document.getElementById("saleNotes").value,
+    items: items.map(it => ({ product_id: it.product_id, description: it.description,
+      qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost })),
+  });
+  closeModal(); toast(`Sale saved · ${res.invoice_no}`);
+  setView("sales");
+}
+
+// ---------- MONEY (expenses + outstanding) ----------
+let moneyTab = "expenses";
+async function viewMoney() {
+  app.innerHTML = `<div class="seg">
+    <button class="${moneyTab === 'expenses' ? 'active' : ''}" onclick="moneyTab='expenses';render()">Expenses</button>
+    <button class="${moneyTab === 'owed' ? 'active' : ''}" onclick="moneyTab='owed';render()">Owed to me</button>
+  </div><div id="moneyBody"></div>`;
+  if (moneyTab === "expenses") await renderExpenses();
+  else await renderOwed();
+}
+
+async function renderExpenses() {
+  const exp = await api.get("/api/expenses");
+  const total = exp.reduce((s, e) => s + e.amount, 0);
+  document.getElementById("moneyBody").innerHTML = `
+    <button class="btn" onclick="expenseModal()" style="margin-bottom:14px">＋ Add expense</button>
+    <div class="card">
+      <div class="section-title">Expenses · ${money(total)} total</div>
+      ${exp.length ? exp.map(e => `
+        <div class="list-row">
+          <div><div class="main">${esc(e.description || e.category)}</div>
+            <div class="meta">${esc(e.category)} · ${fmtDate(e.date)}</div></div>
+          <div style="text-align:right"><div class="amount neg">${money(e.amount)}</div>
+            <button class="li-remove" onclick="delExpense(${e.id})">Delete</button></div>
+        </div>`).join("") : `<div class="empty"><div class="big">💸</div>No expenses logged yet</div>`}
+    </div>`;
+}
+function expenseModal() {
+  if (!requireShop()) return;
+  openModal(`<h2>Add expense</h2>
+    <div class="field"><label>Amount</label><input id="expAmt" type="number" inputmode="decimal"></div>
+    <div class="field"><label>Category</label>
+      <select id="expCat"><option>Stock / inventory</option><option>Transport</option>
+        <option>Rent</option><option>Utilities</option><option>Marketing</option>
+        <option>Salaries</option><option>Other</option></select></div>
+    <div class="field"><label>Description (optional)</label><input id="expDesc"></div>
+    <button class="btn" onclick="saveExpense()">Save expense</button>`);
+}
+async function saveExpense() {
+  const amount = parseFloat(document.getElementById("expAmt").value);
+  if (!amount || amount <= 0) return toast("Enter a valid amount");
+  await api.send("/api/expenses", "POST", { amount,
+    category: document.getElementById("expCat").value,
+    description: document.getElementById("expDesc").value });
+  closeModal(); toast("Expense added"); render();
+}
+async function delExpense(id) { await api.send(`/api/expenses/${id}`, "DELETE"); toast("Deleted"); render(); }
+
+async function renderOwed() {
+  const invoices = (await api.get("/api/invoices")).filter(i => i.balance > 0.01);
+  const total = invoices.reduce((s, i) => s + i.balance, 0);
+  document.getElementById("moneyBody").innerHTML = `
+    <div class="card">
+      <div class="section-title">Outstanding · ${money(total)} owed to you</div>
+      ${invoices.length ? invoices.map(i => `
+        <div class="list-row" onclick="invoiceDetail(${i.id})">
+          <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
+            <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <div class="amount neg">${money(i.balance)}</div>
+            <button class="wa-mini" onclick='event.stopPropagation(); whatsappReminder(${attrJson({
+              id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
+              customer: { id: i.customer_id, name: i.customer_name, phone: i.customer_phone } })})'>💬 Remind</button>
+          </div>
+        </div>`).join("") : `<div class="empty"><div class="big">✅</div>Everyone has paid up!</div>`}
+    </div>`;
+}
+
+// ---------- INSIGHTS ----------
+async function viewInsights() {
+  const pro = isPro();
+  const proTag = pro ? "" : ` <span class="pill pro">PRO</span>`;
+  app.innerHTML = `
+    <div class="card">
+      <div class="section-title">💡 Grow my business${proTag}</div>
+      <p style="font-size:14px;color:var(--muted);margin:0 0 12px">
+        Get specific advice from Claude on increasing your sales and profit, based on your real numbers.</p>
+      ${pro
+        ? `<button class="btn" onclick="loadAdvice()">Get advice (${state.period})</button>`
+        : `<button class="btn" onclick="showUpgrade('AI advice is a Pro feature.')">🔒 Unlock with Pro</button>`}
+    </div>
+    <div class="card">
+      <div class="section-title">📅 Weekly report${proTag}</div>
+      <p style="font-size:14px;color:var(--muted);margin:0 0 12px">
+        A summary of this week vs last week — sales, profit, expenses and what to focus on.</p>
+      ${pro
+        ? `<button class="btn secondary" onclick="loadWeekly()">Generate weekly report</button>
+           <p style="font-size:12px;color:var(--muted);margin:10px 0 0">Auto-generated every Sunday and saved below.</p>`
+        : `<button class="btn secondary" onclick="showUpgrade('Weekly AI reports are a Pro feature.')">🔒 Unlock with Pro</button>`}
+    </div>
+    <div id="insightOut"></div>
+    <div class="card"><div class="section-title">📁 Saved weekly reports</div>
+      <div id="savedReports"><div class="empty">Loading…</div></div></div>`;
+  loadSavedReports();
+}
+async function loadSavedReports() {
+  const host = document.getElementById("savedReports");
+  try {
+    const reports = await api.get("/api/reports");
+    window._reports = reports;
+    host.innerHTML = reports.length ? reports.map(r => `
+      <div class="list-row" onclick="openReport(${r.id})">
+        <div><div class="main">${esc(r.title || "Weekly report")}</div>
+          <div class="meta">${fmtDate(r.created_at)}</div></div>
+        <div class="meta">View ›</div>
+      </div>`).join("") : `<div class="empty">No saved reports yet</div>`;
+  } catch (e) { host.innerHTML = `<div class="empty">Couldn't load reports</div>`; }
+}
+function openReport(id) {
+  const r = (window._reports || []).find(x => x.id === id);
+  if (!r) return;
+  openModal(`<h2>${esc(r.title || "Weekly report")}</h2>
+    <div class="meta" style="color:var(--muted);margin-bottom:10px">${fmtDate(r.created_at)}</div>
+    <div class="card"><div class="md">${md(r.content || "")}</div></div>`);
+}
+async function loadAdvice() {
+  const out = document.getElementById("insightOut");
+  out.innerHTML = `<div class="card"><div class="loading">Claude is analysing your numbers…</div></div>`;
+  const r = await api.get(`/api/insights/advice?period=${state.period}`);
+  out.innerHTML = `<div class="card"><div class="md">${md(r.text)}</div></div>`;
+}
+async function loadWeekly() {
+  const out = document.getElementById("insightOut");
+  out.innerHTML = `<div class="card"><div class="loading">Building your weekly report…</div></div>`;
+  const r = await api.get(`/api/insights/weekly`);
+  const m = r.metrics ? r.metrics.this_week : null;
+  const head = m ? `<div class="kpi-grid">
+    <div class="kpi"><div class="label">Sales this week</div><div class="value">${money(m.revenue)}</div></div>
+    <div class="kpi"><div class="label">Profit this week</div><div class="value ${m.net_profit>=0?'pos':'neg'}">${money(m.net_profit)}</div></div>
+  </div>` : "";
+  out.innerHTML = head + `<div class="card"><div class="md">${md(r.text)}</div></div>`;
+  loadSavedReports();
+}
+
+// ---------- PRODUCTS ----------
+async function viewProducts() {
+  const products = await api.get("/api/products");
+  app.innerHTML = `
+    <button class="btn" onclick="productModal()" style="margin-bottom:14px">＋ Add product</button>
+    <div class="card"><div class="section-title">Products</div>
+      ${products.length ? products.map(p => {
+        const margin = p.unit_price ? Math.round((p.unit_price - p.unit_cost) / p.unit_price * 100) : 0;
+        const low = p.low_stock_at > 0 && p.stock_qty <= p.low_stock_at;
+        return `<div class="list-row" onclick='productModal(${attrJson(p)})'>
+          <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low stock</span>' : ''}</div>
+            <div class="meta">Cost ${money(p.unit_cost)} · ${margin}% margin · <span class="${low ? 'neg' : ''}">${p.stock_qty} in stock</span></div></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            ${(low && p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'>📞 Supplier</button>` : ""}
+            <div class="amount">${money(p.unit_price)}</div></div></div>`;
+      }).join("") : `<div class="empty"><div class="big">📦</div>No products yet</div>`}
+    </div>`;
+}
+function productModal(p) {
+  p = p || {};
+  if (!p.id && !requireShop()) return;  // new products need a specific shop
+  openModal(`<h2>${p.id ? "Edit" : "Add"} product</h2>
+    <div class="field"><label>Name</label><input id="pName" value="${esc(p.name || "")}"></div>
+    <div class="field-row">
+      <div class="field"><label>Selling price</label><input id="pPrice" type="number" inputmode="decimal" value="${p.unit_price || 0}"></div>
+      <div class="field"><label>Unit cost</label><input id="pCost" type="number" inputmode="decimal" value="${p.unit_cost || 0}"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Current stock</label><input id="pStock" type="number" inputmode="decimal" value="${p.stock_qty || 0}"></div>
+      <div class="field"><label>Alert at / below</label><input id="pLow" type="number" inputmode="decimal" value="${p.low_stock_at || 0}"></div>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:-4px 0 14px">Stock drops automatically as you record sales. Set "alert at" above 0 to get a low-stock warning (0 = off).</p>
+    <div class="field"><label>Suppliers — who you reorder from</label>
+      <div id="supList">${((p.suppliers && p.suppliers.length) ? p.suppliers : []).map(supplierRowHtml).join("")}</div>
+      <button class="btn secondary btn-sm" type="button" onclick="addSupplierRow()">＋ Add supplier</button>
+      <p style="font-size:12px;color:var(--muted);margin:8px 0 0">Add one or more. When stock runs low you can call them to restock in one tap.</p>
+    </div>
+    <button class="btn" style="margin-top:14px" onclick="saveProduct(${p.id || 0})">Save</button>
+    ${p.id ? `<button class="btn danger" style="margin-top:10px" onclick="delProduct(${p.id})">Delete</button>` : ""}`);
+}
+// One editable supplier row (name + phone + remove) in the product form.
+function supplierRowHtml(s) {
+  s = s || {};
+  return `<div class="sup-row">
+    <input class="sup-name" placeholder="Supplier name" value="${esc(s.name || "")}">
+    <input class="sup-phone" placeholder="Phone" inputmode="tel" value="${esc(s.phone || "")}">
+    <button type="button" class="sup-del" onclick="this.closest('.sup-row').remove()" aria-label="Remove supplier">✕</button>
+  </div>`;
+}
+function addSupplierRow() {
+  const list = document.getElementById("supList");
+  if (list) list.insertAdjacentHTML("beforeend", supplierRowHtml());
+}
+async function saveProduct(id) {
+  const suppliers = [...document.querySelectorAll("#supList .sup-row")].map(r => ({
+    name: r.querySelector(".sup-name").value.trim(),
+    phone: r.querySelector(".sup-phone").value.trim(),
+  })).filter(s => s.name || s.phone);
+  const body = { name: document.getElementById("pName").value,
+    unit_price: parseFloat(document.getElementById("pPrice").value) || 0,
+    unit_cost: parseFloat(document.getElementById("pCost").value) || 0,
+    stock_qty: parseFloat(document.getElementById("pStock").value) || 0,
+    low_stock_at: parseFloat(document.getElementById("pLow").value) || 0,
+    suppliers };
+  if (!body.name) return toast("Enter a product name");
+  if (id) await api.send(`/api/products/${id}`, "PUT", body);
+  else await api.send("/api/products", "POST", body);
+  closeModal(); toast("Product saved"); render();
+}
+// Reorder a low product: list its suppliers with one-tap Call / WhatsApp.
+function callSupplier(product) {
+  const sups = (product && product.suppliers) || [];
+  if (!sups.length) { toast("No supplier saved for this product yet"); return; }
+  openModal(`<h2>📞 Call supplier</h2>
+    <p style="font-size:13px;color:var(--muted);margin:-6px 0 14px">Reorder ${esc(product.name || "this product")}</p>
+    ${sups.map(s => `<div class="list-row">
+      <div style="flex:1;min-width:0"><div class="main">${esc(s.name || "Supplier")}</div>
+        <div class="meta">${esc(s.phone || "No number")}</div></div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        ${telNumber(s.phone) ? `<button class="wa-mini call" onclick='phoneCall(${attrJson({ phone: s.phone })})'>📞 Call</button>` : ""}
+        ${waNumber(s.phone) ? `<button class="wa-mini" onclick='whatsappCall(${attrJson({ name: s.name, phone: s.phone })})'>💬 WhatsApp</button>` : ""}
+      </div></div>`).join("")}
+    <button class="btn secondary" style="margin-top:14px" onclick="closeModal()">Close</button>`);
+}
+async function delProduct(id) { await api.send(`/api/products/${id}`, "DELETE"); closeModal(); toast("Deleted"); render(); }
+
+// ---------- SUPPLIERS (restock orders) ----------
+// Suppliers come from the per-product supplier lists (Products → edit). We group
+// those across the shop's products so you can build a restock order per supplier
+// and fire it off on WhatsApp. ponytail: the supplier price defaults to the
+// product's unit cost (editable per line, not saved) — add a per-supplier saved
+// price list only if merchants actually keep different prices per supplier.
+const _supLow = (p) => (p.low_stock_at || 0) > 0 && (p.stock_qty || 0) <= p.low_stock_at;
+async function viewSuppliers() {
+  const products = await api.get("/api/products");
+  const map = new Map();
+  for (const p of products) {
+    for (const s of (p.suppliers || [])) {
+      const key = waNumber(s.phone) || (s.name || "").trim().toLowerCase();
+      if (!key) continue;
+      let g = map.get(key);
+      if (!g) { g = { name: (s.name || "").trim() || "Supplier", phone: s.phone || "", products: [] }; map.set(key, g); }
+      if (!g.phone && s.phone) g.phone = s.phone;
+      g.products.push({ id: p.id, name: p.name, unit_cost: p.unit_cost || 0,
+        stock_qty: p.stock_qty || 0, low_stock_at: p.low_stock_at || 0 });
+    }
+  }
+  const suppliers = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  if (!suppliers.length) {
+    app.innerHTML = `<div class="card"><div class="empty"><div class="big">🚚</div>
+      No suppliers yet.<br>Add a supplier to a product, then come back to build restock orders.</div>
+      <button class="btn secondary" onclick="setView('products')">Go to Products</button></div>`;
+    return;
+  }
+  app.innerHTML = `<div class="card"><div class="section-title">Suppliers</div>
+      <p style="font-size:13px;color:var(--muted);margin:0">Build a restock order and send it straight to the supplier on WhatsApp.</p></div>
+    ${suppliers.map(g => {
+      const low = g.products.filter(_supLow).length;
+      return `<div class="card list-row" style="cursor:pointer" onclick='supplierOrder(${attrJson(g)})'>
+        <div style="flex:1;min-width:0"><div class="main">${esc(g.name)}</div>
+          <div class="meta">${g.products.length} product${g.products.length > 1 ? "s" : ""}${low ? ` · <span class="neg">${low} low</span>` : ""}${g.phone ? ` · ${esc(g.phone)}` : " · no number"}</div></div>
+        <div class="amount">🧾</div></div>`;
+    }).join("")}`;
+}
+function supplierOrder(g) {
+  // low-stock items first so what actually needs reordering is at the top
+  const rows = [...(g.products || [])].sort((a, b) =>
+    (_supLow(b) ? 1 : 0) - (_supLow(a) ? 1 : 0) || a.name.localeCompare(b.name));
+  const num = waNumber(g.phone);
+  openModal(`<h2>🚚 Order from ${esc(g.name)}</h2>
+    <p style="font-size:13px;color:var(--muted);margin:-6px 0 12px">Set how many to reorder. Price is your cost — edit it if the supplier's price changed.</p>
+    <div class="po-head"><span>Product</span><span>Qty</span><span>Price</span></div>
+    <div id="poRows">
+      ${rows.map(p => `<div class="po-row" data-name="${esc(p.name)}">
+        <div class="po-name">${esc(p.name)} ${_supLow(p) ? '<span class="badge unpaid">low</span>' : ""}<div class="po-sub">${(+p.stock_qty).toLocaleString()} in stock</div></div>
+        <input class="po-qty" type="number" inputmode="numeric" min="0" placeholder="0" oninput="supplierOrderTotal()">
+        <input class="po-price" type="number" inputmode="decimal" min="0" value="${p.unit_cost || 0}" oninput="supplierOrderTotal()">
+      </div>`).join("")}
+    </div>
+    <div class="goal-meta" style="margin-top:12px"><strong>Order total</strong><strong id="poTotal">${money(0)}</strong></div>
+    ${num
+      ? `<button class="btn whatsapp" style="margin-top:14px" onclick='sendSupplierOrder(${attrJson(g)})'>📤 Send order on WhatsApp</button>`
+      : `<button class="btn" style="margin-top:14px" onclick='copySupplierOrder(${attrJson(g)})'>📋 Copy order</button>`}
+    <button class="btn secondary" style="margin-top:10px" onclick="closeModal()">Close</button>`);
+}
+function supplierOrderTotal() {
+  let total = 0;
+  document.querySelectorAll("#poRows .po-row").forEach(r => {
+    const q = parseFloat(r.querySelector(".po-qty").value) || 0;
+    const pr = parseFloat(r.querySelector(".po-price").value) || 0;
+    if (q > 0) total += q * pr;
+  });
+  const el = document.getElementById("poTotal");
+  if (el) el.textContent = money(total);
+}
+// Build the WhatsApp order text from the current inputs (null if nothing set).
+function _supplierOrderMsg(g) {
+  const lines = [];
+  let total = 0;
+  document.querySelectorAll("#poRows .po-row").forEach(r => {
+    const q = parseFloat(r.querySelector(".po-qty").value) || 0;
+    if (q <= 0) return;
+    const pr = parseFloat(r.querySelector(".po-price").value) || 0;
+    total += q * pr;
+    lines.push(`• ${r.dataset.name} — ${(+q).toLocaleString()} × ${money(pr)} = ${money(q * pr)}`);
+  });
+  if (!lines.length) { toast("Set a quantity for at least one item"); return null; }
+  const biz = (state.settings && state.settings.business_name) || "us";
+  const who = g.name && g.name !== "Supplier" ? g.name : "there";
+  return `Hello ${who}, I'd like to place a restock order for ${biz}:\n\n`
+    + lines.join("\n") + `\n\nTotal: ${money(total)}\n\nPlease confirm availability and delivery. Thank you!`;
+}
+function sendSupplierOrder(g) {
+  const msg = _supplierOrderMsg(g);   // sync → keeps the WhatsApp deep-link in the tap gesture
+  if (!msg) return;
+  const num = waNumber(g.phone);
+  if (!num) return copySupplierOrder(g);
+  _openWhatsApp(num, msg);
+}
+function copySupplierOrder(g) {
+  const msg = _supplierOrderMsg(g);
+  if (!msg) return;
+  if (navigator.share) { navigator.share({ text: msg }).catch(() => {}); return; }
+  if (navigator.clipboard) navigator.clipboard.writeText(msg);
+  toast("Order copied — paste it to your supplier");
+}
+
+// ---------- CUSTOMERS ----------
+async function viewCustomers() {
+  const customers = await api.get("/api/customers");
+  app.innerHTML = `
+    <button class="btn" onclick="customerModal()" style="margin-bottom:14px">＋ Add customer</button>
+    <div class="card"><div class="section-title">Customers</div>
+      ${customers.length ? customers.map(c => `
+        <div class="list-row" onclick='customerModal(${attrJson(c)})'>
+          <div style="flex:1;min-width:0"><div class="main">${esc(c.name)}</div>
+            <div class="meta">${esc(c.phone || c.email || "")}</div></div>
+          ${waNumber(c.phone) ? `<div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="wa-mini call" onclick='event.stopPropagation(); phoneCall(${attrJson({ phone: c.phone })})'>📞 Call</button>
+            <button class="wa-mini" onclick='event.stopPropagation(); whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'>💬 WhatsApp</button>
+          </div>` : ""}
+        </div>`).join("")
+        : `<div class="empty"><div class="big">👥</div>No customers yet</div>`}
+    </div>`;
+}
+function customerModal(c) {
+  c = c || {};
+  openModal(`<h2>${c.id ? "Edit" : "Add"} customer</h2>
+    ${c.id && waNumber(c.phone) ? `<div style="display:flex;gap:10px;margin-bottom:14px">
+      <button class="btn" style="flex:1" onclick='phoneCall(${attrJson({ phone: c.phone })})'>📞 Call</button>
+      <button class="btn" style="flex:1;background:#25d366" onclick='whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'>💬 WhatsApp</button>
+    </div>` : ""}
+    <div class="field"><label>Name</label><input id="cName" value="${esc(c.name || "")}"></div>
+    <div class="field"><label>Phone</label><input id="cPhone" value="${esc(c.phone || "")}"></div>
+    <div class="field"><label>Email</label><input id="cEmail" value="${esc(c.email || "")}"></div>
+    <div class="field"><label>Address</label><input id="cAddr" value="${esc(c.address || "")}"></div>
+    <button class="btn" onclick="saveCustomer(${c.id || 0})">Save</button>
+    ${c.id ? `<button class="btn danger" style="margin-top:10px" onclick="delCustomer(${c.id})">Delete</button>` : ""}`);
+}
+async function saveCustomer(id) {
+  const body = { name: document.getElementById("cName").value,
+    phone: document.getElementById("cPhone").value,
+    email: document.getElementById("cEmail").value,
+    address: document.getElementById("cAddr").value };
+  if (!body.name) return toast("Enter a name");
+  if (id) await api.send(`/api/customers/${id}`, "PUT", body);
+  else await api.send("/api/customers", "POST", body);
+  closeModal(); toast("Customer saved"); render();
+}
+async function delCustomer(id) { await api.send(`/api/customers/${id}`, "DELETE"); closeModal(); toast("Deleted"); render(); }
+
+// ---------- ORDERS (public storefront) ----------
+async function viewOrders() {
+  const st = state.orders || {};
+  const pro = isPro();
+  let linkCard;
+  if (!pro) {
+    linkCard = `<div class="card">
+      <div class="section-title">🛒 Take orders online <span class="pill">PRO</span></div>
+      <p style="font-size:14px;color:var(--muted);margin:0 0 12px">Share one link with customers and WhatsApp groups. They order from what's in stock and it lands here for you to fulfil.</p>
+      <button class="btn" onclick="showUpgrade('Take orders online — share a live shop link with your customers.')">⭐ Upgrade to Pro</button>
+    </div>`;
+  } else if (!state.activeShop) {
+    linkCard = `<div class="card"><div class="section-title">🛒 Order link</div>
+      <p style="font-size:14px;color:var(--muted);margin:0">Open a specific shop (tap the name at the top) to share its order link — each shop has its own.</p></div>`;
+  } else if (st.enabled && st.url) {
+    linkCard = `<div class="card">
+      <div class="section-title">🛒 Your order link is live</div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Customers at <strong>${esc(activeShopName())}</strong> order from your in-stock items.</p>
+      <div class="orderlink">${esc(st.url)}</div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn whatsapp" onclick="shareOrderLink('whatsapp')">💬 Share on WhatsApp</button>
+        <button class="btn secondary" onclick="shareOrderLink('copy')">🔗 Copy link</button>
+      </div>
+      ${alertsRowHtml()}
+      <button class="btn ghost" style="margin-top:10px" onclick="disableOrders()">Turn off orders</button>
+    </div>`;
+  } else {
+    linkCard = `<div class="card">
+      <div class="section-title">🛒 Take orders online</div>
+      <p style="font-size:14px;color:var(--muted);margin:0 0 12px">Turn on a shareable link for <strong>${esc(activeShopName())}</strong>. Customers order from what's in stock and it arrives here to fulfil.</p>
+      <button class="btn" onclick="enableOrders()">Create my order link</button>
+    </div>`;
+  }
+
+  let listHtml = `<div class="card"><div class="loading">Loading orders…</div></div>`;
+  app.innerHTML = linkCard + `<div id="ordersList">${listHtml}</div>`;
+
+  try {
+    const orders = await api.get("/api/orders");
+    window._orders = orders;
+    const pending = orders.filter(o => o.status === "pending");
+    const past = orders.filter(o => o.status !== "pending");
+    const row = (o) => `<div class="list-row" onclick='orderDetail(${attrJson(o)})'>
+      <div style="flex:1;min-width:0"><div class="main">${esc(o.customer_name || "Customer")} ${orderBadge(o.status)}</div>
+        <div class="meta">${o.items.length} item${o.items.length > 1 ? "s" : ""} · ${fmtDate(o.created_at)}</div></div>
+      <div class="amount">${money(o.total)}</div></div>`;
+    document.getElementById("ordersList").innerHTML =
+      `<div class="card"><div class="section-title">Pending${pending.length ? ` · ${pending.length}` : ""}</div>
+        ${pending.length ? pending.map(row).join("") : `<div class="empty">No new orders yet. Share your link to start receiving them.</div>`}
+      </div>` +
+      (past.length ? `<div class="card"><div class="section-title">Past orders</div>${past.map(row).join("")}</div>` : "");
+  } catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return;
+    document.getElementById("ordersList").innerHTML = `<div class="card"><div class="empty">Couldn't load orders</div></div>`;
+  }
+}
+function orderBadge(status) {
+  if (status === "fulfilled") return '<span class="badge paid">fulfilled</span>';
+  if (status === "declined") return '<span class="badge unpaid">declined</span>';
+  return '<span class="badge partial">new</span>';
+}
+function orderDetail(o) {
+  const cust = { name: o.customer_name, phone: o.customer_phone };
+  const canReach = waNumber(o.customer_phone) || telNumber(o.customer_phone);
+  openModal(`<h2>🛒 Order from ${esc(o.customer_name || "Customer")}</h2>
+    <div class="meta" style="color:var(--muted);margin:-6px 0 12px">${fmtDate(o.created_at)} ${orderBadge(o.status)}</div>
+    ${canReach ? `<div class="btn-row" style="margin-bottom:14px">
+      ${telNumber(o.customer_phone) ? `<button class="btn secondary" onclick='phoneCall(${attrJson({ phone: o.customer_phone })})'>📞 Call</button>` : ""}
+      ${waNumber(o.customer_phone) ? `<button class="btn" style="background:#25d366" onclick='whatsappCall(${attrJson(cust)})'>💬 WhatsApp</button>` : ""}
+    </div>` : (o.customer_phone ? `<p class="meta" style="color:var(--muted);margin:0 0 12px">📞 ${esc(o.customer_phone)}</p>` : "")}
+    <div class="card" style="background:var(--bg)">
+      ${o.items.map(it => `<div class="list-row"><div style="flex:1;min-width:0"><div class="main">${esc(it.description)}</div>
+        <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
+        <div class="amount">${money(it.qty * it.unit_price)}</div></div>`).join("")}
+      <div class="list-row" style="border-top:2px solid var(--line)"><div class="main">Total</div>
+        <div class="amount">${money(o.total)}</div></div>
+    </div>
+    ${o.note ? `<p style="font-size:13px;margin:12px 2px 0"><strong>Note:</strong> ${esc(o.note)}</p>` : ""}
+    ${o.status === "pending" ? `<button class="btn success" style="margin-top:16px" onclick="fulfillOrder(${o.id})">✓ Fulfil — create invoice &amp; reduce stock</button>
+      <button class="btn danger" style="margin-top:10px" onclick="declineOrder(${o.id})">Decline order</button>`
+      : (o.status === "fulfilled" ? `<p class="meta" style="color:var(--muted);margin-top:14px">✅ Fulfilled — an invoice was created and stock reduced.</p>`
+        : `<p class="meta" style="color:var(--muted);margin-top:14px">This order was declined.</p>`)}`);
+}
+async function fulfillOrder(id) {
+  try {
+    const r = await api.send(`/api/orders/${id}/fulfill`, "POST");
+    closeModal(); toast(`Invoice ${r.invoice_no} created ✓`); render();
+  } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't fulfil"); }
+}
+async function declineOrder(id) {
+  try { await api.send(`/api/orders/${id}/decline`, "POST"); closeModal(); toast("Order declined"); render(); }
+  catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't decline"); }
+}
+async function enableOrders() {
+  try {
+    state.orders = await api.send("/api/orders/enable", "POST");
+    toast("Order link is live 🛒"); render();
+    pushSubscribe(false); // ask to allow new-order alerts (user just tapped → gesture ok)
+  } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't turn on orders"); }
+}
+// Alert status row for the Orders card — covers every permission state so the
+// merchant always knows whether alerts will arrive and how to fix it if not.
+function alertsRowHtml() {
+  if (!("Notification" in window) || !("PushManager" in window))
+    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0">🔔 To get order alerts, install SalesPal to your home screen first (menu → Install app).</p>`;
+  const p = Notification.permission;
+  if (p === "granted")
+    return `<div class="btn-row" style="margin-top:10px;align-items:center">
+      <span style="font-size:13px;color:var(--muted)">🔔 Alerts on for this device</span>
+      <button class="btn outline" onclick="pushTest()">Send test alert</button></div>`;
+  if (p === "denied")
+    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0">🔕 Alerts are blocked — allow notifications for SalesPal in your phone settings, then reopen the app.</p>`;
+  return `<button class="btn outline" style="margin-top:10px" onclick="pushSubscribe(false).then(()=>viewOrders())">🔔 Alert me when orders come in</button>`;
+}
+async function pushTest() {
+  try {
+    await pushSubscribe(true); // make sure this device's subscription is registered
+    const r = await api.send("/api/push/test", "POST");
+    toast(`Test sent to ${r.devices} device${r.devices > 1 ? "s" : ""} — check your notifications`);
+  } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't send test"); }
+}
+// Subscribe this device to new-order alerts. silent=true (app open) only
+// refreshes an already-granted subscription; silent=false may show the
+// browser's permission prompt. Never throws — alerts are best-effort.
+async function pushSubscribe(silent) {
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
+    if (Notification.permission === "denied") return;
+    if (silent && Notification.permission !== "granted") return;
+    if (!silent && Notification.permission !== "granted") {
+      if ((await Notification.requestPermission()) !== "granted") return;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await api.get("/api/push/key");
+    const b = atob(key.replace(/-/g, "+").replace(/_/g, "/").padEnd(key.length + (4 - key.length % 4) % 4, "="));
+    const appKey = Uint8Array.from(b, c => c.charCodeAt(0));
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+    await api.send("/api/push/subscribe", "POST", sub.toJSON());
+    if (!silent) toast("🔔 You'll get an alert for every new order");
+  } catch (e) { /* no support / dismissed prompt — orders still work */ }
+}
+async function disableOrders() {
+  try { state.orders = await api.send("/api/orders/disable", "POST"); toast("Orders turned off"); render(); }
+  catch (e) { toast(e.message || "Couldn't turn off orders"); }
+}
+// Share the storefront link. WhatsApp opens a chat (they pick a contact/group);
+// copy/native-share suits any channel. Synchronous → deep-links reliably.
+function shareOrderLink(how) {
+  const url = state.orders && state.orders.url;
+  if (!url) return;
+  const msg = `🛒 Order from ${activeShopName()}! Browse what's in stock and place your order here:\n${url}`;
+  if (how === "whatsapp") { window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank"); return; }
+  if (navigator.share) { navigator.share({ title: activeShopName(), text: msg, url }).catch(() => {}); return; }
+  navigator.clipboard && navigator.clipboard.writeText(url);
+  toast("Link copied — paste it anywhere");
+}
+
+// ---------- SETTINGS ----------
+function transferCardHtml(pay) {
+  // Instant bank transfer to the merchant's own account (no processor, no fee).
+  const t = `<div class="section-title">Bank transfer · instant ⚡</div>`;
+  if (pay.transfer_enabled) {
+    return `<div class="card">${t}
+      <p style="font-size:14px;margin:0 0 6px">✅ On — customers can pay by direct transfer to your account. Money lands <strong>instantly</strong>, no fees.</p>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">${esc(pay.transfer_number)} · ${esc(pay.transfer_bank)} · ${esc(pay.transfer_name)}</p>
+      <div class="btn-row">
+        <button class="btn outline" onclick="transferModal()">Edit account</button>
+        <button class="btn danger" onclick="disableTransfer()">Turn off</button>
+      </div></div>`;
+  }
+  return `<div class="card">${t}
+    <p style="font-size:14px;margin:0 0 10px">Let customers pay by <strong>direct bank transfer</strong> to your own account — the money lands <strong>instantly</strong> and there are <strong>no fees</strong>. You confirm each transfer when your bank alert arrives.</p>
+    <button class="btn" onclick="transferModal()">⚡ Set up instant transfer</button></div>`;
+}
+
+function payCardHtml(pay, pro) {
+  const title = `<div class="section-title">Card payments</div>`;
+  if (!pay || !pay.billing_enabled) {
+    return `<div class="card">${title}
+      <p style="font-size:13px;color:var(--muted);margin:0">Let customers pay your invoices online — coming soon.</p></div>`;
+  }
+  if (!pro) {
+    return `<div class="card"><div class="section-title">Online payments</div>
+      <p style="font-size:14px;margin:0 0 10px">Get paid faster — add <strong>Pay Now</strong> options to your invoices: instant bank transfer (no fees) or card / USSD.</p>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">⭐ A Pro feature. SalesPal takes 0% — you keep every naira.</p>
+      <button class="btn" onclick="showUpgrade()">⭐ Upgrade to Pro</button></div>`;
+  }
+  if (pay.connected) {
+    return `<div class="card">${title}
+      <p style="font-size:14px;margin:0 0 6px">✅ On — customers can also pay by card, transfer or USSD via Paystack.</p>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 6px">Payouts to <strong>${esc(pay.account_name)}</strong> · ${esc(pay.bank_name)} ${esc(pay.account_masked)}</p>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">⏱️ Paystack settles card payments to your bank the <strong>next business day</strong>.</p>
+      <div class="btn-row">
+        <button class="btn outline" onclick="connectPayoutModal()">Change bank</button>
+        <button class="btn danger" onclick="disconnectPayout()">Turn off</button>
+      </div></div>`;
+  }
+  return `<div class="card">${title}
+    <p style="font-size:14px;margin:0 0 10px">Also accept <strong>card &amp; USSD</strong> via Paystack (settles to your bank next business day, SalesPal takes 0%).</p>
+    <button class="btn outline" onclick="connectPayoutModal()">💳 Set up card payments</button></div>`;
+}
+
+async function viewSettings() {
+  const s = await api.get("/api/settings");
+  const h = await api.get("/api/health");
+  const pay = await api.get("/api/pay/status").catch(() => ({}));
+  const pro = isPro();
+  const pl = state.plan || {}, usage = pl.usage || {}, lim = pl.limits || {};
+  app.innerHTML = `
+    <div class="card"><div class="section-title">Business details</div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">These appear on your invoices.</p>
+      <div class="field"><label>Business name</label><input id="sName" value="${esc(s.business_name)}"></div>
+      <div class="field"><label>Currency symbol</label><input id="sCur" value="${esc(s.currency)}" maxlength="4"></div>
+      <div class="field"><label>Phone</label><input id="sPhone" value="${esc(s.phone)}"></div>
+      <div class="field"><label>Email</label><input id="sEmail" value="${esc(s.email)}"></div>
+      <div class="field"><label>Address</label><input id="sAddr" value="${esc(s.address)}"></div>
+      <button class="btn" onclick="saveSettings()">Save</button>
+    </div>
+    ${pro ? transferCardHtml(pay) : ""}
+    ${payCardHtml(pay, pro)}
+    <div class="card"><div class="section-title">AI insights</div>
+      <p style="font-size:14px;margin:0">${h.ai_enabled
+        ? "✅ Claude AI is connected. Advice & weekly reports are live."
+        : "⚠️ Not connected. Add ANTHROPIC_API_KEY in backend/.env to enable advice."}</p>
+    </div>
+    <div class="card"><div class="section-title">Your plan</div>
+      <p style="font-size:15px;margin:0 0 10px">You're on the <span class="pill ${pro ? 'pro' : ''}">${pro ? 'PRO' : 'FREE'}</span> plan.</p>
+      ${pro
+        ? `<p style="font-size:13px;color:var(--muted);margin:0">Unlimited invoices &amp; products, plus AI insights.${pl.plan_expires_at ? ` Active until <strong>${fmtDate(pl.plan_expires_at)}</strong>.` : ""}</p>`
+        : `<p style="font-size:13px;color:var(--muted);margin:0 0 12px">${usage.invoices_this_month || 0}/${lim.invoices_per_month} invoices this month · ${usage.products || 0}/${lim.products} products used. AI insights are locked.</p>
+           <button class="btn" onclick="showUpgrade()">⭐ Upgrade to Pro</button>`}
+    </div>
+    <div class="card"><div class="section-title">👥 Shop attendants</div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Give staff their own login to record sales & payments and see stock — they never see profit, costs, or settings.</p>
+      <button class="btn secondary" onclick="staffModal()">Manage attendants</button>
+    </div>
+    <div class="card"><div class="section-title">Account</div>
+      <div class="field"><label>Current password</label>
+        <input id="cpCur" type="password" placeholder="Your current password" autocomplete="current-password"></div>
+      <div class="field"><label>New password</label>
+        <input id="cpNew" type="password" placeholder="At least 6 characters" autocomplete="new-password">
+        <label class="auth-show"><input type="checkbox" onchange="document.getElementById('cpNew').type = this.checked ? 'text' : 'password'"> Show new password</label>
+      </div>
+      <button class="btn" onclick="changePassword()">Change password</button>
+      <button class="btn danger" onclick="logout()" style="margin-top:10px">Log out</button>
+    </div>`;
+}
+
+async function changePassword() {
+  const current_password = document.getElementById("cpCur").value;
+  const new_password = document.getElementById("cpNew").value;
+  if ((new_password || "").length < 6) { toast("New password must be 6+ characters"); return; }
+  try {
+    await api.send("/api/auth/change-password", "POST", { current_password, new_password });
+    document.getElementById("cpCur").value = "";
+    document.getElementById("cpNew").value = "";
+    toast("Password changed ✓");
+  } catch (e) { toast(e.message || "Could not change password"); }
+}
+// ---------- Shop attendants (owner-managed staff logins) ----------
+async function staffModal() {
+  openModal(`<h2>👥 Shop attendants</h2><div class="loading">Loading…</div>`);
+  let staff = [], shops = [];
+  try {
+    [staff, shops] = await Promise.all([
+      api.get("/api/staff").then(r => r.staff || []),
+      api.get("/api/shops").then(r => r.shops || []),
+    ]);
+  } catch (e) { closeModal(); toast(e.message || "Couldn't load"); return; }
+  const shopOpts = (sel) => shops.map(s =>
+    `<option value="${s.id}" ${s.id === sel ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const multi = shops.length > 1;
+  const rows = staff.length ? staff.map(s => `
+    <div class="list-row">
+      <div style="flex:1;min-width:0"><div class="main">${esc(s.name || s.username)}</div>
+        <div class="meta">@${esc(s.username)}${multi ? "" : ` · ${esc(s.shop_name || "shop")}`}</div>
+        ${multi ? `<select class="staff-shop" onchange="reassignStaff(${s.id}, this.value)">${shopOpts(s.shop_id)}</select>` : ""}</div>
+      <button class="wa-mini" style="background:var(--red-bg);color:var(--red)" onclick="delStaff(${s.id})">Remove</button>
+    </div>`).join("") : `<div class="empty">No attendants yet</div>`;
+  updateModal(`<h2>👥 Shop attendants</h2>
+    <div style="margin-bottom:14px">${rows}</div>
+    <div class="section-title">Add an attendant</div>
+    <div class="field"><label>Name</label><input id="stName" placeholder="e.g. Amaka"></div>
+    <div class="field"><label>Shop</label><select id="stShop">${shopOpts()}</select></div>
+    <div class="field"><label>Username (they log in with this)</label>
+      <input id="stUser" autocapitalize="none" autocomplete="off" placeholder="e.g. amaka"></div>
+    <div class="field"><label>Password / PIN</label><input id="stPass" placeholder="At least 4 characters"></div>
+    <button class="btn" onclick="saveStaff()">Create attendant</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Done</button>`);
+}
+async function saveStaff() {
+  const name = document.getElementById("stName").value.trim();
+  const username = document.getElementById("stUser").value.trim().toLowerCase();
+  const password = document.getElementById("stPass").value;
+  const shop_id = parseInt(document.getElementById("stShop").value, 10) || null;
+  if (username.length < 3) return toast("Username needs 3+ characters");
+  if ((password || "").length < 4) return toast("Password needs 4+ characters");
+  try { await api.send("/api/staff", "POST", { name, username, password, shop_id }); }
+  catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't add"); return; }
+  toast(`Attendant @${username} created ✓`);
+  staffModal();
+}
+async function reassignStaff(id, shopId) {
+  try { await api.send(`/api/staff/${id}`, "PUT", { shop_id: parseInt(shopId, 10) }); }
+  catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't reassign"); return; }
+  toast("Shop reassigned ✓");
+}
+async function delStaff(id) {
+  if (!confirm("Remove this attendant? They won't be able to log in anymore.")) return;
+  try { await api.send(`/api/staff/${id}`, "DELETE"); } catch (e) { toast(e.message || "Couldn't remove"); return; }
+  toast("Attendant removed");
+  staffModal();
+}
+
+async function saveSettings() {
+  await api.send("/api/settings", "PUT", {
+    business_name: document.getElementById("sName").value,
+    currency: document.getElementById("sCur").value || "₦",
+    phone: document.getElementById("sPhone").value,
+    email: document.getElementById("sEmail").value,
+    address: document.getElementById("sAddr").value });
+  state.settings = await api.get("/api/settings");
+  updateShopBar();  // appbar shows the active shop, not the business name
+  toast("Settings saved");
+}
+
+// ---------- Online payments (payout setup + pay links) ----------
+let _payBanks = null;
+async function connectPayoutModal() {
+  openModal(`<h2>Online payments</h2>
+    <p style="color:var(--muted);font-size:14px;margin:0 0 6px">Add the bank account where customer payments should land. SalesPal takes 0% — you keep every naira.</p>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 14px">⏱️ Paystack settles payments into your bank the <strong>next business day</strong>.</p>
+    <div class="field"><label>Bank</label><select id="payBank"><option value="">Loading banks…</option></select></div>
+    <div class="field"><label>Account number</label><input id="payAcct" inputmode="numeric" maxlength="10" placeholder="10-digit account number"></div>
+    <div id="payResolved" style="font-size:14px;min-height:20px;margin:-4px 0 12px;color:var(--muted)"></div>
+    <button class="btn" id="payConnectBtn" disabled onclick="savePayout()">Connect</button>
+    <button class="btn ghost" onclick="closeModal()">Cancel</button>`);
+  try {
+    if (!_payBanks) _payBanks = (await api.get("/api/pay/banks")).banks || [];
+    const sel = document.getElementById("payBank");
+    sel.innerHTML = `<option value="">Select your bank</option>` +
+      _payBanks.map(b => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join("");
+    sel.onchange = payMaybeResolve;
+    const acct = document.getElementById("payAcct");
+    acct.oninput = () => { acct.value = acct.value.replace(/\D/g, ""); payMaybeResolve(); };
+  } catch (e) {
+    const out = document.getElementById("payResolved");
+    if (out) out.textContent = "Couldn't load the bank list — try again.";
+  }
+}
+
+async function payMaybeResolve() {
+  const code = document.getElementById("payBank").value;
+  const acct = document.getElementById("payAcct").value;
+  const out = document.getElementById("payResolved");
+  const btn = document.getElementById("payConnectBtn");
+  btn.disabled = true;
+  if (!code || acct.length !== 10) { out.textContent = ""; return; }
+  out.style.color = "var(--muted)"; out.textContent = "Checking account…";
+  try {
+    const r = await api.send("/api/pay/resolve", "POST", { account_number: acct, bank_code: code });
+    if (r.account_name) {
+      out.style.color = "var(--pos, #16a34a)"; out.textContent = "✓ " + r.account_name;
+      btn.disabled = false;
+    } else { out.textContent = ""; }
+  } catch (e) {
+    out.style.color = "var(--neg, #dc2626)";
+    out.textContent = e.message || "Couldn't verify that account";
+  }
+}
+
+async function savePayout() {
+  const code = document.getElementById("payBank").value;
+  const acct = document.getElementById("payAcct").value;
+  const btn = document.getElementById("payConnectBtn");
+  btn.disabled = true; btn.textContent = "Connecting…";
+  try {
+    state.pay = await api.send("/api/pay/connect", "POST", { account_number: acct, bank_code: code });
+    closeModal(); toast("Online payments connected ✓"); render();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "Connect";
+    if (e.message !== "__upgrade__") toast(e.message || "Couldn't connect");
+  }
+}
+
+async function disconnectPayout() {
+  if (!confirm("Turn off online payments? Your existing pay links will stop working until you turn it back on.")) return;
+  try { state.pay = await api.send("/api/pay/disconnect", "POST"); toast("Online payments turned off"); render(); }
+  catch (e) { toast(e.message); }
+}
+
+function transferModal() {
+  const p = state.pay || {};
+  const name = p.transfer_name || p.account_name || "";
+  const number = p.transfer_number || "";
+  const bank = p.transfer_bank || p.bank_name || "";
+  openModal(`<h2>Instant bank transfer ⚡</h2>
+    <p style="color:var(--muted);font-size:14px;margin:0 0 14px">Customers transfer straight to this account — money lands <strong>instantly</strong> with no fees. You confirm each payment when your bank alert arrives.</p>
+    <div class="field"><label>Account name</label><input id="trName" value="${esc(name)}" placeholder="e.g. Ada Beauty Store"></div>
+    <div class="field"><label>Account number</label><input id="trNum" inputmode="numeric" value="${esc(number)}" placeholder="Your account number"></div>
+    <div class="field"><label>Bank / wallet</label><input id="trBank" value="${esc(bank)}" placeholder="e.g. OPay, Moniepoint, GTBank"></div>
+    <button class="btn" onclick="saveTransfer()">⚡ Turn on instant transfer</button>
+    <button class="btn ghost" onclick="closeModal()">Cancel</button>`);
+}
+
+async function saveTransfer() {
+  const account_name = document.getElementById("trName").value.trim();
+  const account_number = document.getElementById("trNum").value.replace(/\D/g, "");
+  const bank = document.getElementById("trBank").value.trim();
+  if (!account_name || !account_number || !bank) { toast("Fill in name, number and bank"); return; }
+  try {
+    state.pay = await api.send("/api/pay/transfer", "POST", { enabled: true, account_name, account_number, bank });
+    closeModal(); toast("Instant transfer is on ✓"); render();
+  } catch (e) { if (e.message !== "__upgrade__") toast(e.message || "Couldn't save"); }
+}
+
+async function disableTransfer() {
+  const p = state.pay || {};
+  if (!confirm("Turn off bank transfer payments? Customers won't see your account on new pay links.")) return;
+  try {
+    state.pay = await api.send("/api/pay/transfer", "POST", { enabled: false,
+      account_name: p.transfer_name, account_number: p.transfer_number, bank: p.transfer_bank });
+    toast("Bank transfer turned off"); render();
+  } catch (e) { toast(e.message); }
+}
+
+async function confirmClaim(iid, cid) {
+  try {
+    await api.send(`/api/invoices/${iid}/claims/${cid}/confirm`, "POST");
+    closeModal(); toast("Payment confirmed ✓"); receiptOffer(iid); render();
+  } catch (e) { toast(e.message || "Couldn't confirm"); }
+}
+
+async function dismissClaim(iid, cid) {
+  try {
+    await api.send(`/api/invoices/${iid}/claims/${cid}/dismiss`, "POST");
+    toast("Marked as not received"); invoiceDetail(iid);
+  } catch (e) { toast(e.message); }
+}
+
+// Send the pay link straight to the customer on WhatsApp (like the payment
+// reminder): use their saved number, ask once if we don't have it. The link is
+// pre-fetched with the invoice (inv.pay_url) so WhatsApp opens synchronously and
+// deep-links into the chat. Falls back to the share sheet / clipboard when no
+// number is provided, or fetches the link on demand if it wasn't pre-loaded.
+function sharePaymentLink(inv) {
+  const url = inv && inv.pay_url;
+  if (!url) { _sharePayLinkFallback(inv && inv.id); return; } // link not ready → async path
+  const cust = inv.customer;
+  const num = _waResolveNumber(cust);
+  if (!num) { _sharePayLinkShare(inv, url); return; } // no number → share/copy
+  const biz = state.settings.business_name || "SalesPal";
+  const who = cust && cust.name ? cust.name : "there";
+  const msg = `Hi ${who}, here's your payment link from ${biz} for invoice ${inv.invoice_no || ""}`
+    + `${inv.balance ? " — " + money(inv.balance) + " due" : ""}:\n${url}\n`
+    + `Tap to pay securely. Thank you!`;
+  _openWhatsApp(num, msg);
+}
+
+// Share the pay link via the native share sheet / clipboard (no WhatsApp number).
+async function _sharePayLinkShare(inv, url) {
+  const biz = state.settings.business_name || "SalesPal";
+  const text = `${biz} — pay invoice ${inv.invoice_no || ""}${inv.balance ? " (" + money(inv.balance) + ")" : ""}: ${url}`;
+  try {
+    if (navigator.share) { await navigator.share({ title: `Pay ${inv.invoice_no || "invoice"}`, text, url }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Payment link copied ✓");
+  } catch (e) {
+    openModal(`<h2>Payment link</h2>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Share this link with your customer — they can pay by card, transfer or USSD.</p>
+      <div class="field"><input value="${esc(url)}" readonly onclick="this.select()"></div>
+      <button class="btn ghost" onclick="closeModal()">Done</button>`);
+  }
+}
+
+// Rare path: the invoice didn't carry a pay_url (e.g. stale view) — create it,
+// then share via the sheet/clipboard (can't deep-link after an await).
+async function _sharePayLinkFallback(id) {
+  if (!id) { toast("Couldn't create link"); return; }
+  try {
+    const res = await api.send(`/api/invoices/${id}/payment-link`, "POST");
+    const inv = await api.get(`/api/invoices/${id}`).catch(() => ({ id }));
+    _sharePayLinkShare(inv, res.url);
+  } catch (e) { if (e.message !== "__upgrade__") toast(e.message || "Couldn't create link"); }
+}
+
+// ---------- boot ----------
+(async function init() {
+  // Fire every independent boot request at once (they don't depend on each
+  // other, only on being logged in) so the dashboard shows after ONE round-trip
+  // instead of a 5-deep waterfall.
+  const meP = api.get("/api/auth/me");
+  const settingsP = api.get("/api/settings").catch(() => null);
+  const planP = api.get("/api/plan").catch(() => null);
+  const payP = api.get("/api/pay/status").catch(() => null);
+  const shopsP = api.get("/api/shops").catch(() => null);
+  const ordersP = api.get("/api/orders/status").catch(() => null);
+  let user;
+  try { user = await meP; }
+  catch (e) { requireAuthUI(); return; } // no/invalid session → login/signup
+  try {
+    await bootstrap(user, { settings: settingsP, plan: planP, pay: payP, shops: shopsP, orders: ordersP });
+    await handlePaymentReturn(); // handle return from Paystack checkout
+  } catch (e) { requireAuthUI(); }
+})();
+
+// expose handlers used in inline onclick
+Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, shareInvoice, markPaid, paymentModal,
+  savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
+  saveSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
+  delProduct, addSupplierRow, callSupplier, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice,
+  goalModal, saveGoal, goalTips,
+  loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,
+  doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, whatsappReminder, whatsappCall, phoneCall,
+  startCheckout, renderLanding, startBuy, startFree,
+  shopSwitcher, switchShop, addShop,
+  shareInvoiceImage, shareReceipt, receiptOffer,
+  connectPayoutModal, payMaybeResolve, savePayout, disconnectPayout, sharePaymentLink,
+  transferModal, saveTransfer, disableTransfer, confirmClaim, dismissClaim,
+  viewOrders, orderDetail, fulfillOrder, declineOrder, enableOrders, disableOrders, shareOrderLink,
+  pushSubscribe, pushTest,
+  supplierOrder, supplierOrderTotal, sendSupplierOrder, copySupplierOrder,
+  attendantSaleModal, attendantSaveSale, setPayMode, attendantInvoice, attendantPay,
+  viewStock, viewAttendantHome, staffModal, saveStaff, delStaff, reassignStaff });

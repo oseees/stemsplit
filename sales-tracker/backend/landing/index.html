@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+
+  <title>SalesPal — Sales, Expense &amp; Profit Tracker for Small Business</title>
+  <meta name="description" content="Track sales, expenses, and profit in one app. Generate invoices, send WhatsApp payment reminders in one tap, and get business advice based on your own data. Built for small business owners." />
+  <link rel="canonical" href="https://salespal.online/" />
+  <!-- Paystack checkouts started before the app moved to /app return to /?paid=1 -->
+  <script>if (location.search.indexOf("paid=1") !== -1) location.replace("/app/" + location.search);</script>
+  <script>
+    // First-touch acquisition: on the first page a visitor sees, remember the
+    // referrer/utm so a later signup (over in /app) can be attributed to
+    // search/social/direct. Same-origin localStorage carries it across. Set once.
+    (function () {
+      try {
+        var K = "salespal_attr";
+        if (!localStorage.getItem(K)) {
+          var p = new URLSearchParams(location.search);
+          localStorage.setItem(K, JSON.stringify({
+            referrer: document.referrer || "", utm_source: p.get("utm_source") || "", ts: Date.now()
+          }));
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <script>
+    // Theme: explicit choice in localStorage.salespal_theme ('dark'|'light',
+    // shared with the app), otherwise follow the system. Runs pre-paint.
+    (function () {
+      function pref() { try { return localStorage.getItem("salespal_theme"); } catch (e) { return null; } }
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      function apply() {
+        var p = pref();
+        var dark = p === "dark" || (!p && mq.matches);
+        document.documentElement.classList.toggle("dark", dark);
+        var b = document.getElementById("themeToggle");
+        if (b) b.textContent = dark ? "☀️" : "🌙";
+      }
+      window.salespalToggleTheme = function () {
+        try { localStorage.setItem("salespal_theme", document.documentElement.classList.contains("dark") ? "light" : "dark"); } catch (e) {}
+        apply();
+      };
+      if (mq.addEventListener) mq.addEventListener("change", function () { if (!pref()) apply(); });
+      window.addEventListener("DOMContentLoaded", apply);
+      apply();
+    })();
+  </script>
+
+  <link rel="icon" href="/icons/favicon-64.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+  <!-- Open Graph / social preview -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="SalesPal" />
+  <meta property="og:title" content="SalesPal — Sales, Expense & Profit Tracker for Small Business" />
+  <meta property="og:description" content="Track sales, expenses, and profit in one app. Generate invoices, send WhatsApp payment reminders, and get advice based on your own data." />
+  <meta property="og:url" content="https://salespal.online/" />
+  <meta property="og:image" content="https://salespal.online/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="SalesPal — Sales, Expense & Profit Tracker for Small Business" />
+  <meta name="twitter:description" content="Track sales, expenses, and profit in one app. Invoices, payment reminders, and advice from your own numbers." />
+  <meta name="twitter:image" content="https://salespal.online/og-image.png" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "SalesPal",
+    "applicationCategory": "BusinessApplication",
+    "operatingSystem": "Web",
+    "url": "https://salespal.online/",
+    "description": "Sales, expense and profit tracker for small businesses: invoices, WhatsApp payment reminders, and AI business insights.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "NGN" }
+  }
+  </script>
+
+  <style>
+    :root {
+      --indigo: #4f46e5;
+      --indigo-dark: #4338ca;
+      --ink: #111827;
+      --muted: #4b5563;
+      --faint: #6b7280;
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --line: #e5e7eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --tint: #eef2ff;
+      --nav-bg: rgba(255, 255, 255, .92);
+      --hero-tint: #eef2ff;
+      --green-bg: #dcfce7;
+      --amber-bg: #fef3c7;
+      --amber-text: #b45309;
+      --radius: 16px;
+    }
+    /* Dark theme — html.dark is set by the head script (shared preference
+       with the app via localStorage.salespal_theme; defaults to system). */
+    html.dark {
+      --indigo: #6366f1;
+      --indigo-dark: #818cf8;
+      --ink: #e6e8ef;
+      --muted: #a3aab8;
+      --faint: #8b93a3;
+      --bg: #11131a;
+      --card: #1b1f2a;
+      --line: #2a2f3d;
+      --green: #4ade80;
+      --red: #f87171;
+      --tint: #262b45;
+      --nav-bg: rgba(17, 19, 26, .9);
+      --hero-tint: #1a1e2e;
+      --green-bg: rgba(34, 197, 94, .16);
+      --amber-bg: rgba(251, 191, 36, .16);
+      --amber-text: #fbbf24;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink); background: var(--bg); line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--indigo); text-decoration: none; }
+    img { max-width: 100%; }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+    .btn {
+      display: inline-block; padding: 13px 26px; border-radius: 12px;
+      font-weight: 700; font-size: 16px; border: 0; cursor: pointer;
+    }
+    .btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 18px rgba(79,70,229,.30); }
+    .btn-primary:hover { background: var(--indigo-dark); }
+    .btn-ghost { background: var(--card); color: var(--indigo); border: 2px solid var(--indigo); }
+    .btn-ghost:hover { background: var(--tint); }
+
+    /* ---------- Sticky nav ---------- */
+    .nav {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--nav-bg); backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav-row { display: flex; align-items: center; justify-content: space-between; height: 62px; }
+    .logo { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 800; color: var(--ink); }
+    .logo img { width: 30px; height: 30px; border-radius: 8px; }
+    .nav-links { display: flex; gap: 26px; }
+    .nav-links a { color: var(--muted); font-weight: 600; font-size: 15px; }
+    .nav-links a:hover { color: var(--indigo); }
+    .nav .btn { padding: 9px 18px; font-size: 14px; white-space: nowrap; }
+    .nav-actions { display: flex; align-items: center; gap: 18px; }
+    .nav-login { color: var(--muted); font-weight: 700; font-size: 15px; white-space: nowrap; }
+    .nav-login:hover { color: var(--indigo); }
+    .theme-btn { background: none; border: 0; font-size: 18px; line-height: 1; padding: 4px; cursor: pointer; }
+    @media (max-width: 720px) { .nav-links { display: none; } }
+    /* Keep the nav on one tidy row on phones: drop the theme toggle (dark mode
+       still follows the system and is toggleable inside the app) and tighten
+       spacing so logo + Log In + CTA never overlap or wrap. */
+    @media (max-width: 560px) {
+      .nav-row { height: 56px; }
+      .logo { font-size: 18px; gap: 7px; }
+      .logo img { width: 26px; height: 26px; }
+      .nav .theme-btn { display: none; }
+      .nav-actions { gap: 12px; }
+      .nav-login { font-size: 14px; }
+      .nav .btn { padding: 8px 13px; font-size: 13px; }
+    }
+
+    /* ---------- Hero ---------- */
+    .hero { padding: 72px 0 56px; background: linear-gradient(180deg, var(--hero-tint) 0%, var(--bg) 100%); }
+    .hero-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 48px; align-items: center; }
+    @media (max-width: 860px) { .hero-grid { grid-template-columns: 1fr; } }
+    h1 { font-size: clamp(32px, 5vw, 48px); line-height: 1.15; letter-spacing: -0.02em; }
+    .hero p.sub { margin: 18px 0 28px; font-size: 19px; color: var(--muted); max-width: 34em; }
+    .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; }
+    .trust { margin-top: 22px; font-size: 14px; color: var(--faint); }
+
+    /* Illustrative dashboard mockup (pure CSS) */
+    .mock {
+      background: var(--card); border: 1px solid var(--line); border-radius: 22px;
+      box-shadow: 0 24px 60px rgba(17,24,39,.12); padding: 18px; max-width: 380px; margin: 0 auto;
+    }
+    .mock-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+    .mock-top b { font-size: 15px; }
+    .mock-top span { font-size: 12px; color: var(--faint); }
+    .mock-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+    .mock-stat { background: var(--bg); border-radius: 12px; padding: 10px 8px; text-align: center; }
+    .mock-stat small { display: block; font-size: 10.5px; color: var(--faint); font-weight: 600; }
+    .mock-stat b { font-size: 14px; }
+    .mock-stat .up { color: var(--green); }
+    .mock-stat .down { color: var(--red); }
+    .mock-chart { display: flex; align-items: flex-end; gap: 7px; height: 96px; padding: 0 4px 6px; border-bottom: 1px solid var(--line); }
+    .mock-chart i { flex: 1; background: linear-gradient(180deg, #818cf8, var(--indigo)); border-radius: 6px 6px 0 0; }
+    .mock-row { display: flex; justify-content: space-between; padding: 9px 4px 0; font-size: 12px; color: var(--muted); }
+    .mock-row b { color: var(--ink); }
+
+    /* ---------- Sections ---------- */
+    section { padding: 68px 0; }
+    .kicker { text-transform: uppercase; letter-spacing: .1em; font-size: 12.5px; font-weight: 800; color: var(--indigo); }
+    h2 { font-size: clamp(26px, 3.6vw, 36px); line-height: 1.2; letter-spacing: -0.01em; }
+    .center { text-align: center; }
+
+    /* Feature teaser */
+    .teaser { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 36px; }
+    @media (max-width: 720px) { .teaser { grid-template-columns: 1fr; } }
+    .teaser-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px 22px; }
+    .teaser-card .emoji { font-size: 30px; }
+    .teaser-card h3 { margin: 10px 0 4px; font-size: 18px; }
+    .teaser-card p { color: var(--muted); font-size: 15px; }
+
+    /* How it works */
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 36px; }
+    @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
+    .step { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px 22px; }
+    .step .num {
+      width: 34px; height: 34px; border-radius: 50%; background: var(--tint); color: var(--indigo);
+      display: flex; align-items: center; justify-content: center; font-weight: 800; margin-bottom: 12px;
+    }
+    .step h3 { font-size: 18px; margin-bottom: 4px; }
+    .step p { color: var(--muted); font-size: 15px; }
+
+    /* Alternating showcase */
+    .show { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding: 34px 0; }
+    @media (max-width: 860px) { .show { grid-template-columns: 1fr; gap: 22px; } .show > .visual { order: -1; } }
+    .show h3 { font-size: 24px; margin-bottom: 8px; letter-spacing: -0.01em; }
+    .show p { color: var(--muted); font-size: 16.5px; margin-bottom: 18px; max-width: 30em; }
+    .visual {
+      background: var(--card); border: 1px solid var(--line); border-radius: 20px;
+      box-shadow: 0 14px 40px rgba(17,24,39,.08); padding: 24px; min-height: 190px;
+      display: flex; flex-direction: column; justify-content: center; gap: 10px;
+    }
+    .vrow { display: flex; justify-content: space-between; align-items: center; background: var(--bg); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+    .vrow b.green { color: var(--green); }
+    .vrow b.red { color: var(--red); }
+    .vbadge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 99px; }
+    .vbadge.paid { background: var(--green-bg); color: var(--green); }
+    .vbadge.due { background: var(--amber-bg); color: var(--amber-text); }
+    .vbubble { background: var(--green-bg); border-radius: 14px 14px 14px 4px; padding: 12px 14px; font-size: 14px; max-width: 90%; }
+    .vinsight { background: var(--tint); border-left: 4px solid var(--indigo); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--ink); }
+
+    /* Use cases */
+    .cases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 36px; }
+    @media (max-width: 860px) { .cases { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 540px) { .cases { grid-template-columns: 1fr; } }
+    .case { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 20px; }
+    .case .emoji { font-size: 26px; }
+    .case h3 { font-size: 17px; margin: 8px 0 4px; }
+    .case p { color: var(--muted); font-size: 14.5px; }
+
+    /* Pricing */
+    .plans { display: grid; grid-template-columns: repeat(2, minmax(0, 420px)); gap: 22px; justify-content: center; margin-top: 40px; }
+    @media (max-width: 720px) { .plans { grid-template-columns: 1fr; } }
+    .plan { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 32px 28px; display: flex; flex-direction: column; }
+    .plan.pro { border: 2px solid var(--indigo); box-shadow: 0 18px 44px rgba(79,70,229,.16); position: relative; }
+    .plan .tag {
+      position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
+      background: var(--indigo); color: #fff; font-size: 12px; font-weight: 800;
+      padding: 4px 14px; border-radius: 99px; white-space: nowrap;
+    }
+    .plan h3 { font-size: 21px; }
+    .plan .for { color: var(--faint); font-size: 14px; margin: 2px 0 14px; }
+    .price { font-size: 38px; font-weight: 800; letter-spacing: -0.02em; }
+    .price small { font-size: 15px; font-weight: 600; color: var(--faint); }
+    .yearly { font-size: 13.5px; color: var(--faint); margin-top: 2px; }
+    .plan ul { list-style: none; margin: 20px 0 26px; flex: 1; }
+    .plan li { padding: 7px 0 7px 28px; position: relative; color: var(--muted); font-size: 15px; }
+    .plan li::before { content: "✓"; position: absolute; left: 2px; color: var(--green); font-weight: 800; }
+    .plan .btn { width: 100%; text-align: center; }
+
+    /* Final CTA */
+    .cta-banner { background: linear-gradient(135deg, var(--indigo) 0%, #6d28d9 100%); border-radius: 24px; padding: 56px 30px; text-align: center; color: #fff; }
+    .cta-banner h2 { color: #fff; margin-bottom: 22px; }
+    .cta-banner .btn { background: #fff; color: var(--indigo); }
+    .cta-banner .btn:hover { background: #eef2ff; }
+
+    /* Footer */
+    footer { border-top: 1px solid var(--line); padding: 36px 0 44px; margin-top: 40px; background: var(--card); }
+    .foot { display: flex; justify-content: space-between; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .foot .logo { font-size: 17px; }
+    .foot .logo img { width: 24px; height: 24px; }
+    .foot nav { display: flex; gap: 20px; }
+    .foot a { color: var(--muted); font-size: 14px; font-weight: 600; }
+    .foot a:hover { color: var(--indigo); }
+    .foot .contact { font-size: 14px; color: var(--faint); }
+  </style>
+</head>
+<body>
+
+  <!-- Sticky navigation -->
+  <header class="nav">
+    <div class="wrap nav-row">
+      <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="30" height="30" />SalesPal</a>
+      <nav class="nav-links" aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="#pricing">Pricing</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="theme-btn" id="themeToggle" aria-label="Toggle dark mode" onclick="salespalToggleTheme()">🌙</button>
+        <a class="nav-login" href="/app/#login">Log In</a>
+        <a class="btn btn-primary" href="/app/">Get Started Free</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <h1>Run Your Business With Clarity, Not Guesswork</h1>
+        <p class="sub">SalesPal helps small business owners track sales, expenses, and profit, generate invoices, and get paid on time — all in one simple app.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="/app/">Get Started Free</a>
+          <a class="btn btn-ghost" href="#how-it-works">See How It Works</a>
+        </div>
+        <p class="trust">Built for small business owners, freelancers, and independent sellers.</p>
+      </div>
+      <div class="mock" role="img" aria-label="Illustration of the SalesPal dashboard showing sales, expenses and profit">
+        <div class="mock-top"><b>My Shop</b><span>Last 30 days</span></div>
+        <div class="mock-stats">
+          <div class="mock-stat"><small>SALES</small><b>₦482,500</b></div>
+          <div class="mock-stat"><small>EXPENSES</small><b class="down">₦173,200</b></div>
+          <div class="mock-stat"><small>PROFIT</small><b class="up">₦309,300</b></div>
+        </div>
+        <div class="mock-chart" aria-hidden="true">
+          <i style="height:38%"></i><i style="height:52%"></i><i style="height:44%"></i>
+          <i style="height:66%"></i><i style="height:58%"></i><i style="height:80%"></i><i style="height:92%"></i>
+        </div>
+        <div class="mock-row"><span>Best seller</span><b>Hair cream · 62 sold</b></div>
+        <div class="mock-row"><span>Unpaid invoices</span><b>3 · ₦45,000</b></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Feature teaser -->
+  <section id="features">
+    <div class="wrap">
+      <div class="center">
+        <p class="kicker">Everything in one place</p>
+        <h2>The numbers that matter, at a glance</h2>
+      </div>
+      <div class="teaser">
+        <div class="teaser-card">
+          <div class="emoji">📊</div>
+          <h3>Sales Tracking</h3>
+          <p>See what's selling, in real time.</p>
+        </div>
+        <div class="teaser-card">
+          <div class="emoji">💸</div>
+          <h3>Expense Tracking</h3>
+          <p>Know exactly where your money goes.</p>
+        </div>
+        <div class="teaser-card">
+          <div class="emoji">🔔</div>
+          <h3>Payment Reminders</h3>
+          <p>Never chase a late payment again.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section id="how-it-works" style="padding-top: 20px;">
+    <div class="wrap">
+      <div class="center">
+        <p class="kicker">How it works</p>
+        <h2>Up and running in minutes</h2>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <h3>Create your free account</h3>
+          <p>Sign up in under a minute and add your shop and products — no card required.</p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h3>Log sales &amp; expenses</h3>
+          <p>Record each sale and expense in a few taps, right from your phone.</p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h3>See profit &amp; get paid</h3>
+          <p>Watch your real profit update live, send invoices, and nudge late payers.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Feature showcase (alternating) -->
+  <section style="padding-top: 10px;">
+    <div class="wrap">
+
+      <div class="show">
+        <div>
+          <p class="kicker">Sales tracking</p>
+          <h3>Log every sale in seconds</h3>
+          <p>See your daily, weekly, and monthly sales trends at a glance, so you always know what's moving and what's not.</p>
+          <a class="btn btn-primary" href="/app/">Get Started Free</a>
+        </div>
+        <div class="visual" aria-hidden="true">
+          <div class="vrow"><span>Hair cream × 3</span><b class="green">+ ₦7,500</b></div>
+          <div class="vrow"><span>Body lotion × 1</span><b class="green">+ ₦4,200</b></div>
+          <div class="vrow"><span>Shampoo × 2</span><b class="green">+ ₦6,000</b></div>
+          <div class="vrow"><span>Today's total</span><b>₦17,700</b></div>
+        </div>
+      </div>
+
+      <div class="show">
+        <div class="visual" aria-hidden="true">
+          <div class="vrow"><span>Restock — supplier</span><b class="red">− ₦35,000</b></div>
+          <div class="vrow"><span>Delivery &amp; transport</span><b class="red">− ₦4,500</b></div>
+          <div class="vrow"><span>Data &amp; airtime</span><b class="red">− ₦2,000</b></div>
+          <div class="vrow"><span>This month</span><b>₦173,200</b></div>
+        </div>
+        <div>
+          <p class="kicker">Expense tracking</p>
+          <h3>Know where every naira goes</h3>
+          <p>Record business expenses as they happen and see spending broken down automatically — no spreadsheets required.</p>
+          <a class="btn btn-primary" href="/app/">Get Started Free</a>
+        </div>
+      </div>
+
+      <div class="show">
+        <div>
+          <p class="kicker">Profit tracking</p>
+          <h3>Always know your real numbers</h3>
+          <p>SalesPal calculates your true profit — sales minus expenses — in real time, so you're never guessing whether the business is actually making money.</p>
+          <a class="btn btn-primary" href="/app/">Get Started Free</a>
+        </div>
+        <div class="visual" aria-hidden="true">
+          <div class="vrow"><span>Sales</span><b class="green">₦482,500</b></div>
+          <div class="vrow"><span>Expenses</span><b class="red">− ₦173,200</b></div>
+          <div class="vrow"><span><b>Profit</b></span><b class="green">₦309,300</b></div>
+        </div>
+      </div>
+
+      <div class="show">
+        <div class="visual" aria-hidden="true">
+          <div class="vrow"><span>INV-0042 · Adaeze O.</span><span class="vbadge paid">Paid</span></div>
+          <div class="vrow"><span>INV-0043 · Chinedu K.</span><span class="vbadge due">Due in 3 days</span></div>
+          <div class="vrow"><span>INV-0044 · Bimpe A.</span><span class="vbadge due">Overdue</span></div>
+        </div>
+        <div>
+          <p class="kicker">Invoice generation</p>
+          <h3>Professional invoices in a few taps</h3>
+          <p>Create PDF invoices with your business name and send them straight to your customers, in seconds.</p>
+          <a class="btn btn-primary" href="/app/">Get Started Free</a>
+        </div>
+      </div>
+
+      <div class="show">
+        <div>
+          <p class="kicker">Payment reminders</p>
+          <h3>Stop chasing late payments</h3>
+          <p>When an invoice is due or overdue, send a friendly, ready-written WhatsApp reminder in one tap — so cash keeps flowing without the awkward follow-up.</p>
+          <a class="btn btn-primary" href="/app/">Get Started Free</a>
+        </div>
+        <div class="visual" aria-hidden="true">
+          <div class="vbubble">Hi Chinedu, a friendly reminder from My Shop: invoice INV-0043 (₦15,000) is due on Friday. Thank you! 🙏</div>
+          <div class="vrow"><span>💬 Sent via WhatsApp</span><span class="vbadge paid">One tap</span></div>
+        </div>
+      </div>
+
+      <div class="show">
+        <div class="visual" aria-hidden="true">
+          <div class="vinsight">💡 Your profit margin improved to 64% this month. Hair cream is your best seller — consider restocking before the weekend rush.</div>
+          <div class="vrow"><span>Weekly report</span><span class="vbadge paid">Ready</span></div>
+        </div>
+        <div>
+          <p class="kicker">Business insights</p>
+          <h3>Advice based on your actual numbers</h3>
+          <p>Get plain-language guidance based on your real sales and expense data — what's working, what's slipping, and where to focus next.</p>
+          <a class="btn btn-primary" href="/app/">Get Started Free</a>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Who it's for -->
+  <section style="padding-top: 10px;">
+    <div class="wrap">
+      <div class="center">
+        <p class="kicker">Who it's for</p>
+        <h2>Made for people who sell</h2>
+      </div>
+      <div class="cases">
+        <div class="case">
+          <div class="emoji">🏪</div>
+          <h3>Retailers</h3>
+          <p>Track inventory-driven sales and stay on top of margins.</p>
+        </div>
+        <div class="case">
+          <div class="emoji">🛠️</div>
+          <h3>Service Businesses</h3>
+          <p>Invoice clients and track project profitability.</p>
+        </div>
+        <div class="case">
+          <div class="emoji">💻</div>
+          <h3>Freelancers</h3>
+          <p>Keep income, expenses, and taxes organized in one place.</p>
+        </div>
+        <div class="case">
+          <div class="emoji">🚀</div>
+          <h3>Solo Entrepreneurs</h3>
+          <p>Run the whole business from your phone.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!--
+    Stats bar — add once there are real numbers (do not fabricate):
+    [X]% of users report faster payment collection
+    [X] hours saved per month on admin
+    [X]+ businesses using SalesPal
+  -->
+
+  <!--
+    Testimonials — add 2-3 short quotes once there are real users:
+    "[Quote about saving time / getting paid faster / clarity on finances]"
+    — Name, Business Type
+  -->
+
+  <!-- Pricing -->
+  <section id="pricing">
+    <div class="wrap">
+      <div class="center">
+        <p class="kicker">Pricing</p>
+        <h2>Simple pricing, no surprises</h2>
+      </div>
+      <div class="plans">
+        <div class="plan">
+          <h3>Free</h3>
+          <p class="for">Perfect for getting started</p>
+          <div class="price">₦0<small>/mo</small></div>
+          <ul>
+            <li>Sales &amp; expense tracking</li>
+            <li>Up to 15 invoices per month</li>
+            <li>One-tap WhatsApp payment reminders</li>
+            <li>Up to 20 products, 1 shop</li>
+          </ul>
+          <a class="btn btn-ghost" href="/app/">Get Started Free</a>
+        </div>
+        <div class="plan pro">
+          <span class="tag">Most popular</span>
+          <h3>Pro</h3>
+          <p class="for">For growing businesses</p>
+          <div class="price">₦3,000<small>/mo</small></div>
+          <p class="yearly">or ₦30,000/year — 2 months free</p>
+          <ul>
+            <li>Everything in Free</li>
+            <li>Unlimited invoices &amp; products</li>
+            <li>Multiple shops</li>
+            <li>AI business insights &amp; advice</li>
+            <li>Automatic weekly reports</li>
+          </ul>
+          <a class="btn btn-primary" href="/app/">Upgrade to Pro</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section style="padding-top: 10px;">
+    <div class="wrap">
+      <div class="cta-banner">
+        <h2>Run your business with clarity, not guesswork.</h2>
+        <a class="btn" href="/app/">Start Tracking Free</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap foot">
+      <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="24" height="24" />SalesPal</a>
+      <nav aria-label="Footer">
+        <a href="#features">Features</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="/app/#login">Log In</a>
+      </nav>
+      <span class="contact">Support: <a href="mailto:oseabhi@gmail.com">oseabhi@gmail.com</a></span>
+    </div>
+  </footer>
+
+</body>
+</html>

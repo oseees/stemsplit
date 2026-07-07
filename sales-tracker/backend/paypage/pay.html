@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="robots" content="noindex" />
+  <title>Pay invoice</title>
+  <link rel="icon" href="/icons/favicon-64.png" />
+  <style>
+    :root {
+      --indigo: #4f46e5; --indigo-d: #4338ca; --ink: #0f172a; --muted: #64748b;
+      --line: #e2e8f0; --bg: #f1f5f9; --card: #ffffff; --green: #16a34a;
+      --green-bg: #dcfce7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--ink);
+      min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+      padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+    }
+    .wrap { width: 100%; max-width: 420px; }
+    .brand { text-align: center; margin-bottom: 18px; }
+    .brand .logo {
+      display: inline-flex; align-items: center; gap: 8px; font-weight: 800;
+      font-size: 18px; color: var(--indigo);
+    }
+    .brand .logo span { font-size: 22px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+      padding: 22px; box-shadow: 0 8px 30px rgba(15, 23, 42, .06);
+    }
+    .biz { font-size: 20px; font-weight: 800; margin: 0 0 2px; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+    .amount-box {
+      text-align: center; background: #eef2ff; border-radius: 14px;
+      padding: 20px; margin-bottom: 6px;
+    }
+    .amount-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .amount { font-size: 34px; font-weight: 800; color: var(--ink); margin-top: 4px; }
+    .rows { margin: 16px 0 4px; }
+    .row { display: flex; justify-content: space-between; font-size: 14px; padding: 7px 0; }
+    .row .k { color: var(--muted); }
+    .row .v { font-weight: 600; }
+    .btn {
+      display: block; width: 100%; border: none; border-radius: 12px; cursor: pointer;
+      background: var(--indigo); color: #fff; font-size: 16px; font-weight: 700;
+      padding: 15px; margin-top: 18px; -webkit-tap-highlight-color: transparent;
+    }
+    .btn:hover { background: var(--indigo-d); }
+    .btn[disabled] { opacity: .55; cursor: default; }
+    .btn.alt { background: #fff; color: var(--indigo); border: 1.5px solid var(--indigo); }
+    .btn.alt:hover { background: #eef2ff; }
+    .btn.ghost { background: transparent; color: var(--muted); font-weight: 600; padding: 10px; margin-top: 6px; }
+    .transfer-box {
+      background: #f8fafc; border: 1px solid var(--line); border-radius: 14px;
+      padding: 14px 16px; margin-top: 14px;
+    }
+    .tr-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+    .tr-row:last-child { border-bottom: none; }
+    .tr-k { color: var(--muted); font-size: 12px; }
+    .tr-v { font-weight: 700; font-size: 15px; text-align: right; }
+    .tr-acct { font-size: 20px; letter-spacing: .04em; }
+    .copy {
+      border: none; background: #eef2ff; color: var(--indigo); font-weight: 700;
+      border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+    }
+    .hint { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 12px 2px 0; text-align: center; }
+    .secure {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      color: var(--muted); font-size: 12px; margin-top: 14px;
+    }
+    .paid-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 64px; height: 64px; border-radius: 50%; background: var(--green-bg);
+      color: var(--green); font-size: 34px; margin: 4px auto 10px;
+    }
+    .center { text-align: center; }
+    .msg { color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .foot { text-align: center; color: var(--muted); font-size: 12px; margin-top: 20px; }
+    .foot a { color: var(--indigo); text-decoration: none; }
+    .spinner {
+      width: 26px; height: 26px; border: 3px solid var(--line);
+      border-top-color: var(--indigo); border-radius: 50%; margin: 30px auto;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><div class="logo"><span>🧾</span> SalesPal</div></div>
+    <div class="card" id="card"><div class="spinner"></div></div>
+    <div class="foot" id="foot">Powered by <a href="/" target="_blank">SalesPal</a></div>
+  </div>
+
+  <script>
+    var token = decodeURIComponent(location.pathname.replace(/^\/pay\//, "").replace(/\/$/, ""));
+    var params = new URLSearchParams(location.search);
+    var card = document.getElementById("card");
+
+    function esc(s) {
+      return (s == null ? "" : String(s)).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+    function money(cur, v) {
+      return (cur || "₦") + (Number(v) || 0).toLocaleString(undefined,
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function paidView(inv) {
+      card.innerHTML =
+        '<div class="center">' +
+        '<div class="paid-badge">✓</div>' +
+        '<div class="biz" style="text-align:center">Payment received</div>' +
+        '<p class="msg">Thank you' + (inv && inv.customer_name ? ", " + esc(inv.customer_name.split(" ")[0]) : "") +
+        '! Your payment' + (inv ? ' to <strong>' + esc(inv.business_name) + '</strong>' : '') +
+        ' was successful.</p>' +
+        '<p class="msg">You can close this page.</p>' +
+        '</div>';
+    }
+
+    var CURRENT = null;
+
+    function payView(inv) {
+      CURRENT = inv;
+      var due = money(inv.currency, inv.amount_due);
+      var html =
+        '<h1 class="biz">' + esc(inv.business_name) + '</h1>' +
+        '<p class="sub">Invoice ' + esc(inv.invoice_no) +
+        (inv.customer_name ? ' · for ' + esc(inv.customer_name) : '') + '</p>' +
+        '<div class="amount-box"><div class="amount-label">Amount due</div>' +
+        '<div class="amount">' + due + '</div></div>' +
+        '<div class="rows">' +
+        '<div class="row"><span class="k">Invoice total</span><span class="v">' + money(inv.currency, inv.total) + '</span></div>' +
+        '</div>';
+
+      if (inv.transfer_pending) {
+        html += '<div class="transfer-box" style="text-align:center">✅ <strong>You told ' +
+          esc(inv.business_name) + ' you\'ve paid.</strong><div class="hint" style="margin-top:6px">' +
+          'They\'ll confirm once the transfer lands. Thank you!</div></div>';
+        card.innerHTML = html;
+        return;
+      }
+
+      if (inv.transfer_enabled && inv.transfer) {
+        var t = inv.transfer;
+        html +=
+          '<div class="transfer-box">' +
+          '<div style="font-weight:700;margin-bottom:4px">🏦 Transfer ' + due + ' to:</div>' +
+          '<div class="tr-row"><span class="tr-k">Account number</span>' +
+            '<span style="display:flex;align-items:center;gap:8px"><span class="tr-v tr-acct" id="trNum">' + esc(t.number) + '</span>' +
+            '<button class="copy" id="copyNum">Copy</button></span></div>' +
+          '<div class="tr-row"><span class="tr-k">Bank</span><span class="tr-v">' + esc(t.bank) + '</span></div>' +
+          '<div class="tr-row"><span class="tr-k">Account name</span><span class="tr-v">' + esc(t.name) + '</span></div>' +
+          '</div>' +
+          '<div class="hint">Transfer from your bank app, then tap the button below so ' + esc(inv.business_name) + ' can confirm.</div>' +
+          '<button class="btn" id="sentBtn" style="margin-top:14px">✓ I\'ve sent the transfer</button>';
+        if (inv.card_enabled) {
+          html += '<button class="btn ghost" id="cardBtn">Or pay by card / USSD instead</button>';
+        }
+      } else if (inv.card_enabled) {
+        html += '<button class="btn" id="payBtn">Pay ' + due + '</button>' +
+          '<div class="secure">🔒 Card · Bank transfer · USSD</div>';
+      }
+      card.innerHTML = html;
+
+      var copyNum = document.getElementById("copyNum");
+      if (copyNum) copyNum.onclick = function () {
+        var n = (inv.transfer && inv.transfer.number) || "";
+        navigator.clipboard && navigator.clipboard.writeText(n);
+        copyNum.textContent = "Copied ✓";
+        setTimeout(function () { copyNum.textContent = "Copy"; }, 1500);
+      };
+      var sentBtn = document.getElementById("sentBtn");
+      if (sentBtn) sentBtn.onclick = markSent;
+      var payBtn = document.getElementById("payBtn");
+      if (payBtn) payBtn.onclick = startPay;
+      var cardBtn = document.getElementById("cardBtn");
+      if (cardBtn) cardBtn.onclick = startPay;
+    }
+
+    async function markSent() {
+      var btn = document.getElementById("sentBtn");
+      btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        var r = await fetch("/api/pay/invoice/" + encodeURIComponent(token) + "/claim",
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        if (!r.ok) { var d = await r.json().catch(function(){return{};}); throw new Error(d.detail || "Please try again"); }
+        var inv = CURRENT || {};
+        inv.transfer_pending = true;
+        payView(inv);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "✓ I've sent the transfer";
+        messageView("Something went wrong", e.message || "Please try again.");
+      }
+    }
+
+    function messageView(title, body) {
+      card.innerHTML = '<div class="center"><div class="biz" style="text-align:center">' +
+        esc(title) + '</div><p class="msg">' + esc(body) + '</p></div>';
+    }
+
+    async function startPay() {
+      var btn = document.getElementById("payBtn");
+      btn.disabled = true; btn.textContent = "Starting secure checkout…";
+      try {
+        var r = await fetch("/api/pay/invoice/" + encodeURIComponent(token) + "/init", { method: "POST" });
+        var d = await r.json();
+        if (!r.ok || !d.authorization_url) throw new Error(d.detail || "Could not start payment");
+        window.location.href = d.authorization_url;
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Try again";
+        messageView("Something went wrong", e.message || "Please try again in a moment.");
+      }
+    }
+
+    async function loadInvoice() {
+      try {
+        var r = await fetch("/api/pay/invoice/" + encodeURIComponent(token));
+        if (r.status === 404) { messageView("Link not found", "This payment link is invalid or has expired."); return; }
+        var inv = await r.json();
+        if (!inv.enabled) { messageView("Not available", "This business isn't accepting online payments right now."); return; }
+        if (inv.amount_due <= 0 || inv.status === "paid") { paidView(inv); return; }
+        payView(inv);
+      } catch (e) {
+        messageView("Something went wrong", "Please refresh the page.");
+      }
+    }
+
+    async function handleReturn() {
+      // Returning from Paystack: confirm the reference for an instant result.
+      var ref = params.get("reference") || params.get("trxref");
+      card.innerHTML = '<div class="spinner"></div><p class="msg center">Confirming your payment…</p>';
+      if (ref) {
+        try {
+          var r = await fetch("/api/pay/verify?reference=" + encodeURIComponent(ref));
+          var d = await r.json();
+          if (d.paid) { paidView(null); return; }
+        } catch (e) { /* fall through */ }
+      }
+      // Fall back to the invoice's current state.
+      loadInvoice();
+    }
+
+    if (params.get("done")) handleReturn(); else loadInvoice();
+  </script>
+</body>
+</html>
