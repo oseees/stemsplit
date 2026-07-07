@@ -425,6 +425,12 @@ async function handlePaymentReturn() {
     const info = await api.get("/api/billing/verify?reference=" + encodeURIComponent(ref));
     state.plan = info;
     if (info.paid) {
+      // Pro was just applied by the verify call above — but bootstrap already
+      // loaded the Pro-gated state (e.g. /api/shops can_add=false) a moment
+      // earlier, before payment landed. Drop the cache and reload it so
+      // multi-shop and other Pro features unlock now, without a manual refresh.
+      apiCacheClear();
+      await loadShops();
       const until = info.plan_expires_at ? fmtDate(info.plan_expires_at) : "";
       openModal(`<h2>🎉 You're on Pro!</h2>
         <p style="font-size:15px;margin:0 0 14px">Thanks for upgrading. AI insights and unlimited invoices are unlocked${until ? ` until <strong>${until}</strong>` : ""}.</p>
