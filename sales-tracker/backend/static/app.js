@@ -46,21 +46,207 @@ const api = {
     const hit = _getCache.get(p);
     if (!(opts && opts.fresh) && hit && (Date.now() - hit.at) < GET_TTL) {
       _bgRefresh(p);           // serve instantly, keep the cache warm for next time
-      return hit.data;
+      return _applyOverlay(p, hit.data);
     }
-    return _rawGet(p, false);
+    try {
+      return _applyOverlay(p, await _rawGet(p, false));
+    } catch (e) {
+      if (e.message === "__auth__" || e.message === "__upgrade__") throw e;
+      // Offline/network fail: serve the last value we have (even if stale) so the
+      // app stays usable; for the offline-editable lists, fall back to empty so
+      // queued-but-unsynced items still show through the overlay.
+      if (hit) return _applyOverlay(p, hit.data);
+      if (_isOverlayList(p)) return _applyOverlay(p, []);
+      throw e;
+    }
   },
   async send(p, method, body) {
-    const r = await fetch(p, { method, headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined });
-    if (_handle401(p, r.status)) throw new Error("__auth__");
-    if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
-    if (!r.ok) throw await _err(r);
-    const data = await r.json();
-    apiCacheClear();           // a write may change dashboards/lists → drop caches
-    return data;
+    const writable = _offlineWritable(p, method);
+    if (writable && !navigator.onLine) return _enqueue(p, method, body);
+    try {
+      return await _rawSend(p, method, body);
+    } catch (e) {
+      if (e.message === "__net__") {
+        if (writable) return _enqueue(p, method, body);
+        throw new Error("You're offline — reconnect to do that");
+      }
+      throw e;
+    }
   },
 };
+
+async function _rawSend(p, method, body) {
+  let r;
+  try {
+    r = await fetch(p, { method, headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined });
+  } catch (e) { throw new Error("__net__"); }   // no connection (or SW unreachable)
+  if (_handle401(p, r.status)) throw new Error("__auth__");
+  if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
+  if (!r.ok) throw await _err(r);
+  const data = await r.json();
+  apiCacheClear();             // a write may change dashboards/lists → drop caches
+  return data;
+}
+// ---------- offline write queue (sales, products, customers) ----------
+// Offline, the whitelisted writes below are stored locally and replayed in order
+// when the connection returns; GET lists are overlaid with these pending changes
+// so the app looks up to date. Sales carry a client_uid so a replay after a lost
+// response can't create the sale twice. Scope is deliberate — settings, AI, pay
+// links, online orders and staff stay online-only.
+const OUTBOX_KEY = "salespal_outbox_v1";
+const FAILED_KEY = "salespal_sync_failed_v1";
+const TEMPSEQ_KEY = "salespal_tempseq_v1";
+let _flushing = false;
+
+function _outbox() { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch (e) { return []; } }
+function _setOutbox(o) { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(o)); } catch (e) {} updateSyncBar(); }
+function _shiftOutbox() { const o = _outbox(); o.shift(); _setOutbox(o); }
+function _nextTempId() {
+  let n = parseInt(localStorage.getItem(TEMPSEQ_KEY) || "0", 10); n = (isNaN(n) ? 0 : n) - 1;
+  try { localStorage.setItem(TEMPSEQ_KEY, String(n)); } catch (e) {}
+  return n;   // negative — never collides with a real server id
+}
+function _clientUid() { return "c_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+// Exactly the writes we support offline (everything else needs a connection).
+function _offlineWritable(path, method) {
+  if (method === "POST" && path === "/api/invoices") return true;
+  if (method === "POST" && /^\/api\/invoices\/-?\d+\/payments$/.test(path)) return true;
+  if (method === "POST" && (path === "/api/products" || path === "/api/customers")) return true;
+  if ((method === "PUT" || method === "DELETE") && /^\/api\/(products|customers)\/-?\d+$/.test(path)) return true;
+  return false;
+}
+const _OVERLAY_LISTS = ["/api/invoices", "/api/products", "/api/customers"];
+function _isOverlayList(p) { return _OVERLAY_LISTS.indexOf(p) !== -1; }
+
+// Queue a write and return the optimistic result its caller expects.
+function _enqueue(path, method, body) {
+  const e = { uid: _clientUid(), path, method, body: body || null };
+  let optimistic = { ok: true };
+  if (method === "POST" && path === "/api/invoices") {
+    e.tempId = _nextTempId();
+    body = body || {}; body.client_uid = body.client_uid || e.uid; e.body = body;
+    const total = (body.items || []).reduce((s, i) => s + (i.qty || 0) * (i.unit_price || 0), 0);
+    optimistic = { id: e.tempId, invoice_no: "Pending", total };
+  } else if (method === "POST" && (path === "/api/products" || path === "/api/customers")) {
+    e.tempId = _nextTempId();
+    optimistic = { id: e.tempId };
+  }
+  const o = _outbox(); o.push(e); _setOutbox(o);
+  return optimistic;
+}
+
+// Overlay pending writes onto a fetched list so offline edits are visible.
+function _applyOverlay(p, data) {
+  const ob = _outbox();
+  if (!ob.length || !_isOverlayList(p)) return data;
+  const list = Array.isArray(data) ? data.map(x => ({ ...x })) : [];
+  if (p === "/api/invoices") return _overlayInvoices(list, ob);
+  return _overlayEntity(p, list, ob);
+}
+function _overlayEntity(base, list, ob) {
+  const byId = new Map(list.map(x => [x.id, x]));
+  for (const e of ob) {
+    if (e.method === "POST" && e.path === base) {
+      byId.set(e.tempId, { ...(e.body || {}), id: e.tempId, _pending: true });
+    } else if (e.path.indexOf(base + "/") === 0) {
+      const id = parseInt(e.path.slice(base.length + 1), 10);
+      if (e.method === "PUT") byId.set(id, { ...(byId.get(id) || { id }), ...(e.body || {}), _pending: true });
+      else if (e.method === "DELETE") byId.delete(id);
+    }
+  }
+  return [...byId.values()];
+}
+function _overlayInvoices(list, ob) {
+  const pending = [];
+  for (const e of ob) {
+    if (e.method === "POST" && e.path === "/api/invoices") {
+      const b = e.body || {};
+      const total = (b.items || []).reduce((s, i) => s + (i.qty || 0) * (i.unit_price || 0), 0);
+      const paid = b.payment ? (b.payment.amount || 0) : 0;
+      pending.push({ id: e.tempId, invoice_no: "Pending", customer_name: b.customer_name || "",
+        date: b.date || new Date().toISOString().slice(0, 10), total, paid,
+        balance: total - paid,
+        status: paid >= total - 0.001 ? "paid" : (paid > 0 ? "partial" : "unpaid"),
+        _pending: true });
+    }
+  }
+  return pending.concat(list);
+}
+
+// Replay the queue in order, mapping each created row's temp id to its real id
+// so later ops (a payment, or a product used in a sale) target the right row.
+async function flushOutbox() {
+  if (_flushing || !navigator.onLine || !_outbox().length) return;
+  _flushing = true;
+  const idMap = {};
+  try {
+    while (navigator.onLine) {
+      const q = _outbox();
+      if (!q.length) break;
+      const e = q[0];
+      const res = await _flushSend(_remapPath(e.path, idMap), e.method, _remapBody(e.body, idMap));
+      if (res.net || res.status === 401 || res.status >= 500) break;   // transient — retry later
+      if (!res.ok) { _recordFailed(e, (res.data && res.data.detail) || ("Error " + res.status)); _shiftOutbox(); continue; }
+      if (e.tempId != null && res.data && res.data.id != null) idMap[e.tempId] = res.data.id;
+      _shiftOutbox();
+    }
+  } finally {
+    _flushing = false;
+    apiCacheClear();
+    updateSyncBar();
+    if (!document.body.classList.contains("signed-out")) render();
+  }
+}
+// Like _rawSend but with no UI side effects (no upgrade modal / cache churn mid-sync).
+async function _flushSend(path, method, body) {
+  let r;
+  try {
+    r = await fetch(path, { method, headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined });
+  } catch (e) { return { net: true }; }
+  let data = null; try { data = await r.json(); } catch (e) {}
+  return { ok: r.ok, status: r.status, data };
+}
+function _remapId(id, idMap) { return (id != null && idMap[id] != null) ? idMap[id] : id; }
+function _remapPath(path, idMap) {
+  return path.replace(/\/(-\d+)(\/|$)/, (m, id, tail) => "/" + _remapId(parseInt(id, 10), idMap) + tail);
+}
+function _remapBody(body, idMap) {
+  if (!body) return body;
+  const b = { ...body };
+  if (Array.isArray(b.items)) b.items = b.items.map(it => ({ ...it, product_id: _remapId(it.product_id, idMap) }));
+  if (b.customer_id != null) b.customer_id = _remapId(b.customer_id, idMap);
+  return b;
+}
+// A queued write the server rejected (e.g. product deleted before sync). Never
+// dropped silently — kept for the record and surfaced so nothing money-related
+// vanishes without the merchant knowing.
+function _recordFailed(e, msg) {
+  try {
+    const f = JSON.parse(localStorage.getItem(FAILED_KEY) || "[]");
+    f.push({ ...e, error: msg, at: Date.now() });
+    localStorage.setItem(FAILED_KEY, JSON.stringify(f));
+  } catch (err) {}
+  toast("A queued change couldn't sync: " + msg);
+}
+
+// Small status pill: offline notice + how many changes are waiting to sync.
+function updateSyncBar() {
+  let bar = document.getElementById("syncBar");
+  if (!bar) { bar = document.createElement("div"); bar.id = "syncBar"; bar.className = "sync-bar"; document.body.appendChild(bar); }
+  const n = _outbox().length;
+  const off = !navigator.onLine;
+  if (!n && !off) { bar.classList.remove("show"); return; }
+  bar.textContent = off
+    ? (n ? `📴 Offline · ${n} change${n > 1 ? "s" : ""} waiting to sync` : "📴 Offline — changes will sync when you reconnect")
+    : `⧗ Syncing ${n} change${n > 1 ? "s" : ""}…`;
+  bar.classList.add("show");
+}
+window.addEventListener("online", () => { updateSyncBar(); flushOutbox(); });
+window.addEventListener("offline", updateSyncBar);
+
 const cur = () => state.settings.currency || "₦";
 const money = (v) => cur() + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => (s == null ? "" : String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])));
@@ -594,27 +780,29 @@ async function attendantSaveSale() {
   if (!items.length) return toast("Add at least one item");
   const customer_name = document.getElementById("saleCustomer").value.trim();
   const owing = _payMode === "owing"; // no payment → no receipt to offer
+  const total = items.reduce((s, it) => s + it.qty * it.unit_price, 0);
   let res;
   try {
+    // Bundle the payment into the sale (one request) so it also works offline:
+    // the queue never holds a payment that points at a not-yet-synced invoice.
     res = await api.send("/api/invoices", "POST", {
       customer_name: customer_name || null,
       // unit_cost is ignored server-side for attendants (refilled from product)
       items: items.map(it => ({ product_id: it.product_id, description: it.description,
         qty: it.qty, unit_price: it.unit_price, unit_cost: 0 })),
+      payment: owing ? null : { amount: total, method: _payMode === "cash" ? "Cash" : "Transfer" },
     });
   } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save"); return; }
-  // Payment mode: cash/transfer → record full payment with that method; owing → leave unpaid.
-  if (_payMode !== "owing") {
-    try { await api.send(`/api/invoices/${res.id}/payments`, "POST",
-      { amount: res.total, method: _payMode === "cash" ? "Cash" : "Transfer" }); } catch (e) { /* sale still saved */ }
-  }
-  closeModal(); toast(`Sale saved · ${res.invoice_no}`);
+  closeModal();
   _payMode = "cash";
-  if (!owing) receiptOffer(res.id);
+  const pending = res.invoice_no === "Pending";
+  toast(pending ? "Sale saved offline — will sync when you're back online" : `Sale saved · ${res.invoice_no}`);
+  if (!owing && !pending) receiptOffer(res.id);   // receipt image needs the server
   render();
 }
 
 async function attendantInvoice(id) {
+  if (id < 0) { toast("This sale opens once it syncs online"); return; }
   openModal(`<div class="loading">Loading…</div>`);
   let inv;
   try { inv = await api.get(`/api/invoices/${id}`); }
@@ -643,7 +831,10 @@ async function attendantInvoice(id) {
 async function attendantPay(id, amount, method) {
   try { await api.send(`/api/invoices/${id}/payments`, "POST", { amount, method }); }
   catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't record"); return; }
-  closeModal(); toast(`Marked paid (${method}) ✓`); receiptOffer(id); render();
+  closeModal();
+  if (navigator.onLine && id > 0) { toast(`Marked paid (${method}) ✓`); receiptOffer(id); }
+  else toast("Payment saved offline — syncs when you're online");
+  render();
 }
 
 // ---------- shops (multi-shop switcher) ----------
@@ -743,8 +934,7 @@ document.querySelectorAll("#periodTabs button").forEach(b => {
   b.onclick = () => {
     state.period = b.dataset.period;
     document.querySelectorAll("#periodTabs button").forEach(x => x.classList.toggle("active", x === b));
-    const labels = { week: "Last 7 days", month: "Last 30 days", year: "This year", all: "All time" };
-    document.getElementById("periodLabel").textContent = labels[state.period];
+    document.getElementById("periodLabel").textContent = PERIOD_LABELS[state.period];
     if (state.view === "home" || state.view === "insights") render();
   };
 });
@@ -825,16 +1015,43 @@ function backupNudge(at) {
 }
 
 // ---------- HOME / dashboard ----------
+// Initials for the avatar circle on sale rows ("Chidi Okafor" → "CO").
+function _initials(name) {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "👤";
+  return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+}
+
+const PERIOD_LABELS = { week: "Last 7 days", month: "Last 30 days", year: "This year", all: "All time" };
+
 async function viewHome() {
-  const [d, products, claims, orders] = await Promise.all([
+  const [d, products, invoices, claims, orders] = await Promise.all([
     api.get(`/api/dashboard?period=${state.period}`),
     api.get("/api/products"),
+    api.get("/api/invoices").catch(() => []),
     (state.pay && state.pay.transfer_enabled) ? api.get("/api/pay/claims/pending").catch(() => []) : Promise.resolve([]),
     (state.orders && state.orders.enabled) ? api.get("/api/orders/pending").catch(() => []) : Promise.resolve([]),
   ]);
-  const netClass = d.net_profit >= 0 ? "pos" : "neg";
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todays = (invoices || []).filter(i => (i.date || "").slice(0, 10) === todayStr).slice(0, 5);
   app.innerHTML = `
-    ${(claims && claims.length) ? `<div class="card alert" style="border:1.5px solid var(--accent, #4f46e5)">
+    <div class="hero">
+      <div class="hero-label">Net profit · ${PERIOD_LABELS[state.period] || "Last 30 days"}</div>
+      <div class="hero-amt">${money(d.net_profit)}</div>
+      <div class="hero-chip ${d.net_profit < 0 ? "neg" : ""}">${d.net_profit < 0 ? "▼" : "▲"} ${d.margin_pct}% margin · ${d.num_sales} sale${d.num_sales === 1 ? "" : "s"}</div>
+    </div>
+    <div class="overlap-stats">
+      <div><div class="os-label">Revenue</div><div class="os-value">${money(d.revenue)}</div></div>
+      <div><div class="os-label">Collected</div><div class="os-value">${money(d.collected)}</div></div>
+      <div><div class="os-label">Owed</div><div class="os-value ${d.outstanding > 0 ? "warn" : ""}">${money(d.outstanding)}</div></div>
+    </div>
+    <div class="quick-acts">
+      <button class="qa" onclick="newSaleModal()"><span class="qa-i">＋</span>New sale</button>
+      <button class="qa" onclick="expenseModal()"><span class="qa-i">🧾</span>Expense</button>
+      <button class="qa" onclick="setView('products')"><span class="qa-i">📦</span>Stock</button>
+      <button class="qa" onclick="setView('insights')"><span class="qa-i">💡</span>Insights</button>
+    </div>
+    ${(claims && claims.length) ? `<div class="card alert" style="border:1.5px solid var(--indigo)">
       <div class="section-title">⚡ ${claims.length} payment${claims.length > 1 ? "s" : ""} to confirm</div>
       ${claims.map(c => `<div class="list-row" onclick="invoiceDetail(${c.invoice_id})">
         <div><div class="main">${esc(c.invoice_no)}</div><div class="meta">Customer says they've transferred</div></div>
@@ -847,27 +1064,25 @@ async function viewHome() {
           <div class="meta">${o.items.length} item${o.items.length > 1 ? "s" : ""} · ${fmtDate(o.created_at)}</div></div>
         <div class="amount">${money(o.total)}</div></div>`).join("")}
     </div>` : ""}
-    <div class="kpi-grid">
-      <div class="kpi primary">
-        <div class="label">Net profit</div>
-        <div class="value">${money(d.net_profit)}</div>
-        <div class="sub">${d.margin_pct}% margin · ${d.num_sales} sales</div>
+    ${goalCardHtml(d)}
+    <div class="card">
+      <div class="card-head">
+        <div class="section-title" style="margin:0">Today's sales</div>
+        <a class="see-all" onclick="setView('sales')">See all ›</a>
       </div>
-      <div class="kpi">
-        <div class="label">Revenue</div>
-        <div class="value">${money(d.revenue)}</div>
-        <div class="sub">Avg sale ${money(d.avg_sale)}</div>
-      </div>
+      ${todays.length ? todays.map(i => `
+        <div class="list-row" onclick="invoiceDetail(${i.id})">
+          <span class="avatar">${esc(_initials(i.customer_name))}</span>
+          <div style="flex:1;min-width:0;margin-left:12px"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
+            <div class="meta">${esc(i.invoice_no)}</div></div>
+          <div style="text-align:right"><div class="amount">${money(i.total)}</div>
+            <span class="badge ${i.status}">${i.status === "partial" ? "part paid" : i.status === "unpaid" ? "owing" : i.status}</span></div>
+        </div>`).join("") : `<div class="empty">No sales yet today. Tap ＋ to record one.</div>`}
     </div>
     <div class="kpi-grid">
       <div class="kpi"><div class="label">Cost of goods</div><div class="value">${money(d.cogs)}</div></div>
       <div class="kpi"><div class="label">Expenses</div><div class="value">${money(d.expenses)}</div></div>
-      <div class="kpi"><div class="label">Collected</div><div class="value">${money(d.collected)}</div></div>
-      <div class="kpi"><div class="label">Outstanding</div>
-        <div class="value ${d.outstanding > 0 ? 'neg' : ''}">${money(d.outstanding)}</div>
-        <div class="sub">${d.unpaid_invoices} unpaid</div></div>
     </div>
-    ${goalCardHtml(d)}
     ${(d.low_stock && d.low_stock.length) ? `<div class="card alert" onclick="setView('products')">
       <div class="section-title">⚠️ Low stock — time to restock</div>
       ${d.low_stock.map(p => `<div class="list-row">
@@ -904,8 +1119,7 @@ async function viewHome() {
             <div class="meta">${p.qty} sold · ${money(p.profit)} profit</div></div>
           <div class="amount">${money(p.revenue)}</div>
         </div>`).join("") : `<div class="empty">No sales yet</div>`}
-    </div>
-    <button class="btn" onclick="newSaleModal()">＋ Record a sale</button>`;
+    </div>`;
 }
 
 // ---------- Profit goal (per shop) ----------
@@ -919,7 +1133,7 @@ function goalCardHtml(d) {
   const g = d.goal;
   if (!g || !g.target) {
     _currentGoal = 0;
-    return `<div class="card" onclick="goalModal()">
+    return `<div class="card goal-card" onclick="goalModal()">
       <div class="section-title" style="margin:0">🎯 Set a monthly profit goal</div>
       <p style="font-size:13px;color:var(--muted);margin:6px 0 0">See how close you are each day — and get tips to hit it.${state.activeShop ? "" : " Each shop has its own."}</p>
     </div>`;
@@ -932,7 +1146,7 @@ function goalCardHtml(d) {
   const monthName = new Date().toLocaleString("en", { month: "long" });
   const title = combined ? `📊 ${monthName} goal · all shops` : `🎯 ${monthName} profit goal`;
   const editBtn = combined ? "" : `<button class="add-btn" onclick="event.stopPropagation(); goalModal()" aria-label="Edit goal">✎</button>`;
-  return `<div class="card" onclick="goalTips()">
+  return `<div class="card goal-card" onclick="goalTips()">
     <div class="card-head">
       <div class="section-title" style="margin:0">${title}</div>
       ${editBtn}
@@ -995,10 +1209,10 @@ function trendChart(trend, netProfit = 0) {
   const zeroY = y(0);
   return `<svg viewBox="0 0 ${W} ${H}" class="chart" preserveAspectRatio="none">
     <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="#e5e7eb" stroke-width="1"/>
-    ${line("revenue", "#4f46e5")}${line("profit", profitColor)}
+    ${line("revenue", "#0d9488")}${line("profit", profitColor)}
   </svg>
   <div style="display:flex;gap:16px;font-size:12px;color:var(--muted);margin-top:6px">
-    <span style="color:#4f46e5">●</span> Revenue
+    <span style="color:#0d9488">●</span> Revenue
     <span style="color:${profitColor}">●</span> Profit${netProfit < 0 ? " (loss)" : ""}</div>`;
 }
 
@@ -1067,6 +1281,7 @@ function renderSalesList() {
 }
 
 async function invoiceDetail(id) {
+  if (id < 0) { toast("This sale opens once it syncs online"); return; }
   if (state.me && state.me.is_attendant) return attendantInvoice(id);
   // Show the sheet immediately with a skeleton so the tap feels instant, then
   // fill it once the invoice loads (served from cache when seen recently).
@@ -1097,7 +1312,7 @@ async function invoiceDetail(id) {
     <div class="meta" style="color:var(--muted);font-size:13px;margin-bottom:12px">
       ${esc(inv.customer ? inv.customer.name : "Walk-in customer")} · ${fmtDate(inv.date)}${due}</div>
     ${(inv.claims || []).map(cl => `
-      <div class="card" style="border:1.5px solid var(--accent, #4f46e5);background:var(--tint)">
+      <div class="card" style="border:1.5px solid var(--indigo);background:var(--tint)">
         <div style="font-weight:700;margin-bottom:4px">⚡ Customer says they've paid</div>
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px">They reported sending <strong>${money(cl.amount)}</strong> by bank transfer. Confirm once it shows in your account.</div>
         <div class="btn-row">
@@ -1225,8 +1440,8 @@ function isOverdue(inv) {
 async function markPaid(id, balance) {
   await api.send(`/api/invoices/${id}/payments`, "POST",
     { amount: balance, method: "Marked paid" });
-  toast("Marked as paid ✓");
-  receiptOffer(id);
+  if (navigator.onLine && id > 0) { toast("Marked as paid ✓"); receiptOffer(id); }
+  else toast("Payment saved offline — syncs when you're online");
   render();
 }
 
@@ -1284,8 +1499,10 @@ async function savePayment(id, balance) {
       && !confirm(`That's more than the ${money(balance)} balance. Record ${money(amount)} anyway?`)) return;
   const r = await api.send(`/api/invoices/${id}/payments`, "POST",
     { amount, method: document.getElementById("payMethod").value });
-  toast(r.balance > 0.01 ? `Recorded — ${money(r.balance)} still due` : "Paid in full ✓");
-  receiptOffer(id);
+  if (navigator.onLine && id > 0 && r && typeof r.balance === "number") {
+    toast(r.balance > 0.01 ? `Recorded — ${money(r.balance)} still due` : "Paid in full ✓");
+    receiptOffer(id);
+  } else toast("Payment saved offline — syncs when you're online");
   render();
 }
 
@@ -1438,14 +1655,18 @@ async function saveSale() {
   const items = saleItems.filter(it => it.description && it.qty > 0);
   if (!items.length) return toast("Add at least one item");
   const customer_name = document.getElementById("saleCustomer").value.trim();
-  const res = await api.send("/api/invoices", "POST", {
-    customer_name: customer_name || null,
-    due_date: document.getElementById("saleDue").value || null,
-    notes: document.getElementById("saleNotes").value,
-    items: items.map(it => ({ product_id: it.product_id, description: it.description,
-      qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost })),
-  });
-  closeModal(); toast(`Sale saved · ${res.invoice_no}`);
+  let res;
+  try {
+    res = await api.send("/api/invoices", "POST", {
+      customer_name: customer_name || null,
+      due_date: document.getElementById("saleDue").value || null,
+      notes: document.getElementById("saleNotes").value,
+      items: items.map(it => ({ product_id: it.product_id, description: it.description,
+        qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost })),
+    });
+  } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save sale"); return; }
+  closeModal();
+  toast(res.invoice_no === "Pending" ? "Sale saved offline — syncs when you're online" : `Sale saved · ${res.invoice_no}`);
   setView("sales");
 }
 
@@ -2319,6 +2540,7 @@ async function _sharePayLinkFallback(id) {
   try {
     await bootstrap(user, { settings: settingsP, plan: planP, pay: payP, shops: shopsP, orders: ordersP });
     await handlePaymentReturn(); // handle return from Paystack checkout
+    updateSyncBar(); flushOutbox();   // push anything captured offline last session
   } catch (e) { requireAuthUI(); }
 })();
 

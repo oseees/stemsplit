@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#4f46e5" />
+  <meta name="theme-color" content="#0a5236" />
 
   <title>SalesPal — Sales, Expense &amp; Profit Tracker for Small Business</title>
   <meta name="description" content="Track sales, expenses, and profit in one app. Generate invoices, send WhatsApp payment reminders in one tap, and get business advice based on your own data. Built for small business owners." />
@@ -81,8 +81,8 @@
 
   <style>
     :root {
-      --indigo: #4f46e5;
-      --indigo-dark: #4338ca;
+      --indigo: #0b7a4f;
+      --indigo-dark: #095e3d;
       --ink: #111827;
       --muted: #4b5563;
       --faint: #6b7280;
@@ -91,9 +91,9 @@
       --line: #e5e7eb;
       --green: #16a34a;
       --red: #dc2626;
-      --tint: #eef2ff;
+      --tint: #e6f6ef;
       --nav-bg: rgba(255, 255, 255, .92);
-      --hero-tint: #eef2ff;
+      --hero-tint: #e6f6ef;
       --green-bg: #dcfce7;
       --amber-bg: #fef3c7;
       --amber-text: #b45309;
@@ -102,8 +102,8 @@
     /* Dark theme — html.dark is set by the head script (shared preference
        with the app via localStorage.salespal_theme; defaults to system). */
     html.dark {
-      --indigo: #6366f1;
-      --indigo-dark: #818cf8;
+      --indigo: #0d8f5f;
+      --indigo-dark: #0b7a4f;
       --ink: #e6e8ef;
       --muted: #a3aab8;
       --faint: #8b93a3;
@@ -112,9 +112,9 @@
       --line: #2a2f3d;
       --green: #4ade80;
       --red: #f87171;
-      --tint: #262b45;
+      --tint: #12362a;
       --nav-bg: rgba(17, 19, 26, .9);
-      --hero-tint: #1a1e2e;
+      --hero-tint: #10231a;
       --green-bg: rgba(34, 197, 94, .16);
       --amber-bg: rgba(251, 191, 36, .16);
       --amber-text: #fbbf24;
@@ -134,7 +134,7 @@
       display: inline-block; padding: 13px 26px; border-radius: 12px;
       font-weight: 700; font-size: 16px; border: 0; cursor: pointer;
     }
-    .btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 18px rgba(79,70,229,.30); }
+    .btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 18px rgba(11,122,79,.30); }
     .btn-primary:hover { background: var(--indigo-dark); }
     .btn-ghost { background: var(--card); color: var(--indigo); border: 2px solid var(--indigo); }
     .btn-ghost:hover { background: var(--tint); }
@@ -194,7 +194,7 @@
     .mock-stat .up { color: var(--green); }
     .mock-stat .down { color: var(--red); }
     .mock-chart { display: flex; align-items: flex-end; gap: 7px; height: 96px; padding: 0 4px 6px; border-bottom: 1px solid var(--line); }
-    .mock-chart i { flex: 1; background: linear-gradient(180deg, #818cf8, var(--indigo)); border-radius: 6px 6px 0 0; }
+    .mock-chart i { flex: 1; background: linear-gradient(180deg, #34d399, var(--indigo)); border-radius: 6px 6px 0 0; }
     .mock-row { display: flex; justify-content: space-between; padding: 9px 4px 0; font-size: 12px; color: var(--muted); }
     .mock-row b { color: var(--ink); }
 
@@ -255,7 +255,7 @@
     .plans { display: grid; grid-template-columns: repeat(2, minmax(0, 420px)); gap: 22px; justify-content: center; margin-top: 40px; }
     @media (max-width: 720px) { .plans { grid-template-columns: 1fr; } }
     .plan { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 32px 28px; display: flex; flex-direction: column; }
-    .plan.pro { border: 2px solid var(--indigo); box-shadow: 0 18px 44px rgba(79,70,229,.16); position: relative; }
+    .plan.pro { border: 2px solid var(--indigo); box-shadow: 0 18px 44px rgba(11,122,79,.16); position: relative; }
     .plan .tag {
       position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
       background: var(--indigo); color: #fff; font-size: 12px; font-weight: 800;
@@ -272,7 +272,7 @@
     .plan .btn { width: 100%; text-align: center; }
 
     /* Final CTA */
-    .cta-banner { background: linear-gradient(135deg, var(--indigo) 0%, #6d28d9 100%); border-radius: 24px; padding: 56px 30px; text-align: center; color: #fff; }
+    .cta-banner { background: linear-gradient(135deg, #0a5236 0%, #0f7a4d 100%); border-radius: 24px; padding: 56px 30px; text-align: center; color: #fff; }
     .cta-banner h2 { color: #fff; margin-bottom: 22px; }
     .cta-banner .btn { background: #fff; color: var(--indigo); }
     .cta-banner .btn:hover { background: #eef2ff; }
@@ -317,7 +317,7 @@
           <a class="btn btn-primary" href="/app/">Get Started Free</a>
           <a class="btn btn-ghost" href="#how-it-works">See How It Works</a>
         </div>
-        <p class="trust">Built for small business owners, freelancers, and independent sellers.</p>
+        <p class="trust">Works offline — record sales even with no network, they sync when you're back. Built for small business owners, freelancers, and independent sellers.</p>
       </div>
       <div class="mock" role="img" aria-label="Illustration of the SalesPal dashboard showing sales, expenses and profit">
         <div class="mock-top"><b>My Shop</b><span>Last 30 days</span></div>

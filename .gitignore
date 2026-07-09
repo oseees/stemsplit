@@ -27,5 +27,13 @@ backend/*.log
 sales-tracker/backups/
 sales-tracker/backend/data/
 
+# Android build artifacts (APK is built locally, not committed)
+sales-tracker/backend/downloads/
+sales-tracker/android/*.keystore
+sales-tracker/android/.bubblewrap/
+sales-tracker/android/app-release-*.apk
+sales-tracker/android/*.aab
+
 # OS
 .DS_Store
+vocalmatch/build/

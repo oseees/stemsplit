@@ -183,6 +183,13 @@ class InvoiceItemIn(BaseModel):
     unit_cost: float = 0
 
 
+class PaymentIn(BaseModel):
+    amount: float
+    date: Optional[str] = None
+    method: Optional[str] = None
+    note: Optional[str] = None
+
+
 class InvoiceIn(BaseModel):
     customer_id: Optional[int] = None
     customer_name: Optional[str] = None
@@ -190,13 +197,12 @@ class InvoiceIn(BaseModel):
     due_date: Optional[str] = None
     notes: Optional[str] = None
     items: List[InvoiceItemIn]
-
-
-class PaymentIn(BaseModel):
-    amount: float
-    date: Optional[str] = None
-    method: Optional[str] = None
-    note: Optional[str] = None
+    # Offline support: a client-generated id makes replay idempotent (a sale
+    # queued offline and retried on reconnect is created at most once), and an
+    # optional bundled payment records "paid on the spot" in the same request so
+    # the offline queue never holds a payment pointing at a not-yet-synced id.
+    client_uid: Optional[str] = None
+    payment: Optional[PaymentIn] = None
 
 
 class ExpenseIn(BaseModel):
@@ -1111,6 +1117,15 @@ def create_invoice(inv: InvoiceIn, user=Depends(current_user)):
         raise HTTPException(400, "An invoice needs at least one item")
     uid = user["id"]
     with db.get_conn() as conn:
+        # Idempotent replay: a sale queued offline carries a client_uid; if we've
+        # already created it (e.g. the response was lost on a flaky link and the
+        # client retried), return that invoice instead of creating a duplicate.
+        if inv.client_uid:
+            dup = conn.execute(
+                "SELECT id, invoice_no, total FROM invoices WHERE user_id=? AND client_uid=?",
+                (uid, inv.client_uid)).fetchone()
+            if dup:
+                return {"id": dup["id"], "invoice_no": dup["invoice_no"], "total": dup["total"]}
         if not is_pro(user) and _invoices_this_month(conn, uid) >= FREE_MAX_INVOICES_PER_MONTH:
             raise HTTPException(
                 402, f"Free plan limit reached ({FREE_MAX_INVOICES_PER_MONTH} invoices this "
@@ -1154,9 +1169,9 @@ def create_invoice(inv: InvoiceIn, user=Depends(current_user)):
         no = next_invoice_no(conn, uid)
         cur = conn.execute(
             "INSERT INTO invoices(user_id,shop_id,invoice_no,customer_id,date,due_date,status,notes,"
-            "total,cost_total,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "total,cost_total,client_uid,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (uid, shop_id, no, customer_id, inv.date or today(), inv.due_date, "unpaid",
-             inv.notes, total, cost_total, db.now_iso()),
+             inv.notes, total, cost_total, inv.client_uid, db.now_iso()),
         )
         iid = cur.lastrowid
         for it, c in zip(inv.items, costs):
@@ -1171,6 +1186,16 @@ def create_invoice(inv: InvoiceIn, user=Depends(current_user)):
                     "UPDATE products SET stock_qty = stock_qty - ? WHERE id=? AND user_id=?",
                     (it.qty, it.product_id, uid),
                 )
+        # Optional bundled payment (an offline sale paid on the spot): record it
+        # in the same request so the sync queue never holds a payment that points
+        # at a not-yet-created invoice id.
+        if inv.payment and (inv.payment.amount or 0) > 0:
+            conn.execute(
+                "INSERT INTO payments(invoice_id,amount,date,method,note) VALUES(?,?,?,?,?)",
+                (iid, inv.payment.amount, inv.payment.date or today(),
+                 inv.payment.method, inv.payment.note))
+            conn.execute("UPDATE invoices SET status=? WHERE id=?",
+                         (status_for(total, paid_for(conn, iid)), iid))
         return {"id": iid, "invoice_no": no, "total": total}
 
 
@@ -2263,6 +2288,47 @@ def health():
 # page (plain HTML so Google indexes it — no JS needed to render content).
 LANDING_DIR = os.path.join(os.path.dirname(__file__), "landing")
 PAYPAGE_DIR = os.path.join(os.path.dirname(__file__), "paypage")
+
+
+DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), "downloads")
+
+
+@app.get("/.well-known/assetlinks.json", include_in_schema=False)
+def assetlinks():
+    """Digital Asset Links for the Android app (TWA): proves this domain owns the
+    app so Chrome drops the address bar and it looks fully native. Set
+    ANDROID_CERT_SHA256 to the signing key's SHA-256 fingerprint (comma-separate
+    to allow more than one, e.g. your upload key + Play's app-signing key)."""
+    fps = [f.strip() for f in os.environ.get("ANDROID_CERT_SHA256", "").split(",") if f.strip()]
+    if not fps:
+        raise HTTPException(404, "Android app link not configured yet")
+    return JSONResponse([{
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {
+            "namespace": "android_app",
+            "package_name": os.environ.get("ANDROID_PACKAGE", "online.salespal.twa"),
+            "sha256_cert_fingerprints": fps,
+        },
+    }])
+
+
+@app.get("/download/android", include_in_schema=False)
+def download_android():
+    """Serve the signed APK for direct install (drop it at downloads/salespal.apk
+    after building). Until it's there, show a friendly note instead of a 404."""
+    apk = os.path.join(DOWNLOADS_DIR, "salespal.apk")
+    if os.path.exists(apk):
+        return FileResponse(apk, media_type="application/vnd.android.package-archive",
+                            filename="SalesPal.apk")
+    return RawResponse(
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<div style='font-family:system-ui;max-width:32rem;margin:12vh auto;padding:0 24px;text-align:center'>"
+        "<h1>SalesPal for Android</h1>"
+        "<p>The installable app is coming shortly. For now, open "
+        "<a href='/app/'>salespal.online</a> and tap your browser menu → "
+        "<b>Add to Home screen</b> — it installs, works offline, and syncs when you're back online.</p>"
+        "<p><a href='/app/'>Open SalesPal →</a></p></div>",
+        media_type="text/html")
 
 
 @app.get("/pay/{token}", include_in_schema=False)

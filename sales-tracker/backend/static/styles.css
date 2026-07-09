@@ -1,15 +1,16 @@
 :root {
-  --indigo: #4f46e5;
-  --indigo-dark: #4338ca;
+  --indigo: #0b7a4f;        /* brand emerald — buttons, links, active states */
+  --indigo-dark: #095e3d;
+  --brand-deep: #0a5236;    /* deep forest — app bar + hero KPI surface */
   --green: #16a34a;
   --red: #dc2626;
   --amber: #d97706;
   --ink: #111827;
   --muted: #6b7280;
   --line: #e5e7eb;
-  --bg: #f6f7fb;
+  --bg: #f3f7f4;
   --card: #ffffff;
-  --tint: #eef2ff;        /* indigo-tinted surface (pills, active states) */
+  --tint: #e6f6ef;        /* mint surface (pills, active states) */
   --green-bg: #dcfce7;
   --amber-bg: #fef3c7;
   --red-bg: #fee2e2;
@@ -19,13 +20,14 @@
   --handle: #d1d5db;
   --sk: #e8eaf0;             /* skeleton placeholder block */
   --sk-shine: rgba(255, 255, 255, .75);
-  --radius: 16px;
+  --radius: 18px;
   --maxw: 520px;
 }
 
 html.dark {
-  --indigo: #6366f1;
-  --indigo-dark: #818cf8;
+  --indigo: #0d8f5f;
+  --indigo-dark: #0b7a4f;
+  --brand-deep: #0c4a31;
   --green: #22c55e;
   --red: #f87171;
   --amber: #fbbf24;
@@ -34,7 +36,7 @@ html.dark {
   --line: #2a2f3d;
   --bg: #11131a;
   --card: #1b1f2a;
-  --tint: #262b45;
+  --tint: #12362a;
   --green-bg: rgba(34, 197, 94, .16);
   --amber-bg: rgba(251, 191, 36, .16);
   --red-bg: rgba(248, 113, 113, .16);
@@ -69,12 +71,12 @@ body {
 /* App bar */
 .appbar {
   position: sticky; top: 0; z-index: 30;
-  background: var(--indigo);
+  background: var(--brand-deep);
   color: #fff;
   padding: calc(14px + env(safe-area-inset-top)) 16px 8px;
   max-width: var(--maxw); margin: 0 auto;
-  border-radius: 0 0 18px 18px;
-  box-shadow: 0 4px 14px rgba(79,70,229,.25);
+  /* square bottom: on Home the green hero continues seamlessly below it */
+  border-radius: 0;
 }
 .appbar-row { display: flex; justify-content: space-between; align-items: center; }
 .appbar-title { font-size: 20px; font-weight: 700; }
@@ -105,6 +107,46 @@ body {
 
 main { padding: 14px; }
 .loading { text-align: center; color: var(--muted); padding: 40px; }
+
+/* --- Home hero: profit number on the green, Chime-style --- */
+/* Full-bleed continuation of the appbar's green; the stats card overlaps its
+   bottom edge. Negative margins cancel main's padding. */
+.hero {
+  margin: -14px -14px 0; padding: 4px 22px 58px;
+  background: var(--brand-deep); color: #fff;
+  border-radius: 0 0 30px 30px;
+}
+.hero-label { font-size: 13px; color: rgba(255,255,255,.72); }
+.hero-amt { font-size: 40px; font-weight: 800; letter-spacing: -1px; margin-top: 2px; }
+.hero-chip { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+  font-size: 13px; font-weight: 600; color: #bee9d2; }
+.hero-chip.neg { color: #ffc9c2; }
+
+.overlap-stats {
+  position: relative; margin: -42px 2px 16px;
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  background: var(--card); border-radius: 20px; padding: 15px 16px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.07);
+}
+.overlap-stats > div + div { border-left: 1px solid var(--line); padding-left: 14px; }
+.os-label { font-size: 12px; color: var(--muted); }
+.os-value { font-size: 16px; font-weight: 700; margin-top: 3px; }
+.os-value.warn { color: var(--amber); }
+
+.quick-acts { display: grid; grid-template-columns: repeat(4, 1fr); margin: 0 0 16px; }
+.qa { background: none; border: 0; display: flex; flex-direction: column; align-items: center;
+  gap: 7px; font-size: 12px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.qa-i { width: 50px; height: 50px; border-radius: 50%; background: var(--tint);
+  color: var(--indigo); display: flex; align-items: center; justify-content: center;
+  font-size: 22px; }
+
+.avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--tint);
+  color: var(--indigo); display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; flex-shrink: 0; }
+.see-all { font-size: 13px; font-weight: 600; color: var(--indigo); cursor: pointer; }
+
+/* Profit-goal card: mint promo tile (Chime's banner slot) */
+.card.goal-card { background: var(--tint); box-shadow: none; }
 
 /* Skeleton screen — shimmering placeholders shown while a view loads, instead
    of a bare "Loading…" line. Generic enough to stand in for any view. */
@@ -147,7 +189,7 @@ main { padding: 14px; }
 }
 .kpi .label { font-size: 12px; color: var(--muted); }
 .kpi .value { font-size: 22px; font-weight: 700; margin-top: 2px; }
-.kpi.primary { background: linear-gradient(135deg, #4f46e5, #6366f1); color: #fff; }
+.kpi.primary { background: linear-gradient(135deg, #0a5236, #0f7a4d); color: #fff; }
 .kpi.primary .label { color: rgba(255,255,255,.85); }
 .kpi .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .kpi.primary .sub { color: rgba(255,255,255,.85); }
@@ -213,8 +255,8 @@ main { padding: 14px; }
 .bottom-nav button span { font-size: 20px; }
 .bottom-nav button.active { color: var(--indigo); font-weight: 700; }
 .bottom-nav .fab {
-  background: var(--indigo); color: #fff; width: 54px; height: 54px;
-  border-radius: 50%; margin-top: -22px; box-shadow: 0 4px 12px rgba(79,70,229,.4);
+  background: #12b981; color: #fff; width: 54px; height: 54px;
+  border-radius: 50%; margin-top: -22px; box-shadow: 0 4px 12px rgba(18,185,129,.45);
   flex: 0 0 auto;
 }
 .bottom-nav .fab span { font-size: 28px; }
@@ -321,7 +363,7 @@ body.signed-out .menu-sheet { display: none !important; }
 .pill { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .04em;
   padding: 2px 8px; border-radius: 999px; background: var(--tint); color: var(--indigo);
   vertical-align: middle; }
-.pill.pro { background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; }
+.pill.pro { background: linear-gradient(135deg, #0f9c6b, #0a5236); color: #fff; }
 .pro-list { list-style: none; padding: 0; margin: 0 0 12px; }
 .pro-list li { padding: 7px 0; font-size: 15px; border-bottom: 1px solid var(--line); }
 .pro-list li:last-child { border-bottom: 0; }
@@ -341,7 +383,7 @@ body.signed-out .menu-sheet { display: none !important; }
 
 /* Profit-goal progress card */
 .goal-bar { height: 12px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 12px 0 8px; }
-.goal-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--indigo), #8b5cf6); transition: width .5s ease; }
+.goal-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--indigo), #12b981); transition: width .5s ease; }
 .goal-fill.hit { background: linear-gradient(90deg, var(--green), #34d399); }
 .goal-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; color: var(--muted); }
 .goal-meta strong { color: var(--ink); font-size: 15px; }
@@ -426,7 +468,7 @@ body.signed-out .menu-sheet { display: none !important; }
 .price-grid { display: flex; flex-direction: column; gap: 14px; }
 .price-card { position: relative; background: var(--card); border: 1.5px solid var(--line);
   border-radius: 16px; padding: 18px; }
-.price-card.featured { border-color: var(--indigo); box-shadow: 0 6px 20px rgba(79,70,229,.12); }
+.price-card.featured { border-color: var(--indigo); box-shadow: 0 6px 20px rgba(11,122,79,.14); }
 .price-card.sold { opacity: .6; }
 .price-name { font-weight: 700; font-size: 14px; color: var(--muted); text-transform: uppercase;
   letter-spacing: .5px; }
@@ -486,7 +528,10 @@ body.desktop:not(.signed-out) .bottom-nav button.active { background: var(--tint
 body.desktop:not(.signed-out) .bottom-nav .fab {
   width: auto; height: auto; border-radius: 10px; margin: 4px 0; box-shadow: none;
   justify-content: flex-start; padding: 12px 16px; flex: 0 0 auto;
+  background: var(--indigo);  /* deeper green: white label stays readable */
 }
+body.desktop:not(.signed-out) .hero { margin: -28px -36px 0; padding: 14px 36px 62px; }
+body.desktop:not(.signed-out) .overlap-stats { max-width: 560px; }
 body.desktop:not(.signed-out) .bottom-nav .fab span { font-size: 20px; }
 body.desktop:not(.signed-out) .bottom-nav .fab::after { content: "New sale"; font-weight: 700; }
 
@@ -517,3 +562,14 @@ body.desktop .land-sub { font-size: 17px; max-width: 560px; }
 body.desktop .price-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: start; }
 body.desktop .feat-grid { grid-template-columns: repeat(3, 1fr); }
 body.desktop .auth-wrap { min-height: 80vh; }
+
+/* --- offline / sync status pill (sits just above the bottom nav) --- */
+.sync-bar {
+  position: fixed; left: 50%; bottom: 74px; transform: translateX(-50%);
+  z-index: 60; max-width: 92%; text-align: center;
+  background: var(--toast-bg); color: #fff; font-size: 13px; font-weight: 600;
+  padding: 8px 14px; border-radius: 999px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.sync-bar.show { opacity: .96; }
+body.desktop .sync-bar { bottom: 20px; }

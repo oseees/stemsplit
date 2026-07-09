@@ -320,6 +320,9 @@ def init_db():
         # per-invoice public pay link token + de-dup guard for Paystack-settled payments
         _ensure_column(conn, "invoices", "pay_token", "TEXT")
         _ensure_column(conn, "payments", "paystack_ref", "TEXT")
+        # offline sync: a client-generated id makes an offline sale idempotent on replay
+        _ensure_column(conn, "invoices", "client_uid", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_invoices_client_uid ON invoices(client_uid)")
         for t in USER_SCOPED_TABLES:
             _ensure_column(conn, t, "user_id", "INTEGER")
             _ensure_column(conn, t, "shop_id", "INTEGER")

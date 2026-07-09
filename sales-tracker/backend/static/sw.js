@@ -1,6 +1,9 @@
 // SalesPal service worker — instant loads via stale-while-revalidate.
 // Scoped to /app/ (the dashboard); the marketing page at / is not cached here.
-const CACHE = "salespal-v64";
+const CACHE = "salespal-v66";
+// Separate cache for API GET responses so the app shows last-known data offline
+// (network-first: fresh when online, cached copy when the connection is gone).
+const API_CACHE = "salespal-api-v1";
 const SHELL = [
   "/app/", "/app/index.html", "/app/styles.css", "/app/app.js",
   "/app/manifest.webmanifest",
@@ -20,7 +23,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== API_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -33,7 +36,10 @@ self.addEventListener("activate", (e) => {
 function staleWhileRevalidate(request, url) {
   return caches.open(CACHE).then((cache) =>
     cache.match(request).then((cached) => {
-      const network = fetch(request)
+      // no-cache like the install seed: the server sends no Cache-Control, so a
+      // plain fetch would hit the browser's heuristic HTTP cache and "refresh"
+      // the SW cache with its own stale copy forever.
+      const network = fetch(request.url, { cache: "no-cache", credentials: "same-origin" })
         .then((resp) => {
           if (resp && resp.status === 200 && url.origin === location.origin) {
             cache.put(request, resp.clone());
@@ -45,6 +51,21 @@ function staleWhileRevalidate(request, url) {
       return cached || network;
     })
   );
+}
+
+// Network-first for API reads: always try the server (fresh data), fall back to
+// the last cached response when offline. A miss returns a 503 the app treats as
+// "offline" so reads degrade instead of throwing.
+function networkFirst(request) {
+  return caches.open(API_CACHE).then((cache) =>
+    fetch(request)
+      .then((resp) => {
+        if (resp && resp.status === 200) cache.put(request, resp.clone());
+        return resp;
+      })
+      .catch(() => cache.match(request).then((cached) =>
+        cached || new Response(JSON.stringify({ detail: "You're offline" }),
+          { status: 503, headers: { "Content-Type": "application/json" } }))));
 }
 
 // New-order alerts: the server pushes {title, body, url}; tapping the
@@ -72,8 +93,12 @@ self.addEventListener("fetch", (e) => {
   if (request.method !== "GET") return; // POST/PUT/DELETE always hit the network
   const url = new URL(request.url);
 
-  // API is dynamic — always go to the network, never serve a cached response.
-  if (url.origin === location.origin && url.pathname.startsWith("/api/")) return;
+  // API reads: network-first with an offline cache fallback so the dashboard and
+  // lists still render (from the last sync) when there's no connection.
+  if (url.origin === location.origin && url.pathname.startsWith("/api/")) {
+    e.respondWith(networkFirst(request));
+    return;
+  }
 
   // Navigations, app code, icons, fonts: stale-while-revalidate.
   e.respondWith(staleWhileRevalidate(request, url));
