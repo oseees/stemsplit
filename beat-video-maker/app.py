@@ -119,10 +119,13 @@ def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
 @app.post("/make")
 async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(default=[]),
                source: Optional[UploadFile] = File(default=None), clips: str = Form(default=""),
-               filter: str = Form(default="none")):
+               filter: str = Form(default="none"), youtube: str = Form(default="off"),
+               title: str = Form(default="")):
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
+    if youtube not in ("off", "private", "unlisted", "public"):
+        raise HTTPException(400, "youtube must be off|private|unlisted|public")
     auto = clips == "auto"
     clip_list: list[tuple[float, float]] = []
     if clips and not auto:
@@ -157,9 +160,19 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             clip_list = auto_clips(source_path, duration(beat_path))
         out = work / "beat_video.mp4"
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list)
+        if youtube != "off":
+            import youtube as yt  # local-only; import here so Railway never needs the deps
+            try:
+                url = yt.upload(out, title or "BeatVideo", privacy=youtube)
+            except RuntimeError as e:
+                raise HTTPException(400, str(e))  # e.g. "not connected — run youtube_auth.py"
+            return {"youtube_url": url, "privacy": youtube}
     except Exception:
         shutil.rmtree(work, ignore_errors=True)
         raise
+    finally:
+        if youtube != "off":
+            shutil.rmtree(work, ignore_errors=True)
     return FileResponse(out, media_type="video/mp4", filename="beat_video.mp4",
                         background=BackgroundTask(shutil.rmtree, work, ignore_errors=True))
 
@@ -209,6 +222,16 @@ onto the boxes below.</p>
     <option value="warm">Warm</option><option value="cool">Cool</option>
     <option value="punch">Punchy (contrast + saturation)</option><option value="vhs">VHS / vintage</option>
   </select></div>
+<div class="card"><label>Upload to YouTube</label>
+  <select id="youtube">
+    <option value="off">No — just download the file</option>
+    <option value="private">Yes — Private (only you)</option>
+    <option value="unlisted">Yes — Unlisted (link only)</option>
+    <option value="public">Yes — Public</option>
+  </select>
+  <input type="text" id="title" placeholder="Video title (optional)"
+    style="width:100%;padding:10px;margin-top:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+</div>
 <button id="go">Make video</button>
 <div id="msg"></div>
 <script>
@@ -281,14 +304,24 @@ go.onclick = async () => {
   if (auto) { fd.append('source', source.files[0]); fd.append('clips', 'auto'); }
   else if (clips.length) { fd.append('source', source.files[0]); fd.append('clips', JSON.stringify(clips)); }
   for (const f of media.files) fd.append('media', f);
-  go.disabled = true; msg.textContent = 'Rendering… this can take a minute for long beats.';
+  const yt = $('youtube').value;
+  fd.append('youtube', yt);
+  fd.append('title', $('title').value);
+  go.disabled = true;
+  msg.textContent = yt === 'off' ? 'Rendering… this can take a minute for long beats.'
+                                 : 'Rendering, then uploading to YouTube…';
   try {
     const r = await fetch('/make', {method: 'POST', body: fd});
     if (!r.ok) throw new Error(await r.text());
-    const url = URL.createObjectURL(await r.blob());
-    const a = Object.assign(document.createElement('a'), {href: url, download: 'beat_video.mp4'});
-    a.click();
-    msg.textContent = 'Done — downloaded beat_video.mp4';
+    if (yt !== 'off') {
+      const j = await r.json();
+      msg.innerHTML = 'Uploaded (' + j.privacy + '): <a href="' + j.youtube_url + '" target="_blank">' + j.youtube_url + '</a>';
+    } else {
+      const url = URL.createObjectURL(await r.blob());
+      const a = Object.assign(document.createElement('a'), {href: url, download: 'beat_video.mp4'});
+      a.click();
+      msg.textContent = 'Done — downloaded beat_video.mp4';
+    }
   } catch (e) { msg.textContent = 'Failed: ' + e.message; }
   go.disabled = false;
 };
