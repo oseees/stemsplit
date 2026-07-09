@@ -123,10 +123,14 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                filter: str = Form(default="none"), youtube: str = Form(default="off"),
                title: str = Form(default=""), description: str = Form(default=""),
                tags: str = Form(default=""), publish_at: str = Form(default=""),
-               thumbnail: Optional[UploadFile] = File(default=None)):
+               thumbnail: Optional[UploadFile] = File(default=None),
+               thumb_filter: str = Form(default="none")):
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
+    thumb_vf = FILTERS.get(thumb_filter)
+    if thumb_vf is None:
+        raise HTTPException(400, f"unknown thumbnail filter, pick one of {list(FILTERS)}")
     if youtube not in ("off", "private", "unlisted", "public"):
         raise HTTPException(400, "youtube must be off|private|unlisted|public")
     if publish_at:
@@ -172,6 +176,10 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
         if thumbnail is not None and youtube != "off":
             thumb_path = work / ("thumb" + Path(thumbnail.filename).suffix.lower())
             thumb_path.write_bytes(await thumbnail.read())
+            if thumb_vf:  # run the thumbnail through the same ffmpeg color filter
+                filtered = work / ("thumb_f" + thumb_path.suffix)
+                run(["ffmpeg", "-y", "-i", str(thumb_path), "-vf", thumb_vf, str(filtered)])
+                thumb_path = filtered
         out = work / "beat_video.mp4"
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list)
         if youtube != "off":
@@ -270,6 +278,12 @@ onto the boxes below.</p>
     <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
     <label style="font-weight:400;margin-top:10px">Custom thumbnail (optional, JPG/PNG under 2MB)
       <input type="file" id="thumbnail" accept="image/*"></label>
+    <select id="thumbFilter">
+      <option value="none">Thumbnail filter: None</option>
+      <option value="bw">Thumbnail: Black &amp; white</option>
+      <option value="warm">Thumbnail: Warm</option><option value="cool">Thumbnail: Cool</option>
+      <option value="punch">Thumbnail: Punchy</option><option value="vhs">Thumbnail: VHS / vintage</option>
+    </select>
     <label style="font-weight:400;margin-top:10px">Schedule publish (optional)
       <input type="datetime-local" id="scheduleAt"></label>
     <div style="color:#888;font-size:.8rem;margin-top:6px">If set, the video uploads private and
@@ -406,7 +420,10 @@ go.onclick = async () => {
   fd.append('tags', tags.value);
   const scheduled = yt !== 'off' && scheduleAt.value;
   if (scheduled) fd.append('publish_at', new Date(scheduleAt.value).toISOString());  // local -> UTC
-  if (yt !== 'off' && $('thumbnail').files[0]) fd.append('thumbnail', $('thumbnail').files[0]);
+  if (yt !== 'off' && $('thumbnail').files[0]) {
+    fd.append('thumbnail', $('thumbnail').files[0]);
+    fd.append('thumb_filter', $('thumbFilter').value);
+  }
   go.disabled = true;
   msg.textContent = yt === 'off' ? 'Rendering… this can take a minute for long beats.'
                   : scheduled ? 'Rendering, then scheduling on YouTube…'
