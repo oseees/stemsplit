@@ -180,6 +180,15 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                         background=BackgroundTask(shutil.rmtree, work, ignore_errors=True))
 
 
+@app.get("/youtube/videos")
+def youtube_videos():
+    import youtube as yt  # local-only
+    try:
+        return yt.list_recent()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return """<!doctype html>
@@ -235,6 +244,7 @@ onto the boxes below.</p>
     <option value="public">Yes — Public</option>
   </select>
   <div id="ytdetails" style="display:none">
+    <select id="reuseFrom"><option value="">↺ Copy details from a past video…</option></select>
     <input type="text" id="title" placeholder="Video title">
     <textarea id="description" rows="3" placeholder="Description"></textarea>
     <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
@@ -249,7 +259,8 @@ const beat = $('beat'), source = $('source'), media = $('media'), player = $('pl
       pickrow = $('pickrow'), marks = $('marks'), cliplist = $('cliplist'),
       markIn = $('markIn'), markOut = $('markOut'), go = $('go'),
       filterSel = $('filter'), msg = $('msg'), youtubeSel = $('youtube'),
-      ytdetails = $('ytdetails'), title = $('title'), description = $('description'), tags = $('tags');
+      ytdetails = $('ytdetails'), title = $('title'), description = $('description'), tags = $('tags'),
+      reuseFrom = $('reuseFrom');
 
 // remember YouTube details across sessions; show the fields only when uploading
 const YT_FIELDS = {youtube: youtubeSel, title, description, tags};
@@ -262,8 +273,38 @@ function saveYt() {
   for (const k in YT_FIELDS) data[k] = YT_FIELDS[k].value;
   localStorage.setItem('beatvideo_yt', JSON.stringify(data));
 }
-function syncYt() { ytdetails.style.display = youtubeSel.value === 'off' ? 'none' : 'block'; }
+function syncYt() {
+  const show = youtubeSel.value !== 'off';
+  ytdetails.style.display = show ? 'block' : 'none';
+  if (show) loadPast();
+}
 for (const el of Object.values(YT_FIELDS)) el.addEventListener('input', () => { saveYt(); syncYt(); });
+
+// pull title/description/tags from a video already on the channel and reuse them
+let pastVideos = [], loadedPast = false;
+async function loadPast() {
+  if (loadedPast) return;
+  loadedPast = true;
+  try {
+    const r = await fetch('/youtube/videos');
+    if (!r.ok) throw new Error(await r.text());
+    pastVideos = await r.json();
+    pastVideos.forEach((v, i) =>
+      reuseFrom.appendChild(new Option((v.title || '(untitled)').slice(0, 70), String(i))));
+    if (!pastVideos.length) reuseFrom.appendChild(new Option('(no past videos found)', ''));
+  } catch (e) {
+    loadedPast = false;  // let it retry next open
+    reuseFrom.appendChild(new Option('(could not load videos)', ''));
+  }
+}
+reuseFrom.onchange = () => {
+  const v = pastVideos[reuseFrom.value];
+  if (!v) return;
+  title.value = v.title;
+  description.value = v.description;
+  tags.value = (v.tags || []).join(', ');
+  saveYt();
+};
 syncYt();
 const MAX_CLIP = 5, clips = [];
 let inPoint = null;

@@ -12,7 +12,8 @@ from googleapiclient.http import MediaFileUpload
 HERE = Path(__file__).parent
 CLIENT_SECRET = HERE / "client_secret.json"
 TOKEN = HERE / "token.json"
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/youtube.readonly"]  # read = reuse past details
 
 
 def _credentials() -> Credentials:
@@ -26,6 +27,24 @@ def _credentials() -> Credentials:
         else:
             raise RuntimeError("YouTube login expired. Re-run: python youtube_auth.py")
     return creds
+
+
+def list_recent(max_results: int = 20) -> list[dict]:
+    """Recent uploads on the user's channel with their title/description/tags, to reuse."""
+    yt = build_service("youtube", "v3", credentials=_credentials())
+    chans = yt.channels().list(part="contentDetails", mine=True).execute().get("items", [])
+    if not chans:
+        return []
+    uploads = chans[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    items = yt.playlistItems().list(
+        part="contentDetails", playlistId=uploads, maxResults=max_results).execute().get("items", [])
+    ids = [i["contentDetails"]["videoId"] for i in items]
+    if not ids:
+        return []
+    vids = yt.videos().list(part="snippet", id=",".join(ids)).execute().get("items", [])
+    return [{"id": v["id"], "title": v["snippet"]["title"],
+             "description": v["snippet"].get("description", ""),
+             "tags": v["snippet"].get("tags", [])} for v in vids]
 
 
 def upload(path: Path, title: str, description: str = "", privacy: str = "private",
