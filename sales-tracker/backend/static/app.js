@@ -249,6 +249,16 @@ window.addEventListener("offline", updateSyncBar);
 
 const cur = () => state.settings.currency || "₦";
 const money = (v) => cur() + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Whole-naira (no kobo) — for big headline figures like the profit hero.
+const money0 = (v) => cur() + Math.round(Number(v) || 0).toLocaleString();
+// Compact currency for tight stat cells (₦1.24M, ₦980k) so long figures never
+// overflow their column. Full precision stays on the detail screens.
+function moneyShort(v) {
+  const n = Number(v) || 0, a = Math.abs(n), s = cur();
+  if (a >= 1e6) return s + (n / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M";
+  if (a >= 1e3) return s + Math.round(n / 1e3).toLocaleString() + "k";
+  return s + Math.round(n).toLocaleString();
+}
 const esc = (s) => (s == null ? "" : String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])));
 const fmtDate = (d) => { try { return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return d; } };
 
@@ -1037,13 +1047,13 @@ async function viewHome() {
   app.innerHTML = `
     <div class="hero">
       <div class="hero-label">Net profit · ${PERIOD_LABELS[state.period] || "Last 30 days"}</div>
-      <div class="hero-amt">${money(d.net_profit)}</div>
+      <div class="hero-amt">${money0(d.net_profit)}</div>
       <div class="hero-chip ${d.net_profit < 0 ? "neg" : ""}">${d.net_profit < 0 ? "▼" : "▲"} ${d.margin_pct}% margin · ${d.num_sales} sale${d.num_sales === 1 ? "" : "s"}</div>
     </div>
     <div class="overlap-stats">
-      <div><div class="os-label">Revenue</div><div class="os-value">${money(d.revenue)}</div></div>
-      <div><div class="os-label">Collected</div><div class="os-value">${money(d.collected)}</div></div>
-      <div><div class="os-label">Owed</div><div class="os-value ${d.outstanding > 0 ? "warn" : ""}">${money(d.outstanding)}</div></div>
+      <div><div class="os-label">Revenue</div><div class="os-value">${moneyShort(d.revenue)}</div></div>
+      <div><div class="os-label">Collected</div><div class="os-value">${moneyShort(d.collected)}</div></div>
+      <div><div class="os-label">Owed</div><div class="os-value ${d.outstanding > 0 ? "warn" : ""}">${moneyShort(d.outstanding)}</div></div>
     </div>
     <div class="quick-acts">
       <button class="qa" onclick="newSaleModal()"><span class="qa-i">＋</span>New sale</button>
