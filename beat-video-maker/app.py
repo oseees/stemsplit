@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -121,12 +122,19 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                source: Optional[UploadFile] = File(default=None), clips: str = Form(default=""),
                filter: str = Form(default="none"), youtube: str = Form(default="off"),
                title: str = Form(default=""), description: str = Form(default=""),
-               tags: str = Form(default="")):
+               tags: str = Form(default=""), publish_at: str = Form(default="")):
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
     if youtube not in ("off", "private", "unlisted", "public"):
         raise HTTPException(400, "youtube must be off|private|unlisted|public")
+    if publish_at:
+        try:
+            when = datetime.fromisoformat(publish_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, "bad publish time")
+        if when <= datetime.now(timezone.utc):
+            raise HTTPException(400, "schedule time must be in the future")
     auto = clips == "auto"
     clip_list: list[tuple[float, float]] = []
     if clips and not auto:
@@ -166,10 +174,10 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             try:
                 url = yt.upload(out, title or "BeatVideo", description=description,
-                                privacy=youtube, tags=tag_list)
+                                privacy=youtube, tags=tag_list, publish_at=publish_at or None)
             except RuntimeError as e:
                 raise HTTPException(400, str(e))  # e.g. "not connected — run youtube_auth.py"
-            return {"youtube_url": url, "privacy": youtube}
+            return {"youtube_url": url, "privacy": youtube, "publish_at": publish_at}
     except Exception:
         shutil.rmtree(work, ignore_errors=True)
         raise
@@ -248,7 +256,11 @@ onto the boxes below.</p>
     <input type="text" id="title" placeholder="Video title">
     <textarea id="description" rows="3" placeholder="Description"></textarea>
     <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
-    <div style="color:#888;font-size:.8rem;margin-top:6px">These are remembered for next time.</div>
+    <label style="font-weight:400;margin-top:10px">Schedule publish (optional)
+      <input type="datetime-local" id="scheduleAt"></label>
+    <div style="color:#888;font-size:.8rem;margin-top:6px">If set, the video uploads private and
+      goes <b>Public</b> automatically at that time. Leave blank to publish now.
+      Title/description/tags are remembered for next time.</div>
   </div>
 </div>
 <button id="go">Make video</button>
@@ -260,7 +272,10 @@ const beat = $('beat'), source = $('source'), media = $('media'), player = $('pl
       markIn = $('markIn'), markOut = $('markOut'), go = $('go'),
       filterSel = $('filter'), msg = $('msg'), youtubeSel = $('youtube'),
       ytdetails = $('ytdetails'), title = $('title'), description = $('description'), tags = $('tags'),
-      reuseFrom = $('reuseFrom');
+      reuseFrom = $('reuseFrom'), scheduleAt = $('scheduleAt');
+
+// can't schedule in the past
+{ const n = new Date(Date.now() - new Date().getTimezoneOffset() * 60000); scheduleAt.min = n.toISOString().slice(0, 16); }
 
 // remember YouTube details across sessions; show the fields only when uploading
 const YT_FIELDS = {youtube: youtubeSel, title, description, tags};
@@ -375,15 +390,21 @@ go.onclick = async () => {
   fd.append('title', title.value);
   fd.append('description', description.value);
   fd.append('tags', tags.value);
+  const scheduled = yt !== 'off' && scheduleAt.value;
+  if (scheduled) fd.append('publish_at', new Date(scheduleAt.value).toISOString());  // local -> UTC
   go.disabled = true;
   msg.textContent = yt === 'off' ? 'Rendering… this can take a minute for long beats.'
-                                 : 'Rendering, then uploading to YouTube…';
+                  : scheduled ? 'Rendering, then scheduling on YouTube…'
+                              : 'Rendering, then uploading to YouTube…';
   try {
     const r = await fetch('/make', {method: 'POST', body: fd});
     if (!r.ok) throw new Error(await r.text());
     if (yt !== 'off') {
       const j = await r.json();
-      msg.innerHTML = 'Uploaded (' + j.privacy + '): <a href="' + j.youtube_url + '" target="_blank">' + j.youtube_url + '</a>';
+      const link = '<a href="' + j.youtube_url + '" target="_blank">' + j.youtube_url + '</a>';
+      msg.innerHTML = scheduled
+        ? 'Scheduled — goes Public ' + new Date(scheduleAt.value).toLocaleString() + ': ' + link
+        : 'Uploaded (' + j.privacy + '): ' + link;
     } else {
       const url = URL.createObjectURL(await r.blob());
       const a = Object.assign(document.createElement('a'), {href: url, download: 'beat_video.mp4'});

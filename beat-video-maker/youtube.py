@@ -48,18 +48,20 @@ def list_recent(max_results: int = 20) -> list[dict]:
 
 
 def upload(path: Path, title: str, description: str = "", privacy: str = "private",
-           tags: Optional[list[str]] = None) -> str:
-    """Resumable-upload a video, return its youtube.com URL. privacy: private|unlisted|public."""
+           tags: Optional[list[str]] = None, publish_at: Optional[str] = None) -> str:
+    """Resumable-upload a video, return its youtube.com URL. privacy: private|unlisted|public.
+    publish_at: RFC3339 UTC string — YouTube uploads it private and makes it public then."""
     if privacy not in ("private", "unlisted", "public"):
         raise ValueError(f"bad privacy {privacy!r}")
     yt = build_service("youtube", "v3", credentials=_credentials())
     snippet = {"title": title[:100] or "BeatVideo", "description": description[:5000]}
     if tags:
         snippet["tags"] = tags[:60]  # YouTube caps total tag text ~500 chars; 60 tags is safe
-    body = {
-        "snippet": snippet,
-        "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False},
-    }
+    status = {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}
+    if publish_at:
+        status["privacyStatus"] = "private"  # scheduling requires private; YT flips it public
+        status["publishAt"] = publish_at
+    body = {"snippet": snippet, "status": status}
     req = yt.videos().insert(
         part="snippet,status", body=body,
         media_body=MediaFileUpload(str(path), chunksize=-1, resumable=True))
