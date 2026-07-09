@@ -2,6 +2,7 @@
 # One-time setup: put a Google OAuth "Desktop app" client_secret.json next to this file,
 # then run `python youtube_auth.py` once to log in (writes token.json).
 from pathlib import Path
+from typing import Optional
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -27,13 +28,17 @@ def _credentials() -> Credentials:
     return creds
 
 
-def upload(path: Path, title: str, description: str = "", privacy: str = "private") -> str:
+def upload(path: Path, title: str, description: str = "", privacy: str = "private",
+           tags: Optional[list[str]] = None) -> str:
     """Resumable-upload a video, return its youtube.com URL. privacy: private|unlisted|public."""
     if privacy not in ("private", "unlisted", "public"):
         raise ValueError(f"bad privacy {privacy!r}")
     yt = build_service("youtube", "v3", credentials=_credentials())
+    snippet = {"title": title[:100] or "BeatVideo", "description": description[:5000]}
+    if tags:
+        snippet["tags"] = tags[:60]  # YouTube caps total tag text ~500 chars; 60 tags is safe
     body = {
-        "snippet": {"title": title[:100] or "BeatVideo", "description": description[:5000]},
+        "snippet": snippet,
         "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False},
     }
     req = yt.videos().insert(

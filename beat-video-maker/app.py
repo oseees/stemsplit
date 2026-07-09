@@ -120,7 +120,8 @@ def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
 async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(default=[]),
                source: Optional[UploadFile] = File(default=None), clips: str = Form(default=""),
                filter: str = Form(default="none"), youtube: str = Form(default="off"),
-               title: str = Form(default="")):
+               title: str = Form(default=""), description: str = Form(default=""),
+               tags: str = Form(default="")):
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
@@ -162,8 +163,10 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list)
         if youtube != "off":
             import youtube as yt  # local-only; import here so Railway never needs the deps
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             try:
-                url = yt.upload(out, title or "BeatVideo", privacy=youtube)
+                url = yt.upload(out, title or "BeatVideo", description=description,
+                                privacy=youtube, tags=tag_list)
             except RuntimeError as e:
                 raise HTTPException(400, str(e))  # e.g. "not connected — run youtube_auth.py"
             return {"youtube_url": url, "privacy": youtube}
@@ -191,7 +194,9 @@ def index():
          font-size:1rem;font-weight:700;cursor:pointer} button:disabled{opacity:.5}
   button.mini{width:auto;padding:8px 12px;font-size:.85rem;font-weight:600;background:#333}
   .row{display:flex;gap:8px} .row button{flex:1}
-  select{width:100%;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444}
+  select,#ytdetails input,#ytdetails textarea{width:100%;padding:10px;margin-top:8px;border-radius:8px;
+    background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit}
+  #ytdetails textarea{resize:vertical}
   ol{padding-left:20px} li{margin:6px 0}
   #msg{margin-top:12px;color:#aaa}
 </style>
@@ -229,8 +234,12 @@ onto the boxes below.</p>
     <option value="unlisted">Yes — Unlisted (link only)</option>
     <option value="public">Yes — Public</option>
   </select>
-  <input type="text" id="title" placeholder="Video title (optional)"
-    style="width:100%;padding:10px;margin-top:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+  <div id="ytdetails" style="display:none">
+    <input type="text" id="title" placeholder="Video title">
+    <textarea id="description" rows="3" placeholder="Description"></textarea>
+    <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
+    <div style="color:#888;font-size:.8rem;margin-top:6px">These are remembered for next time.</div>
+  </div>
 </div>
 <button id="go">Make video</button>
 <div id="msg"></div>
@@ -239,7 +248,23 @@ const $ = id => document.getElementById(id);
 const beat = $('beat'), source = $('source'), media = $('media'), player = $('player'),
       pickrow = $('pickrow'), marks = $('marks'), cliplist = $('cliplist'),
       markIn = $('markIn'), markOut = $('markOut'), go = $('go'),
-      filterSel = $('filter'), msg = $('msg');
+      filterSel = $('filter'), msg = $('msg'), youtubeSel = $('youtube'),
+      ytdetails = $('ytdetails'), title = $('title'), description = $('description'), tags = $('tags');
+
+// remember YouTube details across sessions; show the fields only when uploading
+const YT_FIELDS = {youtube: youtubeSel, title, description, tags};
+try {
+  const saved = JSON.parse(localStorage.getItem('beatvideo_yt') || '{}');
+  for (const k in YT_FIELDS) if (saved[k] != null) YT_FIELDS[k].value = saved[k];
+} catch (e) {}
+function saveYt() {
+  const data = {};
+  for (const k in YT_FIELDS) data[k] = YT_FIELDS[k].value;
+  localStorage.setItem('beatvideo_yt', JSON.stringify(data));
+}
+function syncYt() { ytdetails.style.display = youtubeSel.value === 'off' ? 'none' : 'block'; }
+for (const el of Object.values(YT_FIELDS)) el.addEventListener('input', () => { saveYt(); syncYt(); });
+syncYt();
 const MAX_CLIP = 5, clips = [];
 let inPoint = null;
 const fmt = t => t.toFixed(1) + 's';
@@ -304,9 +329,11 @@ go.onclick = async () => {
   if (auto) { fd.append('source', source.files[0]); fd.append('clips', 'auto'); }
   else if (clips.length) { fd.append('source', source.files[0]); fd.append('clips', JSON.stringify(clips)); }
   for (const f of media.files) fd.append('media', f);
-  const yt = $('youtube').value;
+  const yt = youtubeSel.value;
   fd.append('youtube', yt);
-  fd.append('title', $('title').value);
+  fd.append('title', title.value);
+  fd.append('description', description.value);
+  fd.append('tags', tags.value);
   go.disabled = true;
   msg.textContent = yt === 'off' ? 'Rendering… this can take a minute for long beats.'
                                  : 'Rendering, then uploading to YouTube…';
