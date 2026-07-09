@@ -58,17 +58,23 @@ def scene_starts(src: Path) -> list[float]:
     return [float(t) for t in re.findall(r"pts_time:([0-9.]+)", p.stderr)]
 
 
-def auto_clips(src: Path, beat_dur: float) -> list[tuple[float, float]]:
-    """Pick short clips spread across the video, preferring its own scene cuts."""
+def auto_clips(src: Path, beat_dur: float, head_skip: float = 5.0,
+               tail_skip: float = 15.0) -> list[tuple[float, float]]:
+    """Pick short clips spread across the video, preferring its own scene cuts.
+    head_skip/tail_skip exclude the intro (producer tags/"Produced by") and the
+    outro (end credits, subscribe screens) so that text doesn't land in the video."""
     src_dur = duration(src)
     length = min(4.0, src_dur)  # ponytail: fixed 4s clips, stays under the 5s cap
+    lo, hi = max(head_skip, 0.0), src_dur - length - max(tail_skip, 0.0)
+    if hi <= lo:  # margins would eat the whole clip (short video) — use the full range
+        lo, hi = 0.0, max(src_dur - length, 0.0)
     n = max(3, min(12, round(beat_dur / length)))
-    starts = [t for t in scene_starts(src) if t <= src_dur - length]
-    if len(starts) >= n:  # sample n cuts evenly across the whole video
+    starts = [t for t in scene_starts(src) if lo <= t <= hi]
+    if len(starts) >= n:  # sample n cuts evenly across the usable window
         starts = sorted({starts[round(i * (len(starts) - 1) / (n - 1))] for i in range(n)})
-    else:  # few/no scene changes — fall back to evenly spaced starts
-        step = max(src_dur - length, 0) / max(n - 1, 1)
-        starts = [i * step for i in range(n)]
+    else:  # few/no scene changes — fall back to evenly spaced starts in the window
+        step = (hi - lo) / max(n - 1, 1)
+        starts = [lo + i * step for i in range(n)]
     return [(round(s, 2), round(s + length, 2)) for s in starts]
 
 
@@ -124,7 +130,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                title: str = Form(default=""), description: str = Form(default=""),
                tags: str = Form(default=""), publish_at: str = Form(default=""),
                thumbnail: Optional[UploadFile] = File(default=None),
-               thumb_filter: str = Form(default="none")):
+               thumb_filter: str = Form(default="none"),
+               head_skip: float = Form(default=5.0), tail_skip: float = Form(default=15.0)):
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
@@ -171,7 +178,7 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             source_path = work / ("src" + Path(source.filename).suffix.lower())
             source_path.write_bytes(await source.read())
         if auto:
-            clip_list = auto_clips(source_path, duration(beat_path))
+            clip_list = auto_clips(source_path, duration(beat_path), head_skip, tail_skip)
         thumb_path = None
         if thumbnail is not None and youtube != "off":
             thumb_path = work / ("thumb" + Path(thumbnail.filename).suffix.lower())
@@ -248,6 +255,11 @@ onto the boxes below.</p>
   <div id="pickrow" style="display:none;margin-top:10px">
     <label style="font-weight:400"><input type="checkbox" id="autoPick" checked>
       ✨ Auto-pick clips for me (uses the video's own scene cuts)</label>
+    <div id="autorow" style="margin-top:8px">
+      <label style="font-weight:400">Skip intro <input type="number" id="headSkip" value="5" min="0" style="width:64px"> s</label>
+      <label style="font-weight:400;margin-left:14px">Skip outro <input type="number" id="tailSkip" value="15" min="0" style="width:64px"> s</label>
+      <div style="color:#888;font-size:.8rem;margin-top:4px">Keeps producer tags / "Produced by" intros and end-credit screens out of the clips.</div>
+    </div>
     <div class="row" id="manualrow">
       <button class="mini" id="markIn">⬇ Mark start</button>
       <button class="mini" id="markOut">⬆ Mark end + add clip</button>
@@ -370,6 +382,7 @@ const autoPick = $('autoPick'), manualrow = $('manualrow');
 function syncAuto() {
   const manual = autoPick.checked ? 'none' : '';
   manualrow.style.display = marks.style.display = cliplist.style.display = manual;
+  $('autorow').style.display = autoPick.checked ? 'block' : 'none';
 }
 autoPick.onchange = syncAuto;
 source.onchange = () => {
@@ -410,7 +423,10 @@ go.onclick = async () => {
   const fd = new FormData();
   fd.append('beat', beat.files[0]);
   fd.append('filter', filterSel.value);
-  if (auto) { fd.append('source', source.files[0]); fd.append('clips', 'auto'); }
+  if (auto) {
+    fd.append('source', source.files[0]); fd.append('clips', 'auto');
+    fd.append('head_skip', $('headSkip').value); fd.append('tail_skip', $('tailSkip').value);
+  }
   else if (clips.length) { fd.append('source', source.files[0]); fd.append('clips', JSON.stringify(clips)); }
   for (const f of media.files) fd.append('media', f);
   const yt = youtubeSel.value;

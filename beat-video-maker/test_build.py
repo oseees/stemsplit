@@ -48,6 +48,13 @@ def main():
         src_dur = duration(src)
         for s, e in picked:
             assert 0 <= s < e <= src_dur + 0.1 and e - s <= MAX_CLIP_SECONDS, (src, s, e)
+
+    # intro/outro skip: on a 30s video, no clip should start in the first 5s or last 10s
+    long_src = work / "long.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:d=30",
+                    str(long_src)], check=True, capture_output=True)
+    for s, e in auto_clips(long_src, 40.0, head_skip=5.0, tail_skip=10.0):
+        assert s >= 5.0 - 0.01 and e <= 30.0 - 10.0 + 0.01, (s, e)
     print("ok:", out, out2)
 
 
