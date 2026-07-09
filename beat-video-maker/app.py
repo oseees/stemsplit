@@ -122,7 +122,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                source: Optional[UploadFile] = File(default=None), clips: str = Form(default=""),
                filter: str = Form(default="none"), youtube: str = Form(default="off"),
                title: str = Form(default=""), description: str = Form(default=""),
-               tags: str = Form(default=""), publish_at: str = Form(default="")):
+               tags: str = Form(default=""), publish_at: str = Form(default=""),
+               thumbnail: Optional[UploadFile] = File(default=None)):
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
@@ -167,17 +168,28 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             source_path.write_bytes(await source.read())
         if auto:
             clip_list = auto_clips(source_path, duration(beat_path))
+        thumb_path = None
+        if thumbnail is not None and youtube != "off":
+            thumb_path = work / ("thumb" + Path(thumbnail.filename).suffix.lower())
+            thumb_path.write_bytes(await thumbnail.read())
         out = work / "beat_video.mp4"
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list)
         if youtube != "off":
             import youtube as yt  # local-only; import here so Railway never needs the deps
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             try:
-                url = yt.upload(out, title or "BeatVideo", description=description,
-                                privacy=youtube, tags=tag_list, publish_at=publish_at or None)
+                video_id = yt.upload(out, title or "BeatVideo", description=description,
+                                     privacy=youtube, tags=tag_list, publish_at=publish_at or None)
             except RuntimeError as e:
                 raise HTTPException(400, str(e))  # e.g. "not connected — run youtube_auth.py"
-            return {"youtube_url": url, "privacy": youtube, "publish_at": publish_at}
+            thumb_note = ""
+            if thumb_path:
+                try:
+                    yt.set_thumbnail(video_id, thumb_path)
+                except RuntimeError as e:
+                    thumb_note = str(e)  # keep the video; just report the thumbnail didn't stick
+            return {"youtube_url": f"https://youtu.be/{video_id}", "privacy": youtube,
+                    "publish_at": publish_at, "thumbnail_error": thumb_note}
     except Exception:
         shutil.rmtree(work, ignore_errors=True)
         raise
@@ -256,6 +268,8 @@ onto the boxes below.</p>
     <input type="text" id="title" placeholder="Video title">
     <textarea id="description" rows="3" placeholder="Description"></textarea>
     <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
+    <label style="font-weight:400;margin-top:10px">Custom thumbnail (optional, JPG/PNG under 2MB)
+      <input type="file" id="thumbnail" accept="image/*"></label>
     <label style="font-weight:400;margin-top:10px">Schedule publish (optional)
       <input type="datetime-local" id="scheduleAt"></label>
     <div style="color:#888;font-size:.8rem;margin-top:6px">If set, the video uploads private and
@@ -392,6 +406,7 @@ go.onclick = async () => {
   fd.append('tags', tags.value);
   const scheduled = yt !== 'off' && scheduleAt.value;
   if (scheduled) fd.append('publish_at', new Date(scheduleAt.value).toISOString());  // local -> UTC
+  if (yt !== 'off' && $('thumbnail').files[0]) fd.append('thumbnail', $('thumbnail').files[0]);
   go.disabled = true;
   msg.textContent = yt === 'off' ? 'Rendering… this can take a minute for long beats.'
                   : scheduled ? 'Rendering, then scheduling on YouTube…'
@@ -402,9 +417,10 @@ go.onclick = async () => {
     if (yt !== 'off') {
       const j = await r.json();
       const link = '<a href="' + j.youtube_url + '" target="_blank">' + j.youtube_url + '</a>';
-      msg.innerHTML = scheduled
+      msg.innerHTML = (scheduled
         ? 'Scheduled — goes Public ' + new Date(scheduleAt.value).toLocaleString() + ': ' + link
-        : 'Uploaded (' + j.privacy + '): ' + link;
+        : 'Uploaded (' + j.privacy + '): ' + link)
+        + (j.thumbnail_error ? '<br><span style="color:#e0a">⚠ ' + j.thumbnail_error + '</span>' : '');
     } else {
       const url = URL.createObjectURL(await r.blob());
       const a = Object.assign(document.createElement('a'), {href: url, download: 'beat_video.mp4'});
