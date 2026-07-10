@@ -362,6 +362,17 @@ def _invoices_this_month(conn, user_id):
         (user_id, _month_start())).fetchone()["c"]
 
 
+def _outstanding_total(conn, user_id):
+    # Total still owed across all this user's invoices (matches the frontend's
+    # sum of per-invoice balances) — powers the paywall's "you're owed ₦X" hook.
+    row = conn.execute(
+        "SELECT COALESCE(SUM(bal),0) t FROM ("
+        "  SELECT i.total - COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id=i.id),0) bal"
+        "  FROM invoices i WHERE i.user_id=?"
+        ") WHERE bal > 0.01", (user_id,)).fetchone()
+    return round(row["t"] or 0, 2)
+
+
 def _plan_info(conn, user):
     pro = is_pro(user)
     prod = conn.execute(
@@ -377,6 +388,7 @@ def _plan_info(conn, user):
         "usage": {
             "invoices_this_month": _invoices_this_month(conn, user["id"]),
             "products": prod,
+            "outstanding_total": _outstanding_total(conn, user["id"]),
         },
         "limits": {
             "invoices_per_month": FREE_MAX_INVOICES_PER_MONTH,

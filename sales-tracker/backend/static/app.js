@@ -268,10 +268,12 @@ function toast(msg) {
   setTimeout(() => t.classList.remove("show"), 2200);
 }
 
-function openModal(html) {
+function openModal(html, cls) {
   const host = document.getElementById("modalHost");
-  host.innerHTML = `<div class="modal-backdrop"></div><div class="modal">
-    <div class="modal-handle"></div>${html}</div>`;
+  // A bare sheet (cls, e.g. "paywall") skips the padding + drag-handle so its
+  // content can bleed edge-to-edge (full-screen paywall hero).
+  const inner = cls ? html : `<div class="modal-handle"></div>${html}`;
+  host.innerHTML = `<div class="modal-backdrop"></div><div class="modal ${cls || ""}">${inner}</div>`;
   host.classList.add("open");
   host.querySelector(".modal-backdrop").onclick = closeModal;
 }
@@ -577,24 +579,143 @@ function maybePromptInstall() {
 
 function isPro() { return !!(state.plan && state.plan.is_pro); }
 
+let _paywallPlan = null; // plan key selected inside the paywall sheet
+
+// Context-aware hero: lead with the strongest true fact we have about THIS
+// account, so the pitch is personal (their money / their usage), not generic.
+function _paywallHero(reason) {
+  const pl = state.plan || {}, u = pl.usage || {}, lim = pl.limits || {};
+  const owed = Number(u.outstanding_total || 0);
+  if (owed >= 1000) return {
+    kicker: "You're currently owed",
+    big: money0(owed),
+    sub: "Pro sends automatic WhatsApp reminders so your customers pay you faster.",
+  };
+  if (lim.invoices_per_month && u.invoices_this_month >= lim.invoices_per_month) return {
+    kicker: "This month",
+    big: `${u.invoices_this_month} of ${lim.invoices_per_month} invoices`,
+    sub: "You've reached the free limit. Go Pro for unlimited invoices and receipts.",
+  };
+  if (lim.products && u.products >= lim.products) return {
+    kicker: "Your products",
+    big: `${u.products} of ${lim.products}`,
+    sub: "You've reached the free limit. Go Pro for unlimited products.",
+  };
+  return {
+    kicker: "SalesPal Pro",
+    big: "Do more, earn more",
+    sub: reason && reason !== "__upgrade__" ? reason
+      : "Unlock everything you need to grow your business from your phone.",
+  };
+}
+
+// The best-value plan (early bird while slots last, else yearly) is the one we
+// pre-select and lead the CTA with.
+function _bestPlan() {
+  const plans = (state.plan && state.plan.pricing && state.plan.pricing.plans) || [];
+  const eb = plans.find(p => p.key === "earlybird");
+  if (eb && eb.available !== false) return eb;
+  return plans.find(p => p.key === "yearly") || plans.find(p => p.key === "monthly") || null;
+}
+
+function _planRow(p, selected) {
+  if (!p) return "";
+  const perMonth = /year/i.test(p.per || "") ? ` · about ${money0(_yearlyPerMonth(p))}/month` : "";
+  const save = p.key === "earlybird" && typeof p.remaining === "number"
+    ? `Founding rate · only ${p.remaining} left` : (p.save || "");
+  return `<button class="pw-plan ${selected ? "sel" : ""}" onclick="paywallSelect('${p.key}')">
+    <span class="pw-radio"></span>
+    <span class="pw-plan-main">
+      <span class="pw-plan-name">${esc(p.label)}</span>
+      <span class="pw-plan-sub">${esc(p.naira)}${esc(p.per || "")}${perMonth}</span>
+      ${save ? `<span class="pw-plan-save">${esc(save)}</span>` : ""}
+    </span>
+  </button>`;
+}
+
+// Rough monthly-equivalent from a yearly price string like "₦20,000" → 20000/12.
+function _yearlyPerMonth(p) {
+  const n = Number(String(p.naira).replace(/[^\d.]/g, "")) || 0;
+  return Math.round(n / 12);
+}
+
 function showUpgrade(reason) {
   closeModal();
-  const msg = reason && reason !== "__upgrade__" ? reason : "";
   const canPay = !!(state.plan && state.plan.billing_enabled);
-  const pricing = state.plan && state.plan.pricing;
+  if (!canPay) {
+    const msg = reason && reason !== "__upgrade__" ? reason : "";
+    openModal(`
+      <h2>⭐ SalesPal Pro</h2>
+      ${msg ? `<p style="color:var(--muted);font-size:14px;margin:0 0 14px">${esc(msg)}</p>` : ""}
+      <div class="card"><ul class="pro-list">
+        <li>🤖 AI advice &amp; weekly reports</li>
+        <li>🧾 Unlimited invoices</li>
+        <li>📦 Unlimited products</li>
+      </ul></div>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin:0 0 12px">💳 In-app payment is coming soon — you'll be able to upgrade right here.</p>
+      <button class="btn" onclick="closeModal()">Got it</button>`);
+    return;
+  }
+  const best = _bestPlan();
+  const plans = (state.plan.pricing && state.plan.pricing.plans) || [];
+  const monthly = plans.find(p => p.key === "monthly");
+  _paywallPlan = best ? best.key : "monthly";
+  const h = _paywallHero(reason);
+  // Show the best plan first, then monthly as the alternate (skip plain yearly
+  // when early bird is the cheaper yearly rate — it's redundant).
+  const altRows = (best && monthly && best.key !== "monthly") ? _planRow(monthly, false) : "";
   openModal(`
-    <h2>⭐ SalesPal Pro</h2>
-    ${msg ? `<p style="color:var(--muted);font-size:14px;margin:0 0 14px">${esc(msg)}</p>` : ""}
-    ${canPay
-      ? `${pricingCardsHtml(pricing, { payable: true })}
-         <p style="font-size:12px;color:var(--muted);text-align:center;margin:10px 0 0">Card, bank transfer or USSD · secured by Paystack</p>`
-      : `<div class="card"><ul class="pro-list">
-           <li>🤖 AI advice &amp; weekly reports</li>
-           <li>🧾 Unlimited invoices</li>
-           <li>📦 Unlimited products</li>
-         </ul></div>
-         <p style="font-size:13px;color:var(--muted);text-align:center;margin:0 0 12px">💳 In-app payment is coming soon — you'll be able to upgrade right here.</p>
-         <button class="btn" onclick="closeModal()">Got it</button>`}`);
+    <div class="pw-hero">
+      <button class="pw-close" onclick="closeModal()" aria-label="Close">✕</button>
+      <div class="pw-badge">SALESPAL PRO</div>
+      <div class="pw-kicker">${esc(h.kicker)}</div>
+      <div class="pw-big">${h.big}</div>
+      <div class="pw-sub">${esc(h.sub)}</div>
+    </div>
+    <div class="pw-body">
+      <ul class="pw-benefits">
+        <li><span class="pw-check">✓</span>Unlimited invoices and receipts</li>
+        <li><span class="pw-check">✓</span>WhatsApp payment reminders</li>
+        <li><span class="pw-check">✓</span>Profit and expense insights</li>
+        <li><span class="pw-check">✓</span>Multiple shops and staff logins</li>
+      </ul>
+      <div class="pw-plans">
+        ${_planRow(best, true)}
+        ${altRows}
+      </div>
+      <button class="btn pw-cta" id="pwCta" onclick="paywallCheckout()"></button>
+      <p class="pw-reassure">🔒 Card, bank transfer or USSD · cancel anytime</p>
+      <button class="pw-later" onclick="closeModal()">Maybe later</button>
+    </div>`, "paywall");
+  _paywallUpdateCta();
+}
+
+function paywallCheckout() { startCheckout(_paywallPlan || "monthly"); }
+
+function paywallSelect(key) {
+  _paywallPlan = key;
+  document.querySelectorAll(".pw-plan").forEach(el => {
+    el.classList.toggle("sel", el.getAttribute("onclick").includes(`'${key}'`));
+  });
+  _paywallUpdateCta();
+}
+
+function _paywallUpdateCta() {
+  const plans = (state.plan && state.plan.pricing && state.plan.pricing.plans) || [];
+  const p = plans.find(x => x.key === _paywallPlan);
+  const cta = document.getElementById("pwCta");
+  if (cta && p) cta.textContent = `Start Pro — ${p.naira}${p.per || ""}`;
+}
+
+// After a free user records a sale (highest-intent moment), show the paywall
+// once — never again on this device once seen or once they're Pro.
+function maybePaywallAfterSale() {
+  if (isPro() || !(state.plan && state.plan.billing_enabled)) return;
+  try {
+    if (localStorage.getItem("salespal_seen_paywall")) return;
+    localStorage.setItem("salespal_seen_paywall", "1");
+  } catch (e) { return; }
+  setTimeout(() => { if (!isPro()) showUpgrade(); }, 800);
 }
 
 async function startCheckout(plan) {
@@ -1678,6 +1799,7 @@ async function saveSale() {
   closeModal();
   toast(res.invoice_no === "Pending" ? "Sale saved offline — syncs when you're online" : `Sale saved · ${res.invoice_no}`);
   setView("sales");
+  maybePaywallAfterSale();
 }
 
 // ---------- MONEY (expenses + outstanding) ----------
@@ -2561,7 +2683,7 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, shareInvoice
   delProduct, addSupplierRow, callSupplier, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,
-  doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, whatsappReminder, whatsappCall, phoneCall,
+  doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, paywallSelect, paywallCheckout, whatsappReminder, whatsappCall, phoneCall,
   startCheckout, renderLanding, startBuy, startFree,
   shopSwitcher, switchShop, addShop,
   shareInvoiceImage, shareReceipt, receiptOffer,
