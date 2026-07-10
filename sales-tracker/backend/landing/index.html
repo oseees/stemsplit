@@ -316,7 +316,12 @@
         <div class="hero-ctas">
           <a class="btn btn-primary" href="/app/">Get Started Free</a>
           <a class="btn btn-ghost" href="#how-it-works">See How It Works</a>
+          <a class="btn btn-ghost" href="/download/android" id="androidDl" style="display:none">📲 Download for Android</a>
         </div>
+        <script>
+          // Direct-install APK only makes sense on Android; everyone else keeps the web CTAs.
+          if (/android/i.test(navigator.userAgent)) document.getElementById("androidDl").style.display = "";
+        </script>
         <p class="trust">Works offline — record sales even with no network, they sync when you're back. Built for small business owners, freelancers, and independent sellers.</p>
       </div>
       <div class="mock" role="img" aria-label="Illustration of the SalesPal dashboard showing sales, expenses and profit">

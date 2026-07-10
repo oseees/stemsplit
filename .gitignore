@@ -30,6 +30,17 @@ sales-tracker/backend/data/
 # Android build artifacts (APK is built locally, not committed)
 sales-tracker/backend/downloads/
 sales-tracker/android/*.keystore
+sales-tracker/android/keystore.pass
+sales-tracker/android/*.idsig
+sales-tracker/android/build/
+sales-tracker/android/manifest-checksum.txt
+sales-tracker/android/app/
+sales-tracker/android/gradle*
+sales-tracker/android/build.gradle
+sales-tracker/android/settings.gradle
+sales-tracker/android/*.properties
+sales-tracker/android/store_icon.png
+sales-tracker/android/.gradle/
 sales-tracker/android/.bubblewrap/
 sales-tracker/android/app-release-*.apk
 sales-tracker/android/*.aab

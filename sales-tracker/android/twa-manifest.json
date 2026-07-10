@@ -1,0 +1,42 @@
+{
+  "packageId": "online.salespal.twa",
+  "host": "salespal.online",
+  "name": "SalesPal",
+  "launcherName": "SalesPal",
+  "display": "standalone",
+  "themeColor": "#0a5236",
+  "navigationColor": "#0a5236",
+  "navigationColorDark": "#0a5236",
+  "navigationDividerColor": "#0a5236",
+  "navigationDividerColorDark": "#0a5236",
+  "backgroundColor": "#f3f7f4",
+  "enableNotifications": true,
+  "startUrl": "/app/",
+  "iconUrl": "https://salespal.online/icons/icon-512.png",
+  "maskableIconUrl": "https://salespal.online/icons/maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "android"
+  },
+  "appVersion": "1.0.0",
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://salespal.online/app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://salespal.online/app/",
+  "minSdkVersion": 21,
+  "orientation": "portrait",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": []
+}

@@ -5,26 +5,26 @@ the live PWA at https://salespal.online/app/. There is no separate app codebase 
 every web deploy updates the app automatically. Offline + sync are handled by the
 PWA itself (service worker + local write queue), so the APK is offline-capable too.
 
-The signed APK must be built on a machine with a JDK (this repo's CI/sandbox has
-none). It's a one-time ~10-minute setup; rebuilds are one command.
+The toolchain is already set up on this Mac (2026-07-10): Homebrew OpenJDK 17 +
+Android SDK in `~/.bubblewrap/android_sdk` (paths wired in `~/.bubblewrap/config.json`).
+The signing key is `android.keystore` here, alias `android`, password in
+`keystore.pass` (both git-ignored) — **back both up**; the same key must sign
+every future update.
 
-## Build the APK
+## Rebuild the APK
 
 ```bash
-npm install -g @bubblewrap/cli          # one-time
 cd sales-tracker/android
-# First run downloads a JDK + Android SDK into ~/.bubblewrap if you don't have them.
-bubblewrap init --manifest https://salespal.online/app/manifest.webmanifest
-#   → Application ID:  online.salespal.twa   (must match ANDROID_PACKAGE below)
-#   → Host:            salespal.online
-#   → accept the icon/colour defaults pulled from the manifest
-#   → it creates & password-protects a signing key (android.keystore) — KEEP IT SAFE,
-#     you need the same key to ship updates.
-bubblewrap build
+# twa-manifest.json is the source of truth (bump appVersionCode/appVersion per release).
+npx @bubblewrap/cli update --skipVersionUpgrade   # regen project after manifest edits
+BUBBLEWRAP_KEYSTORE_PASSWORD=$(cat keystore.pass) \
+BUBBLEWRAP_KEY_PASSWORD=$(cat keystore.pass) \
+npx @bubblewrap/cli build --skipPwaValidation
 ```
 
-`bubblewrap build` prints the key's **SHA-256 fingerprint** and outputs
-`app-release-signed.apk`.
+Outputs `app-release-signed.apk` (+ an `.aab` for Play, unused for now). The
+key's SHA-256 fingerprint: `keytool -list -v -keystore android.keystore` (keytool
+lives in `/opt/homebrew/opt/openjdk@17/bin`).
 
 ## Publish it (two steps)
 
