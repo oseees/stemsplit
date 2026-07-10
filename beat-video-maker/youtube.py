@@ -7,7 +7,6 @@ from typing import Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build as build_service
-from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 HERE = Path(__file__).parent
@@ -75,7 +74,7 @@ def set_thumbnail(video_id: str, path: Path) -> None:
     yt = build_service("youtube", "v3", credentials=_credentials())
     try:
         yt.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(path))).execute()
-    except HttpError as e:
-        # most common: 403, channel not phone-verified for custom thumbnails; or >2MB image
+    except Exception as e:  # never let a thumbnail problem lose an already-uploaded video
+        # most common: 403 (channel not phone-verified for custom thumbnails) or >2MB image
         raise RuntimeError("Video uploaded, but thumbnail wasn't set (channel may need phone "
                            "verification for custom thumbnails, or image is over 2MB).") from e

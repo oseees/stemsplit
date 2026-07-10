@@ -181,12 +181,16 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             clip_list = auto_clips(source_path, duration(beat_path), head_skip, tail_skip)
         thumb_path = None
         if thumbnail is not None and youtube != "off":
-            thumb_path = work / ("thumb" + Path(thumbnail.filename).suffix.lower())
-            thumb_path.write_bytes(await thumbnail.read())
-            if thumb_vf:  # run the thumbnail through the same ffmpeg color filter
-                filtered = work / ("thumb_f" + thumb_path.suffix)
-                run(["ffmpeg", "-y", "-i", str(thumb_path), "-vf", thumb_vf, str(filtered)])
-                thumb_path = filtered
+            raw = work / ("thumb_raw" + Path(thumbnail.filename).suffix.lower())
+            raw.write_bytes(await thumbnail.read())
+            # always re-encode to a 1280x720 JPEG so it's well under YouTube's 2MB cap;
+            # apply the color filter in the same pass
+            tvf = ("scale=1280:720:force_original_aspect_ratio=decrease,"
+                   "pad=1280:720:(ow-iw)/2:(oh-ih)/2")
+            if thumb_vf:
+                tvf += "," + thumb_vf
+            thumb_path = work / "thumb.jpg"
+            run(["ffmpeg", "-y", "-i", str(raw), "-vf", tvf, "-q:v", "3", str(thumb_path)])
         out = work / "beat_video.mp4"
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list)
         if youtube != "off":
