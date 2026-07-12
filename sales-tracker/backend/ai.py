@@ -7,6 +7,9 @@ import os
 import json
 
 MODEL = os.environ.get("SALESPAL_MODEL", "claude-opus-4-8")
+# Small fast model for high-frequency parses (voice sale entry) — a fraction of
+# the cost of the advice model, and structured outputs guarantee valid JSON.
+FAST_MODEL = os.environ.get("SALESPAL_FAST_MODEL", "claude-haiku-4-5")
 
 
 def _client():
@@ -135,6 +138,69 @@ def weekly_report(data: dict) -> dict:
         "3 concrete priorities. Keep it under 350 words and reference the numbers."
     )
     return _call(client, prompt)
+
+
+# What a spoken sale parses into. Sentinels instead of nullables keep the schema
+# strict-friendly: product_id 0 = no catalog match, customer_name "" = none.
+_SALE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "product_id": {"type": "integer", "description": "Matching catalog product id, or 0 if nothing in the catalog matches"},
+                    "description": {"type": "string", "description": "Item name — the catalog name when matched, else as spoken"},
+                    "qty": {"type": "number"},
+                    "unit_price": {"type": "number", "description": "Price per unit in the business currency"},
+                },
+                "required": ["product_id", "description", "qty", "unit_price"],
+                "additionalProperties": False,
+            },
+        },
+        "customer_name": {"type": "string", "description": "Customer's name, or empty string if none was mentioned"},
+        "payment": {"type": "string", "enum": ["cash", "transfer", "owing", "unknown"]},
+    },
+    "required": ["items", "customer_name", "payment"],
+    "additionalProperties": False,
+}
+
+
+def parse_sale(transcript: str, products: list, customers: list, currency: str) -> dict:
+    """Turn a spoken sale ('sold 3 crates of eggs to Mrs Okoro, she paid cash')
+    into structured items grounded in THIS user's product catalog."""
+    client = _client()
+    if client is None:
+        return {"ok": False, "text": "AI is not set up on this server."}
+
+    catalog = "\n".join(f"- id {p['id']}: {p['name']} @ {p['unit_price']}" for p in products) or "(no products yet)"
+    names = ", ".join(customers) or "(none yet)"
+    prompt = (
+        "A Nigerian shop owner spoke a sale out loud. Turn it into structured data.\n\n"
+        f"Their product catalog (id: name @ usual price, in {currency}):\n{catalog}\n\n"
+        f"Their existing customers: {names}\n\n"
+        f'They said: "{transcript}"\n\n'
+        "Rules:\n"
+        "- Match items to the catalog loosely (plurals, partial names, mishearings). "
+        "Use the catalog id and its usual price UNLESS they said a different price for it.\n"
+        "- If nothing in the catalog matches, use product_id 0, the item as spoken, and the price they said (0 if none).\n"
+        "- Quantity defaults to 1. Interpret amounts naturally ('5k' = 5000, 'two fifty naira' = 250).\n"
+        "- Match the customer to an existing name when it's clearly the same person; otherwise use it as spoken; empty string if no customer mentioned.\n"
+        "- payment: 'cash' or 'transfer' if they said the customer paid that way, 'owing' if the customer owes / will pay later, else 'unknown'.\n"
+        "- Only include items they actually mentioned — never invent."
+    )
+    try:
+        resp = client.messages.create(
+            model=FAST_MODEL,
+            max_tokens=1000,
+            output_config={"format": {"type": "json_schema", "schema": _SALE_SCHEMA}},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        return {"ok": True, "sale": json.loads(text)}
+    except Exception as e:
+        return {"ok": False, "text": f"Couldn't understand that: {e}"}
 
 
 def _call(client, prompt: str) -> dict:

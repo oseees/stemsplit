@@ -286,6 +286,7 @@ def _owned_invoice(conn, iid, user_id):
 # ----------------------------- Plans / paywall ------------------------------
 FREE_MAX_INVOICES_PER_MONTH = 15
 FREE_MAX_PRODUCTS = 20
+FREE_VOICE_USES_PER_MONTH = 5  # taste of voice sale entry before the paywall
 
 # Pro pricing. Each plan buys a fixed stretch of Pro time; paying again extends
 # it. Amounts are in kobo (₦1 = 100 kobo). To change a price or duration, edit
@@ -998,6 +999,52 @@ def delete_product(pid: int, user=Depends(current_user)):
     with db.get_conn() as conn:
         conn.execute("DELETE FROM products WHERE id=? AND user_id=?", (pid, user["id"]))
     return {"ok": True}
+
+
+class VoiceSaleIn(BaseModel):
+    transcript: str
+
+
+@app.post("/api/voice/parse-sale")
+def voice_parse_sale(body: VoiceSaleIn, user=Depends(current_user)):
+    """Spoken sale → structured items grounded in the user's own catalog.
+    Pro feature with a monthly free taste; the counter only counts successful
+    parses so a flaky network never eats a free use."""
+    transcript = (body.transcript or "").strip()
+    if not transcript:
+        raise HTTPException(400, "Say something first")
+    if not ai.available():
+        raise HTTPException(503, "Voice entry isn't available right now")
+    pro = is_pro(user)
+    month = _month_start()
+    with db.get_conn() as conn:
+        if not pro:
+            row = conn.execute("SELECT voice_month, voice_uses FROM users WHERE id=?",
+                               (user["id"],)).fetchone()
+            used = row["voice_uses"] if (row and row["voice_month"] == month) else 0
+            if used >= FREE_VOICE_USES_PER_MONTH:
+                raise HTTPException(402, "You've used your 5 free voice sales this month — Pro is unlimited")
+        sf, sp = _shop_and(_active_shop(user))
+        products = db.rows_to_list(conn.execute(
+            "SELECT id, name, unit_price FROM products WHERE user_id=?" + sf,
+            (user["id"], *sp)))
+        customers = [r["name"] for r in conn.execute(
+            "SELECT name FROM customers WHERE user_id=?" + sf, (user["id"], *sp))]
+    settings = db.get_settings(user["id"])
+
+    result = ai.parse_sale(transcript, products, customers, settings["currency"])
+    if not result["ok"]:
+        raise HTTPException(503, "Couldn't understand that — please try again")
+
+    free_left = None
+    if not pro:
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE users SET voice_uses = CASE WHEN voice_month=? THEN voice_uses+1 ELSE 1 END, "
+                "voice_month=? WHERE id=?", (month, month, user["id"]))
+            free_left = FREE_VOICE_USES_PER_MONTH - conn.execute(
+                "SELECT voice_uses u FROM users WHERE id=?", (user["id"],)).fetchone()["u"]
+    return {"sale": result["sale"], "free_uses_left": free_left}
 
 
 class PriceCheckIn(BaseModel):

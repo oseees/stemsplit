@@ -677,6 +677,7 @@ function showUpgrade(reason) {
         <li><span class="pw-check">✓</span>Unlimited invoices and receipts</li>
         <li><span class="pw-check">✓</span>WhatsApp payment reminders</li>
         <li><span class="pw-check">✓</span>Profit and expense insights</li>
+        <li><span class="pw-check">✓</span>Voice sale entry — speak, don't type</li>
         <li><span class="pw-check">✓</span>Multiple shops and staff logins</li>
       </ul>
       <div class="pw-plans">
@@ -1713,8 +1714,12 @@ async function newSaleModal() {
     api.get("/api/products"), api.get("/api/customers")]);
   window._products = products;
   const custList = customers.map(c => `<option value="${esc(c.name)}">`).join("");
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   openModal(`
-    <h2>New sale</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <h2 style="margin:0">New sale</h2>
+      ${SR ? `<button type="button" class="mic-btn" id="micBtn" onclick="voiceSale()">🎤 Speak it</button>` : ""}
+    </div>
     <div class="field"><label>Customer name</label>
       <input id="saleCustomer" list="custList" autocomplete="off"
         placeholder="Type a name (or leave blank for walk-in)">
@@ -1800,6 +1805,72 @@ async function saveSale() {
   toast(res.invoice_no === "Pending" ? "Sale saved offline — syncs when you're online" : `Sale saved · ${res.invoice_no}`);
   setView("sales");
   maybePaywallAfterSale();
+}
+
+// ---------- VOICE SALE ENTRY ----------
+// Browser speech-to-text (free, en-NG) → Claude maps the words onto THIS shop's
+// products/customers → the sale form is prefilled. Never auto-saves: the
+// merchant always reviews the numbers and taps Save.
+let _rec = null;
+function voiceSale() {
+  const btn = document.getElementById("micBtn");
+  if (_rec) { try { _rec.stop(); } catch (e) {} _rec = null; return; }
+  if (!navigator.onLine) return toast("Voice needs a connection — type it for now");
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  _rec = rec;
+  rec.lang = "en-NG";
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  btn.textContent = "🔴 Listening… tap to stop";
+  btn.classList.add("live");
+  const reset = () => { _rec = null; if (btn.isConnected) { btn.textContent = "🎤 Speak it"; btn.classList.remove("live"); } };
+  rec.onerror = (e) => {
+    reset();
+    toast(e.error === "not-allowed" ? "Allow microphone access to use voice"
+      : e.error === "no-speech" ? "Didn't catch that — try again" : "Voice didn't work — try again");
+  };
+  rec.onresult = async (e) => {
+    reset();
+    const transcript = e.results[0][0].transcript;
+    if (btn.isConnected) btn.textContent = "🧠 Working…";
+    let r;
+    try {
+      r = await api.send("/api/voice/parse-sale", "POST", { transcript });
+    } catch (err) {
+      if (btn.isConnected) btn.textContent = "🎤 Speak it";
+      if (err.message !== "__upgrade__" && err.message !== "__auth__") toast(err.message || "Couldn't understand that");
+      return;
+    }
+    if (btn.isConnected) btn.textContent = "🎤 Speak it";
+    applyVoiceSale(r.sale);
+    toast(r.free_uses_left != null
+      ? `Heard you ✓ — check & save · ${r.free_uses_left} free voice sale${r.free_uses_left === 1 ? "" : "s"} left`
+      : "Heard you ✓ — check the details, then save");
+  };
+  rec.onend = () => { if (_rec === rec) reset(); };
+  try { rec.start(); } catch (e) { reset(); toast("Voice didn't start — try again"); }
+}
+
+function applyVoiceSale(sale) {
+  if (!sale || !document.getElementById("saleItems")) return;
+  const items = (sale.items || []).filter(it => it.description);
+  if (items.length) {
+    saleItems = items.map(it => {
+      const p = (window._products || []).find(x => x.id === it.product_id);
+      return p
+        ? { product_id: p.id, description: p.name, qty: it.qty || 1, unit_price: it.unit_price || p.unit_price, unit_cost: p.unit_cost, custom: false }
+        : { product_id: null, description: it.description, qty: it.qty || 1, unit_price: it.unit_price || 0, unit_cost: 0, custom: true };
+    });
+    renderSaleItems();
+  }
+  if (sale.customer_name) document.getElementById("saleCustomer").value = sale.customer_name;
+  // The owner form has no payment control; keep what was said in the notes so
+  // it isn't lost — they can mark the invoice paid right after saving.
+  if (sale.payment && sale.payment !== "unknown") {
+    const n = document.getElementById("saleNotes");
+    if (n && !n.value) n.value = sale.payment === "owing" ? "Customer owing" : `Paid by ${sale.payment}`;
+  }
 }
 
 // ---------- MONEY (expenses + outstanding) ----------
@@ -2730,7 +2801,7 @@ async function _sharePayLinkFallback(id) {
 // expose handlers used in inline onclick
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, shareInvoice, markPaid, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
-  saveSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
+  saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,

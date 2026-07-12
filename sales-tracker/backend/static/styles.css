@@ -583,6 +583,11 @@ body.desktop .modal.paywall { max-width: 420px; }
 .pw-reassure { text-align: center; font-size: 12.5px; color: var(--muted); margin: 12px 0 0; }
 .pw-later { display: block; margin: 8px auto 0; background: none; border: 0; color: var(--muted); font-size: 13px; cursor: pointer; padding: 6px; }
 
+/* --- voice sale entry --- */
+.mic-btn { background: rgba(18,185,129,.1); color: var(--indigo); border: 1.5px solid var(--indigo); border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.mic-btn.live { background: var(--red-bg, #fee2e2); color: var(--red, #dc2626); border-color: var(--red, #dc2626); animation: micpulse 1.2s ease infinite; }
+@keyframes micpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
 /* --- signed out (landing/auth): no sidebar, just go wider --- */
 body.desktop.signed-out main { margin: 0; padding: 0; }
 body.desktop .landing { max-width: 1000px; }

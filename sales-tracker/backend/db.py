@@ -303,6 +303,9 @@ def init_db():
         # first-touch acquisition (owner dashboard): channel bucket + raw referrer
         _ensure_column(conn, "users", "signup_source", "TEXT")
         _ensure_column(conn, "users", "signup_referrer", "TEXT")
+        # voice sale entry: free-plan monthly taste counter (month key + uses)
+        _ensure_column(conn, "users", "voice_month", "TEXT")
+        _ensure_column(conn, "users", "voice_uses", "INTEGER NOT NULL DEFAULT 0")
         # Online payment collection (Pro): a Paystack subaccount settles the
         # merchant's own bank directly, so SalesPal never holds their money.
         _ensure_column(conn, "users", "pay_subaccount", "TEXT")
