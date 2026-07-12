@@ -73,6 +73,18 @@ const api = {
       throw e;
     }
   },
+  // Multipart upload (voice audio). No Content-Type header — the browser sets the
+  // multipart boundary itself. Same 401/402/error handling as _rawSend.
+  async sendForm(p, formData) {
+    let r;
+    try { r = await fetch(p, { method: "POST", body: formData }); }
+    catch (e) { throw new Error("You're offline — reconnect to do that"); }
+    if (_handle401(p, r.status)) throw new Error("__auth__");
+    if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
+    if (!r.ok) throw await _err(r);
+    apiCacheClear();
+    return r.json();
+  },
 };
 
 async function _rawSend(p, method, body) {
@@ -1714,11 +1726,11 @@ async function newSaleModal() {
     api.get("/api/products"), api.get("/api/customers")]);
   window._products = products;
   const custList = customers.map(c => `<option value="${esc(c.name)}">`).join("");
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const canVoice = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <h2 style="margin:0">New sale</h2>
-      ${SR ? `<button type="button" class="mic-btn" id="micBtn" onclick="voiceSale()">🎤 Speak it</button>` : ""}
+      ${canVoice ? `<button type="button" class="mic-btn" id="micBtn" onclick="voiceSale()">🎤 Speak it</button>` : ""}
     </div>
     <div class="field"><label>Customer name</label>
       <input id="saleCustomer" list="custList" autocomplete="off"
@@ -1808,48 +1820,79 @@ async function saveSale() {
 }
 
 // ---------- VOICE SALE ENTRY ----------
-// Browser speech-to-text (free, en-NG) → Claude maps the words onto THIS shop's
-// products/customers → the sale form is prefilled. Never auto-saves: the
-// merchant always reviews the numbers and taps Save.
-let _rec = null;
-function voiceSale() {
+// Record the spoken sale and transcribe it on the server (Groq Whisper), then
+// Claude maps the words onto THIS shop's products/customers and prefills the
+// form. We record+upload instead of the browser Web Speech API because that API
+// is blocked inside the Android TWA wrapper and unsupported on iOS Safari;
+// recording (getUserMedia) works everywhere. Never auto-saves — the merchant
+// always reviews the numbers and taps Save.
+let _rec = null, _recChunks = [], _recTimer = null;
+async function voiceSale() {
   const btn = document.getElementById("micBtn");
-  if (_rec) { try { _rec.stop(); } catch (e) {} _rec = null; return; }
+  if (_rec && _rec.state === "recording") { _rec.stop(); return; }   // tap again = stop early
   if (!navigator.onLine) return toast("Voice needs a connection — type it for now");
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const rec = new SR();
+  const reset = () => { if (btn.isConnected) { btn.textContent = "🎤 Speak it"; btn.classList.remove("live"); } };
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    // Mic failed to open. Show a diagnostic card with the exact error, the
+    // Permissions-API state, and the real browser engine (a TWA can silently run
+    // in Samsung Internet etc. if Chrome isn't the default) so a remote fix is
+    // possible instead of guessing. perm "prompt" + instant NotAllowedError =
+    // the browser app itself lacks the OS mic permission; "denied" = site-level.
+    let perm = "unknown";
+    try { perm = (await navigator.permissions.query({ name: "microphone" })).state; } catch (e2) {}
+    const mode = document.referrer.startsWith("android-app://") ? "installed app"
+      : matchMedia("(display-mode: standalone)").matches ? "home-screen app" : "browser tab";
+    openModal(`
+      <h2>Mic check 🎤</h2>
+      <p>${perm === "denied" ? "The browser has the mic <b>blocked for this site</b>."
+        : e.name === "NotAllowedError" ? "The browser app itself was <b>refused mic access by the phone</b>."
+        : "The mic couldn't start."}</p>
+      <div class="card" style="font-family:monospace;font-size:12px;word-break:break-all">
+        error: ${esc(e.name || "?")} — ${esc(e.message || "")}<br>
+        site permission: ${esc(perm)}<br>
+        running as: ${mode}<br>
+        ${esc(navigator.userAgent)}
+      </div>
+      <p style="font-size:14px">Fix: phone Settings → Apps → <b>the browser named above</b> (e.g. Chrome) →
+      Permissions → Microphone → <b>Allow</b>. Then close and reopen this app.</p>`);
+    return;
+  }
+  _recChunks = [];
+  const rec = new MediaRecorder(stream);
   _rec = rec;
-  rec.lang = "en-NG";
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
-  btn.textContent = "🔴 Listening… tap to stop";
-  btn.classList.add("live");
-  const reset = () => { _rec = null; if (btn.isConnected) { btn.textContent = "🎤 Speak it"; btn.classList.remove("live"); } };
-  rec.onerror = (e) => {
-    reset();
-    toast(e.error === "not-allowed" ? "Allow microphone access to use voice"
-      : e.error === "no-speech" ? "Didn't catch that — try again" : "Voice didn't work — try again");
-  };
-  rec.onresult = async (e) => {
-    reset();
-    const transcript = e.results[0][0].transcript;
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) _recChunks.push(e.data); };
+  rec.onstop = async () => {
+    clearTimeout(_recTimer);
+    stream.getTracks().forEach(t => t.stop());
+    _rec = null;
+    const type = rec.mimeType || "audio/webm";
+    const blob = new Blob(_recChunks, { type });
+    if (!blob.size) { reset(); return toast("Didn't catch that — try again"); }
     if (btn.isConnected) btn.textContent = "🧠 Working…";
+    const fd = new FormData();
+    fd.append("audio", blob, "sale." + (type.includes("mp4") || type.includes("m4a") ? "mp4" : "webm"));
     let r;
     try {
-      r = await api.send("/api/voice/parse-sale", "POST", { transcript });
+      r = await api.sendForm("/api/voice/transcribe-sale", fd);
     } catch (err) {
-      if (btn.isConnected) btn.textContent = "🎤 Speak it";
+      reset();
       if (err.message !== "__upgrade__" && err.message !== "__auth__") toast(err.message || "Couldn't understand that");
       return;
     }
-    if (btn.isConnected) btn.textContent = "🎤 Speak it";
+    reset();
     applyVoiceSale(r.sale);
     toast(r.free_uses_left != null
-      ? `Heard you ✓ — check & save · ${r.free_uses_left} free voice sale${r.free_uses_left === 1 ? "" : "s"} left`
-      : "Heard you ✓ — check the details, then save");
+      ? `Heard: “${r.transcript}” · ${r.free_uses_left} free voice sale${r.free_uses_left === 1 ? "" : "s"} left`
+      : `Heard: “${r.transcript}” — check & save`);
   };
-  rec.onend = () => { if (_rec === rec) reset(); };
-  try { rec.start(); } catch (e) { reset(); toast("Voice didn't start — try again"); }
+  btn.textContent = "🔴 Recording… tap to stop";
+  btn.classList.add("live");
+  rec.start();
+  // Auto-stop after 15s so a forgotten recording doesn't run (and upload) forever.
+  _recTimer = setTimeout(() => { if (_rec && _rec.state === "recording") _rec.stop(); }, 15000);
 }
 
 function applyVoiceSale(sale) {

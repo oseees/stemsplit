@@ -27,6 +27,39 @@ def available() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
+# Groq Whisper speech-to-text for voice sale entry. The browser Web Speech API is
+# blocked inside the Android TWA wrapper and unsupported on iOS, so the app
+# records audio and we transcribe it here. Free tier, OpenAI-compatible endpoint.
+STT_MODEL = os.environ.get("SALESPAL_STT_MODEL", "whisper-large-v3-turbo")
+
+
+def transcribe_available() -> bool:
+    return bool(os.environ.get("GROQ_API_KEY"))
+
+
+def transcribe_audio(audio_bytes: bytes, filename: str = "sale.webm", content_type: str = None) -> dict:
+    """Spoken audio → text via Groq Whisper. The prompt biases recognition toward
+    short sales entries (product names, quantities, customer, payment method)."""
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        return {"ok": False, "error": "Voice isn't set up on the server yet"}
+    try:
+        import httpx  # ships with the anthropic SDK
+        resp = httpx.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {key}"},
+            files={"file": (filename or "sale.webm", audio_bytes, content_type or "audio/webm")},
+            data={"model": STT_MODEL, "language": "en", "response_format": "json",
+                  "prompt": "A short spoken sales entry: product names, quantities, "
+                            "a customer name, and how they paid (cash, transfer or owing)."},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return {"ok": True, "text": (resp.json().get("text") or "").strip()}
+    except Exception:
+        return {"ok": False, "error": "Couldn't hear that clearly — try again"}
+
+
 SYSTEM = (
     "You are a sharp, practical small-business advisor for a solo entrepreneur who "
     "sells physical products. You speak plainly and give specific, actionable advice "
@@ -190,15 +223,25 @@ def parse_sale(transcript: str, products: list, customers: list, currency: str) 
         "- payment: 'cash' or 'transfer' if they said the customer paid that way, 'owing' if the customer owes / will pay later, else 'unknown'.\n"
         "- Only include items they actually mentioned — never invent."
     )
+    # Structured output via a forced tool — the model must call record_sale with
+    # args matching _SALE_SCHEMA, so we get guaranteed-shape JSON back. (Tool use is
+    # supported by the pinned SDK; the newer output_config/json_schema param is not.)
     try:
         resp = client.messages.create(
             model=FAST_MODEL,
             max_tokens=1000,
-            output_config={"format": {"type": "json_schema", "schema": _SALE_SCHEMA}},
+            tools=[{
+                "name": "record_sale",
+                "description": "Record the structured sale extracted from what the shop owner said.",
+                "input_schema": _SALE_SCHEMA,
+            }],
+            tool_choice={"type": "tool", "name": "record_sale"},
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-        return {"ok": True, "sale": json.loads(text)}
+        for b in resp.content:
+            if getattr(b, "type", "") == "tool_use":
+                return {"ok": True, "sale": b.input}
+        return {"ok": False, "text": "Couldn't understand that — no structured result."}
     except Exception as e:
         return {"ok": False, "text": f"Couldn't understand that: {e}"}
 

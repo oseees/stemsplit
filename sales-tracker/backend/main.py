@@ -19,7 +19,7 @@ if os.path.exists(_env):
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-from fastapi import FastAPI, HTTPException, Body, Depends, Request, Response
+from fastapi import FastAPI, HTTPException, Body, Depends, Request, Response, UploadFile, File
 from fastapi.responses import Response as RawResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -47,7 +47,10 @@ async def _security_headers(request: Request, call_next):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    # microphone=(self): voice sale entry needs getUserMedia on our own origin.
+    # A bare microphone=() disables the mic for EVERYONE incl. self, which silently
+    # kills getUserMedia in every browser/WebView regardless of OS permission.
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
     # HSTS only matters over https; Railway terminates TLS in front of us.
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
         resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -1005,12 +1008,11 @@ class VoiceSaleIn(BaseModel):
     transcript: str
 
 
-@app.post("/api/voice/parse-sale")
-def voice_parse_sale(body: VoiceSaleIn, user=Depends(current_user)):
-    """Spoken sale → structured items grounded in the user's own catalog.
-    Pro feature with a monthly free taste; the counter only counts successful
-    parses so a flaky network never eats a free use."""
-    transcript = (body.transcript or "").strip()
+def _voice_sale_from_transcript(user, transcript):
+    """Shared core: a spoken-sale transcript → structured items grounded in the
+    user's own catalog. Pro feature with a monthly free taste; the counter only
+    counts successful parses so a flaky network never eats a free use."""
+    transcript = (transcript or "").strip()
     if not transcript:
         raise HTTPException(400, "Say something first")
     if not ai.available():
@@ -1044,7 +1046,29 @@ def voice_parse_sale(body: VoiceSaleIn, user=Depends(current_user)):
                 "voice_month=? WHERE id=?", (month, month, user["id"]))
             free_left = FREE_VOICE_USES_PER_MONTH - conn.execute(
                 "SELECT voice_uses u FROM users WHERE id=?", (user["id"],)).fetchone()["u"]
-    return {"sale": result["sale"], "free_uses_left": free_left}
+    return {"sale": result["sale"], "transcript": transcript, "free_uses_left": free_left}
+
+
+@app.post("/api/voice/parse-sale")
+def voice_parse_sale(body: VoiceSaleIn, user=Depends(current_user)):
+    """Browser path: the Web Speech API already produced the transcript on-device."""
+    return _voice_sale_from_transcript(user, body.transcript)
+
+
+@app.post("/api/voice/transcribe-sale")
+async def voice_transcribe_sale(audio: UploadFile = File(...), user=Depends(current_user)):
+    """App/iPhone path: the Web Speech API is blocked inside the Android TWA and
+    unsupported on iOS Safari, so the app records audio and we transcribe it here
+    (Groq Whisper) before the same catalog-grounded parse."""
+    data = await audio.read()
+    if not data:
+        raise HTTPException(400, "No audio received — try again")
+    if len(data) > 8_000_000:  # a spoken sale is a few hundred KB; cap runaway uploads
+        raise HTTPException(413, "That recording is too long — keep it short")
+    tr = ai.transcribe_audio(data, audio.filename, audio.content_type)
+    if not tr["ok"]:
+        raise HTTPException(503, tr.get("error") or "Couldn't hear that — try again")
+    return _voice_sale_from_transcript(user, tr["text"])
 
 
 class PriceCheckIn(BaseModel):
