@@ -1000,6 +1000,68 @@ def delete_product(pid: int, user=Depends(current_user)):
     return {"ok": True}
 
 
+class PriceCheckIn(BaseModel):
+    new_price: float
+
+
+@app.post("/api/products/{pid}/price-advice")
+def price_advice(pid: int, body: PriceCheckIn, user=Depends(current_user)):
+    """What happens if I change this product's price? Deterministic contribution-
+    margin break-even math computed here (the proven pricing test: how much volume
+    can I lose / must I gain to keep the same profit), then Claude turns it plus
+    real sales history into advice on likely customer reaction."""
+    if not is_pro(user):
+        raise HTTPException(402, "Price advice is a Pro feature")
+    new_price = round(body.new_price or 0, 2)
+    if new_price <= 0:
+        raise HTTPException(400, "Enter the new price")
+    settings = db.get_settings(user["id"])
+    with db.get_conn() as conn:
+        p = conn.execute("SELECT * FROM products WHERE id=? AND user_id=?",
+                         (pid, user["id"])).fetchone()
+        if not p:
+            raise HTTPException(404, "Product not found")
+        since = (date.today() - timedelta(days=90)).isoformat()
+        hist = conn.execute(
+            "SELECT COALESCE(SUM(it.qty),0) units, COALESCE(SUM(it.qty*it.unit_price),0) revenue, "
+            "COUNT(DISTINCT it.invoice_id) sales "
+            "FROM invoice_items it JOIN invoices i ON i.id=it.invoice_id "
+            "WHERE i.user_id=? AND it.product_id=? AND i.date >= ?",
+            (user["id"], pid, since)).fetchone()
+
+    cost, cur_price = p["unit_cost"] or 0, p["unit_price"] or 0
+    cur_m, new_m = cur_price - cost, new_price - cost
+    change_pct = round((new_price - cur_price) / cur_price * 100, 1) if cur_price else None
+    math = {
+        "current_price": cur_price, "new_price": new_price, "unit_cost": cost,
+        "change_pct": change_pct,
+        "current_margin": round(cur_m, 2),
+        "new_margin": round(new_m, 2),
+        "current_margin_pct": round(cur_m / cur_price * 100, 1) if cur_price else None,
+        "new_margin_pct": round(new_m / new_price * 100, 1),
+        "below_cost": new_m <= 0,
+        "units_90d": hist["units"], "revenue_90d": hist["revenue"], "sales_90d": hist["sales"],
+    }
+    # Break-even volume shift to keep the SAME total profit (only meaningful when
+    # both margins are positive): volume ratio = old margin / new margin.
+    if cur_m > 0 and new_m > 0 and new_price != cur_price:
+        ratio = cur_m / new_m
+        if new_price > cur_price:
+            math["can_lose_sales_pct"] = round((1 - ratio) * 100, 1)
+        else:
+            math["need_more_sales_pct"] = round((ratio - 1) * 100, 1)
+        # In real units over the same 90 days, when there's history to scale.
+        if hist["units"]:
+            math["breakeven_units_90d"] = round(hist["units"] * ratio, 1)
+
+    payload = dict(math)
+    payload.update({
+        "product_name": p["name"], "currency": settings["currency"],
+        "stock_qty": p["stock_qty"],
+    })
+    return {"math": math, "ai": ai.price_advice(payload)}
+
+
 # ----------------------------- Customers ------------------------------------
 @app.get("/api/customers")
 def list_customers(user=Depends(current_user)):

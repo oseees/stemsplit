@@ -80,6 +80,42 @@ def goal_tips(data: dict) -> dict:
     return _call(client, prompt)
 
 
+def price_advice(data: dict) -> dict:
+    """Advice on a proposed price change: likely customer reaction + how to do it
+    well, grounded in the break-even math and sales history we computed."""
+    client = _client()
+    if client is None:
+        return {"ok": False, "text": _no_key_message()}
+
+    prompt = (
+        "I'm considering changing the price of one of my products. Here are the "
+        "exact numbers (margins, break-even math, and the last 90 days of real "
+        f"sales for this product):\n\n{_summary_text(data)}\n\n"
+        "Advise me using this structure (markdown headers):\n"
+        "## Verdict\n"
+        "One clear sentence: do it, adjust it, or don't — and the single biggest reason.\n"
+        "## How customers will likely react\n"
+        "2-3 sentences grounded in proven pricing psychology — e.g. Weber's law "
+        "(changes under ~10% are rarely noticed), loss aversion, reference prices. "
+        "Consider the size of this change (change_pct) and what the product's sales "
+        "volume says about demand.\n"
+        "## The math you must beat\n"
+        "Restate the break-even numbers in plain English (can_lose_sales_pct / "
+        "need_more_sales_pct / breakeven_units_90d if present) and say whether "
+        "that's realistic for this product. If below_cost is true, lead with that "
+        "red flag.\n"
+        "## How to do it right\n"
+        "3 specific tactics from proven pricing technique, each named and applied "
+        "to MY numbers — pick the most relevant of: charm pricing (ending in 90/99), "
+        "price anchoring, staged increases, grandfathering regular customers, "
+        "bundling, framing the change in value terms, decoy/tiering. Give the "
+        "exact new price you'd charge (in my currency).\n"
+        "Only use the numbers provided — never invent sales figures. Keep it under "
+        "300 words."
+    )
+    return _call(client, prompt)
+
+
 def weekly_report(data: dict) -> dict:
     """End-of-week analysis with commentary."""
     client = _client()

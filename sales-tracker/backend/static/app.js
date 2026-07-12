@@ -1963,6 +1963,7 @@ function productModal(p) {
       <div class="field"><label>Selling price</label><input id="pPrice" type="number" inputmode="decimal" value="${p.unit_price || 0}"></div>
       <div class="field"><label>Unit cost</label><input id="pCost" type="number" inputmode="decimal" value="${p.unit_cost || 0}"></div>
     </div>
+    ${p.id ? `<button type="button" class="btn secondary btn-sm" style="margin:-4px 0 14px" onclick='priceCheckModal(${attrJson(p)})'>📈 Price check — should I charge more or less?</button>` : ""}
     <div class="field-row">
       <div class="field"><label>Current stock</label><input id="pStock" type="number" inputmode="decimal" value="${p.stock_qty || 0}"></div>
       <div class="field"><label>Alert at / below</label><input id="pLow" type="number" inputmode="decimal" value="${p.low_stock_at || 0}"></div>
@@ -1976,6 +1977,56 @@ function productModal(p) {
     <button class="btn" style="margin-top:14px" onclick="saveProduct(${p.id || 0})">Save</button>
     ${p.id ? `<button class="btn danger" style="margin-top:10px" onclick="delProduct(${p.id})">Delete</button>` : ""}`);
 }
+// "What if I change the price?" — deterministic break-even math from the server
+// plus Claude's advice on customer reaction (Pro; 402 opens the paywall).
+function priceCheckModal(p) {
+  const margin = p.unit_price ? Math.round((p.unit_price - p.unit_cost) / p.unit_price * 100) : 0;
+  openModal(`<h2>📈 Price check</h2>
+    <p style="font-size:14px;color:var(--muted);margin:0 0 14px">${esc(p.name)} — selling at <b>${money(p.unit_price)}</b>, cost ${money(p.unit_cost)} (${margin}% margin).</p>
+    <div class="field"><label>New price to test</label><input id="pcPrice" type="number" inputmode="decimal" value="${p.unit_price || 0}"></div>
+    <div style="display:flex;gap:8px;margin:-4px 0 14px">
+      <button type="button" class="btn secondary btn-sm" onclick="pcNudge(${p.unit_price || 0}, -10)">−10%</button>
+      <button type="button" class="btn secondary btn-sm" onclick="pcNudge(${p.unit_price || 0}, 10)">+10%</button>
+    </div>
+    <button class="btn" onclick="runPriceCheck(${p.id})">Check this price</button>
+    <div id="pcOut"></div>`);
+}
+function pcNudge(base, pct) {
+  const el = document.getElementById("pcPrice");
+  if (el) el.value = Math.round(base * (1 + pct / 100));
+}
+async function runPriceCheck(id) {
+  const v = parseFloat(document.getElementById("pcPrice").value) || 0;
+  if (v <= 0) return toast("Enter the new price");
+  const out = document.getElementById("pcOut");
+  out.innerHTML = `<div class="loading">Claude is checking your numbers…</div>`;
+  let r;
+  try {
+    r = await api.send(`/api/products/${id}/price-advice`, "POST", { new_price: v });
+  } catch (e) {
+    out.innerHTML = "";
+    if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't get advice");
+    return;
+  }
+  const m = r.math;
+  const be = m.below_cost
+    ? `⚠️ <b>Below cost</b> — at this price you lose money on every sale.`
+    : m.can_lose_sales_pct != null
+      ? `You could lose up to <b>${m.can_lose_sales_pct}% of sales</b> and still make the same profit.`
+      : m.need_more_sales_pct != null
+        ? `You'd need <b>${m.need_more_sales_pct}% more sales</b> just to make the same profit.` : "";
+  const hist = m.units_90d
+    ? `<div class="meta" style="margin-top:6px">Last 90 days: ${m.units_90d} sold across ${m.sales_90d} sale${m.sales_90d === 1 ? "" : "s"}${m.breakeven_units_90d ? ` · break-even at this price: ${m.breakeven_units_90d}` : ""}</div>`
+    : `<div class="meta" style="margin-top:6px">No sales recorded for this product in the last 90 days.</div>`;
+  out.innerHTML = `
+    <div class="kpi-grid" style="margin-top:16px">
+      <div class="kpi"><div class="label">Margin now</div><div class="value">${money0(m.current_margin)} · ${m.current_margin_pct}%</div></div>
+      <div class="kpi"><div class="label">Margin after</div><div class="value ${m.new_margin < m.current_margin ? "neg" : "pos"}">${money0(m.new_margin)} · ${m.new_margin_pct}%</div></div>
+    </div>
+    ${be ? `<div class="card" style="margin-top:12px"><div style="font-size:14px">${be}</div>${hist}</div>` : ""}
+    <div class="card" style="margin-top:12px"><div class="md">${md(r.ai.text)}</div></div>`;
+}
+
 // One editable supplier row (name + phone + remove) in the product form.
 function supplierRowHtml(s) {
   s = s || {};
@@ -2680,7 +2731,7 @@ async function _sharePayLinkFallback(id) {
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, shareInvoice, markPaid, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
-  delProduct, addSupplierRow, callSupplier, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice,
+  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,
   doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, paywallSelect, paywallCheckout, whatsappReminder, whatsappCall, phoneCall,
