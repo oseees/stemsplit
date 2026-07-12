@@ -1,0 +1,10 @@
+// Root build file for the SalesPal WebView app (a plain native WebView wrapper —
+// NOT a TWA/Chrome Custom Tab — so the app owns the microphone permission itself).
+buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies { classpath 'com.android.tools.build:gradle:8.9.1' }
+}
+allprojects {
+    repositories { google(); mavenCentral() }
+}
+task clean(type: Delete) { delete rootProject.buildDir }

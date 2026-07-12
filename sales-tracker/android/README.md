@@ -17,6 +17,16 @@ every future update.
 cd sales-tracker/android
 # twa-manifest.json is the source of truth (bump appVersionCode/appVersion per release).
 npx @bubblewrap/cli update --skipVersionUpgrade   # regen project after manifest edits
+
+# REQUIRED: re-add the mic permission. `update` regenerates AndroidManifest.xml
+# from the template, which has no RECORD_AUDIO — without it the voice-sale mic
+# fails with "not-allowed" and no prompt inside the installed app. Bubblewrap has
+# no twa-manifest field for arbitrary permissions, so inject it every rebuild:
+grep -q RECORD_AUDIO app/src/main/AndroidManifest.xml || sed -i '' \
+  's|<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|&\
+        <uses-permission android:name="android.permission.RECORD_AUDIO"/>|' \
+  app/src/main/AndroidManifest.xml
+
 BUBBLEWRAP_KEYSTORE_PASSWORD=$(cat keystore.pass) \
 BUBBLEWRAP_KEY_PASSWORD=$(cat keystore.pass) \
 npx @bubblewrap/cli build --skipPwaValidation

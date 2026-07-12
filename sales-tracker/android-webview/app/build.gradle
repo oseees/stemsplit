@@ -1,0 +1,37 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace "online.salespal.twa"
+    compileSdk 36
+    buildToolsVersion "35.0.0"
+
+    defaultConfig {
+        applicationId "online.salespal.twa"   // same id + keystore as the old TWA → updates in place
+        minSdkVersion 21
+        targetSdkVersion 34                    // 34 avoids target-35 forced edge-to-edge (simpler layout)
+        versionCode 3
+        versionName "2.0.0"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file(System.getenv("SALESPAL_KEYSTORE") ?: "../../android/android.keystore")
+            storePassword System.getenv("SALESPAL_KEYSTORE_PASSWORD")
+            keyAlias "android"
+            keyPassword System.getenv("SALESPAL_KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    lint { checkReleaseBuilds false }
+}

@@ -45,6 +45,15 @@ sales-tracker/android/.bubblewrap/
 sales-tracker/android/app-release-*.apk
 sales-tracker/android/*.aab
 
+# WebView app (hand-written source IS committed; ignore only build outputs)
+sales-tracker/android-webview/local.properties
+sales-tracker/android-webview/.gradle/
+sales-tracker/android-webview/build/
+sales-tracker/android-webview/app/build/
+sales-tracker/android-webview/**/*.apk
+sales-tracker/android-webview/**/*.idsig
+sales-tracker/android-webview/**/*.aab
+
 # OS
 .DS_Store
 vocalmatch/build/

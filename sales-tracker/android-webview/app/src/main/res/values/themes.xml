@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Framework Material theme (no AppCompat dependency). Green status bar to match the PWA. -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#0A5236</item>
+        <item name="android:colorPrimary">#0A5236</item>
+        <item name="android:windowBackground">#F3F7F4</item>
+    </style>
+</resources>
