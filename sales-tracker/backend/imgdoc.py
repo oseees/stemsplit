@@ -8,7 +8,7 @@ import io
 import os
 from PIL import Image, ImageDraw, ImageFont
 
-INDIGO = (79, 70, 229)
+BRAND = (10, 82, 54)   # #0a5236 — the app's deep-forest green
 INK = (17, 24, 39)
 MUTED = (107, 114, 128)
 LINE = (229, 231, 235)
@@ -65,6 +65,17 @@ def _status(paid, balance):
     return "UNPAID", RED, RED_BG
 
 
+def _powered(d, w, y):
+    """Marketing footer: every shared invoice/receipt is a tiny ad for the app."""
+    fa, fb = _font(False, 20), _font(True, 20)
+    segs = [("Made with ", fa, MUTED), ("SalesPal", fb, BRAND),
+            (" — track sales & get paid  ·  salespal.online", fa, MUTED)]
+    x = (w - sum(d.textlength(t, font=f) for t, f, _ in segs)) / 2
+    for t, f, fill in segs:
+        d.text((x, y), t, font=f, fill=fill)
+        x += d.textlength(t, font=f)
+
+
 def _export(img, fmt):
     buf = io.BytesIO()
     if fmt == "jpg":
@@ -103,7 +114,7 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
          + 30 + totals_n * 46                       # totals
          + (70 if notes else 0)
          + (66 + len(bank_lines) * 34 + 24 if bank_lines else 0)  # bank block
-         + 170)                                     # status + footer
+         + 220)                                     # status + footers
     # Oversize the canvas; the final crop trims it. (Cropping PAST the canvas
     # would pad with black instead.)
     img = Image.new("RGB", (W, H + 400), "white")
@@ -111,7 +122,7 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
 
     # Header: business (left) + INVOICE block (right)
     y = PAD
-    d.text((PAD, y), settings.get("business_name", "My Business"), font=_font(True, 38), fill=INDIGO)
+    d.text((PAD, y), settings.get("business_name", "My Business"), font=_font(True, 38), fill=BRAND)
     yy = y + 52
     for line in biz_extra:
         d.text((PAD, yy), str(line), font=_font(False, 22), fill=MUTED)
@@ -137,7 +148,7 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
     # Items table
     col_qty, col_price, col_amt = W - PAD - 420, W - PAD - 260, W - PAD
     head_f, cell_f = _font(True, 22), _font(False, 24)
-    d.rectangle([PAD, y, W - PAD, y + 54], fill=INDIGO)
+    d.rectangle([PAD, y, W - PAD, y + 54], fill=BRAND)
     d.text((PAD + 18, y + 14), "Item", font=head_f, fill="white")
     _right(d, col_qty, y + 14, "Qty", head_f, "white")
     _right(d, col_price, y + 14, "Price", head_f, "white")
@@ -158,7 +169,7 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
     # Totals (right-aligned block). Label sits far enough left that the widest
     # label ("Balance Due") never collides with a large right-aligned amount.
     lbl_x, val_x = W - PAD - 390, W - PAD
-    rows = [("Total", _money(cur, total), True, INDIGO)]
+    rows = [("Total", _money(cur, total), True, BRAND)]
     if paid > 0:
         rows.append(("Paid", _money(cur, paid), False, INK))
         rows.append(("Balance Due", _money(cur, balance), True, INK))
@@ -186,11 +197,12 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
                font=_font(False, 22), fill=MUTED)
         y += 70
 
-    # Status badge + thank-you footer
+    # Status badge + thank-you + powered-by footer
     text, fg, bg = _status(paid, balance)
     _badge(d, W / 2, y + 14, text, _font(True, 24), fg, bg)
     _center(d, W / 2, y + 88, "Thank you for your business!", _font(False, 24), MUTED)
-    img = img.crop((0, 0, W, int(y + 150)))
+    _powered(d, W, y + 138)
+    img = img.crop((0, 0, W, int(y + 196)))
     return _export(img, fmt)
 
 
@@ -199,14 +211,14 @@ def build_receipt_image(invoice, payment, customer, settings, paid, balance, fmt
     W, PAD = 1000, 56
     cur = settings.get("currency", "$")
     fully_paid = balance <= 0.001
-    H = 1200  # oversized; cropped to content at the end
+    H = 1300  # oversized; cropped to content at the end
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
 
     # Top accent bar + business name
-    d.rectangle([0, 0, W, 14], fill=INDIGO)
+    d.rectangle([0, 0, W, 14], fill=BRAND)
     y = PAD + 10
-    _center(d, W / 2, y, settings.get("business_name", "My Business"), _font(True, 38), INDIGO)
+    _center(d, W / 2, y, settings.get("business_name", "My Business"), _font(True, 38), BRAND)
     y += 58
     _center(d, W / 2, y, "PAYMENT RECEIPT", _font(False, 24), MUTED)
     y += 56
@@ -264,5 +276,6 @@ def build_receipt_image(invoice, payment, customer, settings, paid, balance, fmt
         urge += f" by {due} " if due else " "
         urge += "to complete this order."
         _center(d, W / 2, y, urge, _font(False, 22), AMBER)
-    img = img.crop((0, 0, W, int(y + 70)))
+    _powered(d, W, y + 56)
+    img = img.crop((0, 0, W, int(y + 114)))
     return _export(img, fmt)

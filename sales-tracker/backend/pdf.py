@@ -15,7 +15,7 @@ from reportlab.platypus import (
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-ACCENT = colors.HexColor("#4f46e5")
+ACCENT = colors.HexColor("#0a5236")  # SalesPal deep-forest green (matches the app)
 MUTED = colors.HexColor("#6b7280")
 LIGHT = colors.HexColor("#f3f4f6")
 
@@ -164,6 +164,11 @@ def build_invoice_pdf(invoice: dict, items: list, customer: dict, settings: dict
     elems.append(Paragraph(
         f"Status: {status} &nbsp;&nbsp;•&nbsp;&nbsp; Thank you for your business!",
         ParagraphStyle("foot", parent=small, alignment=1)))
+    # Marketing footer: every shared invoice is a tiny ad for the app.
+    elems += [Spacer(1, 3 * mm), Paragraph(
+        'Made with <font color="#0a5236"><b>SalesPal</b></font> — track sales &amp; get paid '
+        '&nbsp;·&nbsp; <link href="https://salespal.online" color="#0a5236">salespal.online</link>',
+        ParagraphStyle("powered", parent=small, alignment=1, fontSize=8))]
 
     doc.build(elems)
     return buf.getvalue()
