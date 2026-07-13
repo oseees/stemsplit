@@ -238,6 +238,22 @@ main { padding: 14px; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
 
+/* Customer name autocomplete (JS-driven, not <datalist> — see
+   filterCustomerSuggest in app.js for why) */
+.suggest-list {
+  display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.18); max-height: 190px; overflow-y: auto; z-index: 5;
+}
+.suggest-list.show { display: block; }
+.suggest-list button {
+  display: block; width: 100%; text-align: left; padding: 10px 12px;
+  background: none; border: 0; border-bottom: 1px solid var(--line);
+  font-size: 14px; color: var(--ink);
+}
+.suggest-list button:last-child { border-bottom: 0; }
+.suggest-list button:active { background: var(--tint); }
+
 .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
 .empty .big { font-size: 34px; margin-bottom: 8px; }
 

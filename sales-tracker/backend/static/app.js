@@ -1753,17 +1753,21 @@ async function newSaleModal() {
   const [products, customers] = await Promise.all([
     api.get("/api/products"), api.get("/api/customers")]);
   window._products = products;
-  const custList = customers.map(c => `<option value="${esc(c.name)}">`).join("");
+  window._customers = customers;
   const canVoice = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <h2 style="margin:0">New sale</h2>
       ${canVoice ? `<button type="button" class="mic-btn" id="micBtn" onclick="voiceSale()">🎤 Speak it</button>` : ""}
     </div>
-    <div class="field"><label>Customer name</label>
-      <input id="saleCustomer" list="custList" autocomplete="off"
-        placeholder="Type a name (or leave blank for walk-in)">
-      <datalist id="custList">${custList}</datalist></div>
+    <div class="field" style="position:relative">
+      <label>Customer name</label>
+      <input id="saleCustomer" autocomplete="off"
+        placeholder="Type a name (or leave blank for walk-in)"
+        oninput="filterCustomerSuggest()" onfocus="filterCustomerSuggest()"
+        onblur="setTimeout(hideCustomerSuggest,150)">
+      <div id="custSuggest" class="suggest-list"></div>
+    </div>
     <div class="section-title">Items</div>
     <div id="saleItems"></div>
     <div class="btn-row" style="margin-bottom:12px">
@@ -1824,6 +1828,33 @@ function updItem(i, k, v) {
     const total = saleItems.reduce((s, it) => s + it.qty * it.unit_price, 0);
     document.getElementById("saleTotal").textContent = money(total);
   }
+}
+
+// Custom JS autocomplete for the customer name field — NOT a native
+// <datalist>. Android's WebView renders <input list> as a forced picker that
+// can swallow the on-screen keyboard, trapping the user into an existing
+// name. This is a plain suggestion dropdown: it never blocks free typing.
+function filterCustomerSuggest() {
+  const inp = document.getElementById("saleCustomer");
+  const box = document.getElementById("custSuggest");
+  if (!inp || !box) return;
+  const q = inp.value.trim().toLowerCase();
+  const matches = (window._customers || [])
+    .filter(c => !q || c.name.toLowerCase().includes(q)).slice(0, 6);
+  if (!matches.length) { box.classList.remove("show"); box.innerHTML = ""; return; }
+  box.innerHTML = matches.map(c =>
+    `<button type="button" onmousedown="event.preventDefault()" onclick='pickCustomerSuggest(${attrJson(c.name)})'>${esc(c.name)}</button>`
+  ).join("");
+  box.classList.add("show");
+}
+function pickCustomerSuggest(name) {
+  const inp = document.getElementById("saleCustomer");
+  if (inp) inp.value = name;
+  hideCustomerSuggest();
+}
+function hideCustomerSuggest() {
+  const box = document.getElementById("custSuggest");
+  if (box) { box.classList.remove("show"); box.innerHTML = ""; }
 }
 function removeItem(i) { saleItems.splice(i, 1); renderSaleItems(); }
 
@@ -2902,6 +2933,7 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, shareInvoice
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral,
+  filterCustomerSuggest, pickCustomerSuggest, hideCustomerSuggest,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,
   doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, paywallSelect, paywallCheckout, whatsappReminder, whatsappCall, phoneCall,
