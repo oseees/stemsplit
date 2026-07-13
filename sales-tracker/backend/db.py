@@ -303,6 +303,11 @@ def init_db():
         # first-touch acquisition (owner dashboard): channel bucket + raw referrer
         _ensure_column(conn, "users", "signup_source", "TEXT")
         _ensure_column(conn, "users", "signup_referrer", "TEXT")
+        # referral program: my share code, who invited me, and whether that
+        # inviter has been paid their free month yet (on my first sale)
+        _ensure_column(conn, "users", "ref_code", "TEXT")
+        _ensure_column(conn, "users", "referred_by", "INTEGER")
+        _ensure_column(conn, "users", "ref_rewarded", "INTEGER NOT NULL DEFAULT 0")
         # voice sale entry: free-plan monthly taste counter (month key + uses)
         _ensure_column(conn, "users", "voice_month", "TEXT")
         _ensure_column(conn, "users", "voice_uses", "INTEGER NOT NULL DEFAULT 0")

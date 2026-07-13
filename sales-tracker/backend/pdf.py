@@ -36,6 +36,26 @@ def _money(cur, v):
     return f"{cur}{v:,.2f}"
 
 
+def _wm_page(canv, doc, text):
+    """Faint diagonal business-name watermark behind the page content."""
+    text = (text or "").strip()
+    if not text:
+        return
+    canv.saveState()
+    size = 60
+    w = pdfmetrics.stringWidth(text, FONT_BOLD, size)
+    if w > 460:  # fit the diagonal band across A4
+        size = max(24, size * 460 / w)
+    canv.setFont(FONT_BOLD, size)
+    canv.setFillColor(ACCENT)
+    canv.setFillAlpha(0.05)
+    pw, ph = A4
+    canv.translate(pw / 2, ph / 2)
+    canv.rotate(30)
+    canv.drawCentredString(0, 0, text)
+    canv.restoreState()
+
+
 def build_invoice_pdf(invoice: dict, items: list, customer: dict, settings: dict,
                       paid: float = 0.0) -> bytes:
     cur = settings.get("currency", "$")
@@ -170,5 +190,6 @@ def build_invoice_pdf(invoice: dict, items: list, customer: dict, settings: dict
         '&nbsp;·&nbsp; <link href="https://salespal.online" color="#0a5236">salespal.online</link>',
         ParagraphStyle("powered", parent=small, alignment=1, fontSize=8))]
 
-    doc.build(elems)
+    wm = lambda c, d: _wm_page(c, d, settings.get("business_name"))
+    doc.build(elems, onFirstPage=wm, onLaterPages=wm)
     return buf.getvalue()

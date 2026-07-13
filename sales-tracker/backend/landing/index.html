@@ -17,11 +17,16 @@
     (function () {
       try {
         var K = "salespal_attr";
+        var p = new URLSearchParams(location.search);
         if (!localStorage.getItem(K)) {
-          var p = new URLSearchParams(location.search);
           localStorage.setItem(K, JSON.stringify({
             referrer: document.referrer || "", utm_source: p.get("utm_source") || "", ts: Date.now()
           }));
+        }
+        // A referral link (?ref=CODE) always sticks — newest inviter wins.
+        if (p.get("ref")) {
+          var a = {}; try { a = JSON.parse(localStorage.getItem(K) || "{}"); } catch (e2) {}
+          a.ref = p.get("ref"); localStorage.setItem(K, JSON.stringify(a));
         }
       } catch (e) {}
     })();

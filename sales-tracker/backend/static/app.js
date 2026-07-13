@@ -521,7 +521,8 @@ async function doAuth(ev) {
       path = "/api/auth/register";
       const attr = (window.salespalAttr && window.salespalAttr()) || {};
       body = { email, password, business_name: document.getElementById("auBiz").value.trim(),
-               referrer: attr.referrer || "", utm_source: attr.utm_source || "" };
+               referrer: attr.referrer || "", utm_source: attr.utm_source || "",
+               ref: attr.ref || "" };
     } else if (mode === "reset") {
       path = "/api/auth/reset";
       body = { email, token: document.getElementById("auCode").value.trim(), new_password: password };
@@ -540,6 +541,7 @@ async function doAuth(ev) {
       return;                                // we're either redirecting or already in the app
     }
     await bootstrap(user);
+    if (user.referral_bonus) toast("\ud83c\udf81 1 month of Pro free \u2014 welcome!");
     setTimeout(maybePromptInstall, 800);     // one-tap Add-to-Home-Screen offer
   } catch (e) {
     errEl.textContent = e.message || "Something went wrong";
@@ -2515,6 +2517,34 @@ function shareOrderLink(how) {
   toast("Link copied — paste it anywhere");
 }
 
+// ---------- REFER & EARN ----------
+async function referralModal() {
+  document.getElementById("menuSheet").classList.remove("open");
+  let r;
+  try { r = await api.get("/api/referral", { fresh: true }); }
+  catch (e) { toast(e.message || "Couldn't load your invite link"); return; }
+  window._refLink = r.link;
+  const earned = r.months_earned;
+  openModal(`<h3>🎁 Refer &amp; earn</h3>
+    <p style="font-size:14px;color:var(--muted);margin:6px 0 14px">Invite another shop owner.
+    They get <strong>1 month of Pro free</strong> when they join with your link — and when they
+    record their first sale, <strong>you get a free month too</strong>.</p>
+    <div class="field"><label>Your invite link</label><input readonly value="${r.link}" onclick="this.select()"></div>
+    <button class="btn whatsapp" onclick="shareReferral('whatsapp')">💬 Share on WhatsApp</button>
+    <button class="btn outline" style="margin-top:10px" onclick="shareReferral('copy')">🔗 Copy link</button>
+    <p style="font-size:13px;color:var(--muted);text-align:center;margin:14px 0 0">
+      ${r.joined} friend${r.joined === 1 ? "" : "s"} joined · ${earned} free month${earned === 1 ? "" : "s"} earned</p>`);
+}
+
+function shareReferral(how) {
+  const url = window._refLink;
+  if (!url) return;
+  const msg = `I use SalesPal to track my sales, see who owes me money, and send invoices on WhatsApp. Join with my link and we BOTH get 1 month of Pro free:\n${url}`;
+  if (how === "whatsapp") { openExternal(`https://wa.me/?text=${encodeURIComponent(msg)}`); return; }
+  if (navigator.clipboard) navigator.clipboard.writeText(url);
+  toast("Invite link copied — paste it anywhere");
+}
+
 // ---------- SETTINGS ----------
 function transferCardHtml(pay) {
   // Instant bank transfer to the merchant's own account (no processor, no fee).
@@ -2871,7 +2901,7 @@ async function _sharePayLinkFallback(id) {
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, shareInvoice, markPaid, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
-  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice,
+  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,
   doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, paywallSelect, paywallCheckout, whatsappReminder, whatsappCall, phoneCall,

@@ -51,11 +51,16 @@
     (function () {
       try {
         var K = "salespal_attr";
+        var p = new URLSearchParams(location.search);
         if (!localStorage.getItem(K)) {
-          var p = new URLSearchParams(location.search);
           localStorage.setItem(K, JSON.stringify({
             referrer: document.referrer || "", utm_source: p.get("utm_source") || "", ts: Date.now()
           }));
+        }
+        // A referral link (?ref=CODE) always sticks — newest inviter wins.
+        if (p.get("ref")) {
+          var a = {}; try { a = JSON.parse(localStorage.getItem(K) || "{}"); } catch (e2) {}
+          a.ref = p.get("ref"); localStorage.setItem(K, JSON.stringify(a));
         }
       } catch (e) {}
       window.salespalAttr = function () {
@@ -92,6 +97,7 @@
     <button data-nav="suppliers">🚚 Suppliers</button>
     <button data-nav="customers">👥 Customers</button>
     <button data-nav="settings">⚙️ Business settings</button>
+    <button onclick="referralModal()">🎁 Refer &amp; earn</button>
     <button data-nav="admin" id="adminNav" style="display:none">📊 Admin</button>
     <button id="viewToggle">🖥️ Switch to Desktop view</button>
     <button id="themeToggle">🌙 Dark mode</button>

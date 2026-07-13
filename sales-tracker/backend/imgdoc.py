@@ -65,6 +65,28 @@ def _status(paid, balance):
     return "UNPAID", RED, RED_BG
 
 
+def _wm(img, text, cy):
+    """Faint diagonal business-name watermark behind the content — looks
+    professional and makes a doctored screenshot harder to pass off. Drawn
+    FIRST so everything else sits on top of it."""
+    text = (text or "").strip()
+    if not text:
+        return
+    W = img.width
+    d = ImageDraw.Draw(img)
+    size = 110
+    f = _font(True, size)
+    max_w = W * 0.86
+    if d.textlength(text, font=f) > max_w:
+        size = max(36, int(size * max_w / d.textlength(text, font=f)))
+        f = _font(True, size)
+    tw = d.textlength(text, font=f)
+    layer = Image.new("RGBA", (int(tw) + 20, size * 2), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((10, size // 2), text, font=f, fill=BRAND + (16,))
+    layer = layer.rotate(24, expand=True, resample=Image.BICUBIC)
+    img.paste(layer, (int((W - layer.width) / 2), int(cy - layer.height / 2)), layer)
+
+
 def _powered(d, w, y):
     """Marketing footer: every shared invoice/receipt is a tiny ad for the app."""
     fa, fb = _font(False, 20), _font(True, 20)
@@ -118,6 +140,7 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
     # Oversize the canvas; the final crop trims it. (Cropping PAST the canvas
     # would pad with black instead.)
     img = Image.new("RGB", (W, H + 400), "white")
+    _wm(img, settings.get("business_name"), H * 0.45)
     d = ImageDraw.Draw(img)
 
     # Header: business (left) + INVOICE block (right)
@@ -213,6 +236,9 @@ def build_receipt_image(invoice, payment, customer, settings, paid, balance, fmt
     fully_paid = balance <= 0.001
     H = 1300  # oversized; cropped to content at the end
     img = Image.new("RGB", (W, H), "white")
+    # Center the mark in the open amount zone — the summary card lower down is
+    # an opaque fill drawn after it, so anything under the card is hidden.
+    _wm(img, settings.get("business_name"), 330)
     d = ImageDraw.Draw(img)
 
     # Top accent bar + business name

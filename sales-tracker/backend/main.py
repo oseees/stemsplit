@@ -159,6 +159,7 @@ class RegisterIn(BaseModel):
     # First-touch acquisition captured by the landing/app on first visit.
     referrer: Optional[str] = None   # document.referrer of the first page seen
     utm_source: Optional[str] = None  # ?utm_source= on the first visit, if any
+    ref: Optional[str] = None        # a friend's referral code (?ref= on first visit)
 
 
 class LoginIn(BaseModel):
@@ -542,14 +543,8 @@ def admin_stats(user=Depends(current_user)):
 
 
 # ----------------------------- Billing (Paystack) ---------------------------
-def _apply_plan(conn, user_id, reference, amount, days, plan_key=None):
-    """Idempotently credit `days` of Pro. Returns True only on first apply.
-    Early-bird purchases also flag the user so their founding rate is kept."""
-    cur = conn.execute(
-        "INSERT OR IGNORE INTO billing_events(reference,user_id,amount,created_at) "
-        "VALUES(?,?,?,?)", (reference, user_id, amount, db.now_iso()))
-    if cur.rowcount == 0:
-        return False  # already processed this reference
+def _grant_days(conn, user_id, days):
+    """Credit `days` of Pro access, stacking onto any remaining time."""
     row = conn.execute("SELECT plan_expires_at FROM users WHERE id=?", (user_id,)).fetchone()
     base = date.today()
     cur_exp = row["plan_expires_at"] if row else None
@@ -562,6 +557,53 @@ def _apply_plan(conn, user_id, reference, amount, days, plan_key=None):
             pass
     new_exp = (base + timedelta(days=int(days))).isoformat()
     conn.execute("UPDATE users SET plan_expires_at=? WHERE id=?", (new_exp, user_id))
+
+
+# Referral program: invite a shop owner, you both get a free month of Pro.
+# The new account gets theirs at signup; the inviter earns theirs when the
+# new account records its FIRST sale (rewards real usage, not throwaway
+# signups — combined with the register rate limit, farming isn't worth it).
+REFERRAL_DAYS = 30
+REFERRAL_CAP = 12  # max rewarded referrals per inviter
+
+
+def _ref_code(conn, user_id):
+    """The user's shareable referral code, created on first ask."""
+    row = conn.execute("SELECT ref_code FROM users WHERE id=?", (user_id,)).fetchone()
+    if row and row["ref_code"]:
+        return row["ref_code"]
+    import secrets as _secrets
+    while True:  # unambiguous alphabet (no 0/O/1/I)
+        code = "".join(_secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
+        if not conn.execute("SELECT 1 FROM users WHERE ref_code=?", (code,)).fetchone():
+            break
+    conn.execute("UPDATE users SET ref_code=? WHERE id=?", (code, user_id))
+    return code
+
+
+@app.get("/api/referral")
+def referral_info(user=Depends(current_user)):
+    with db.get_conn() as conn:
+        code = _ref_code(conn, user["id"])
+        joined = conn.execute("SELECT COUNT(*) FROM users WHERE referred_by=?",
+                              (user["id"],)).fetchone()[0]
+        rewarded = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE referred_by=? AND ref_rewarded=1",
+            (user["id"],)).fetchone()[0]
+    return {"code": code, "link": f"https://salespal.online/?ref={code}",
+            "joined": joined, "months_earned": rewarded,
+            "days_per_referral": REFERRAL_DAYS}
+
+
+def _apply_plan(conn, user_id, reference, amount, days, plan_key=None):
+    """Idempotently credit `days` of Pro. Returns True only on first apply.
+    Early-bird purchases also flag the user so their founding rate is kept."""
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO billing_events(reference,user_id,amount,created_at) "
+        "VALUES(?,?,?,?)", (reference, user_id, amount, db.now_iso()))
+    if cur.rowcount == 0:
+        return False  # already processed this reference
+    _grant_days(conn, user_id, days)
     if plan_key == "earlybird":
         conn.execute("UPDATE users SET early_bird=1 WHERE id=?", (user_id,))
     return True
@@ -789,6 +831,16 @@ def register(data: RegisterIn, request: Request, response: Response):
             "UPDATE users SET signup_source=?, signup_referrer=? WHERE id=?",
             (_classify_source(data.referrer, data.utm_source),
              (data.referrer or "")[:300] or None, uid))
+        # Referral: signing up through a friend's link = 1 free month of Pro
+        # now; the friend earns theirs when this account records its first sale.
+        referral_bonus = False
+        ref = (data.ref or "").strip().upper()
+        if ref:
+            r = conn.execute("SELECT id FROM users WHERE ref_code=?", (ref,)).fetchone()
+            if r:
+                conn.execute("UPDATE users SET referred_by=? WHERE id=?", (r["id"], uid))
+                _grant_days(conn, uid, REFERRAL_DAYS)
+                referral_bonus = True
         # The very first account on an upgraded instance inherits the
         # pre-accounts data (incl. the owner's real settings) so nothing is
         # lost. Claim first so those settings win over seeded defaults.
@@ -807,7 +859,10 @@ def register(data: RegisterIn, request: Request, response: Response):
         conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (db.now_iso(), uid))
         user = db.get_user(conn, uid)
     _set_session_cookie(request, response, token)
-    return _public_user(user)
+    out = _public_user(user)
+    if referral_bonus:
+        out["referral_bonus"] = True  # lets the app toast the free month
+    return out
 
 
 @app.post("/api/auth/login")
@@ -1393,6 +1448,15 @@ def create_invoice(inv: InvoiceIn, user=Depends(current_user)):
                  inv.payment.method, inv.payment.note))
             conn.execute("UPDATE invoices SET status=? WHERE id=?",
                          (status_for(total, paid_for(conn, iid)), iid))
+        # Referral payoff: this account's FIRST sale earns their inviter a free
+        # month — rewards real usage, not throwaway signups. Capped per inviter.
+        if user.get("referred_by") and not user.get("ref_rewarded"):
+            conn.execute("UPDATE users SET ref_rewarded=1 WHERE id=?", (uid,))
+            n = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE referred_by=? AND ref_rewarded=1",
+                (user["referred_by"],)).fetchone()[0]
+            if n <= REFERRAL_CAP:
+                _grant_days(conn, user["referred_by"], REFERRAL_DAYS)
         return {"id": iid, "invoice_no": no, "total": total}
 
 
