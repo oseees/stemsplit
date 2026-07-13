@@ -38,6 +38,58 @@ app = FastAPI(title="SalesPal")
 db.init_db()
 
 
+# --- per-IP rate limiting -------------------------------------------------
+# Stdlib sliding window: auth endpoints are the brute-force / credential-stuffing
+# surface, the AI/voice endpoints cost real money per call. No slowapi/Redis —
+# a dict of IP->timestamps is plenty at this scale.
+# ponytail: in-memory, so limits reset on redeploy, aren't shared across
+# replicas, and idle IPs keep a small dict entry (bounded by active-IP count).
+# Single Railway instance today. Move to Redis if we scale out.
+import time
+from collections import deque
+
+_RATE_HITS = {}
+# (path prefix, max hits, window seconds) — first matching prefix wins.
+_RATE_RULES = [
+    ("/api/auth/login", 10, 60),
+    ("/api/auth/register", 5, 60),
+    ("/api/auth/reset", 5, 60),
+    ("/api/voice/", 20, 60),
+]
+
+
+def _client_ip(request):
+    # Railway terminates TLS and sets X-Forwarded-For; take the leftmost (client).
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip()
+            or (request.client.host if request.client else "?"))
+
+
+def _rate_limited(request):
+    path = request.url.path
+    for prefix, limit, window in _RATE_RULES:
+        if path.startswith(prefix):
+            now = time.monotonic()
+            key = prefix + ":" + _client_ip(request)
+            dq = _RATE_HITS.setdefault(key, deque())
+            while dq and now - dq[0] > window:
+                dq.popleft()
+            if len(dq) >= limit:
+                return window
+            dq.append(now)
+            return 0
+    return 0
+
+
+@app.middleware("http")
+async def _rate_limit(request: Request, call_next):
+    retry = _rate_limited(request)
+    if retry:
+        return JSONResponse({"detail": "Too many requests — slow down and try again shortly."},
+                            status_code=429, headers={"Retry-After": str(retry)})
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
     """Baseline hardening headers on every response. CSP is intentionally
@@ -712,8 +764,8 @@ def register(data: RegisterIn, request: Request, response: Response):
     email = (data.email or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(400, "A valid email is required")
-    if not data.password or len(data.password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
+    if not data.password or len(data.password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
     with db.get_conn() as conn:
         if db.get_user_by_email(conn, email):
             raise HTTPException(400, "An account with this email already exists")
@@ -801,8 +853,8 @@ def reset_password(data: ResetIn, request: Request, response: Response):
         raise HTTPException(403, "Password reset isn't enabled")
     if not data.token or not hmac.compare_digest(data.token.strip(), expected):
         raise HTTPException(403, "Invalid reset code")
-    if not data.new_password or len(data.new_password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
+    if not data.new_password or len(data.new_password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
     email = (data.email or "").strip().lower()
     with db.get_conn() as conn:
         u = db.get_user_by_email(conn, email)
@@ -838,8 +890,8 @@ def staff_create(data: StaffIn, user=Depends(current_user)):
     username = (data.username or "").strip().lower()
     if len(username) < 3 or "@" in username or " " in username:
         raise HTTPException(400, "Username needs 3+ characters, no spaces or @")
-    if not data.password or len(data.password) < 4:
-        raise HTTPException(400, "Password must be at least 4 characters")
+    if not data.password or len(data.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
     with db.get_conn() as conn:
         shop_id = data.shop_id or _write_shop(conn, user)
         if not db.get_shop(conn, shop_id, user["id"]):
@@ -888,8 +940,8 @@ def me(user=Depends(current_user)):
 def change_password(data: ChangePwIn, user=Depends(current_user)):
     """Change your own password while logged in (current password required).
     Keeps the current session valid so you stay signed in."""
-    if not data.new_password or len(data.new_password) < 6:
-        raise HTTPException(400, "New password must be at least 6 characters")
+    if not data.new_password or len(data.new_password) < 8:
+        raise HTTPException(400, "New password must be at least 8 characters")
     with db.get_conn() as conn:
         u = db.get_user(conn, user["id"])
         if not auth.verify_pw(data.current_password, u["pw_salt"], u["pw_hash"]):
@@ -1376,7 +1428,7 @@ def _pay_to(user):
 
 
 @app.get("/api/invoices/{iid}/pdf")
-def invoice_pdf(iid: int, user=Depends(current_user)):
+def invoice_pdf(iid: int, download: int = 0, user=Depends(current_user)):
     with db.get_conn() as conn:
         inv = _owned_invoice(conn, iid, user["id"])
         payload = _invoice_payload(conn, dict(inv))
@@ -1387,20 +1439,28 @@ def invoice_pdf(iid: int, user=Depends(current_user)):
     return RawResponse(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{inv["invoice_no"]}.pdf"'},
+        headers=_disposition(f'{inv["invoice_no"]}.pdf', download),
     )
 
 
-def _img_response(data, filename, fmt):
+def _disposition(filename, download):
+    # attachment => the Android WebView's DownloadListener saves the file instead
+    # of rendering it inline (which strands the user, since the WebView has no
+    # navigator.share to fall back to). inline keeps the WhatsApp preview behaviour.
+    kind = "attachment" if download else "inline"
+    return {"Content-Disposition": f'{kind}; filename="{filename}"'}
+
+
+def _img_response(data, filename, fmt, download=False):
     return RawResponse(
         content=data,
         media_type="image/jpeg" if fmt == "jpg" else "image/png",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers=_disposition(filename, download),
     )
 
 
 @app.get("/api/invoices/{iid}/image")
-def invoice_image(iid: int, fmt: str = "png", user=Depends(current_user)):
+def invoice_image(iid: int, fmt: str = "png", download: int = 0, user=Depends(current_user)):
     """Invoice as a shareable image — previews inline in WhatsApp chats."""
     if fmt not in ("png", "jpg"):
         raise HTTPException(400, "fmt must be png or jpg")
@@ -1411,11 +1471,11 @@ def invoice_image(iid: int, fmt: str = "png", user=Depends(current_user)):
     settings["pay_to"] = _pay_to(user)
     data = imgdoc.build_invoice_image(
         payload, payload["items"], payload["customer"], settings, payload["paid"], fmt)
-    return _img_response(data, f"{inv['invoice_no']}.{fmt}", fmt)
+    return _img_response(data, f"{inv['invoice_no']}.{fmt}", fmt, download)
 
 
 @app.get("/api/invoices/{iid}/receipt")
-def invoice_receipt(iid: int, fmt: str = "png", user=Depends(current_user)):
+def invoice_receipt(iid: int, fmt: str = "png", download: int = 0, user=Depends(current_user)):
     """Receipt image for the most recent payment, with a thank-you message."""
     if fmt not in ("png", "jpg"):
         raise HTTPException(400, "fmt must be png or jpg")
@@ -1429,7 +1489,7 @@ def invoice_receipt(iid: int, fmt: str = "png", user=Depends(current_user)):
     data = imgdoc.build_receipt_image(
         payload, latest, payload["customer"], settings,
         payload["paid"], payload["balance"], fmt)
-    return _img_response(data, f"Receipt-{inv['invoice_no']}.{fmt}", fmt)
+    return _img_response(data, f"Receipt-{inv['invoice_no']}.{fmt}", fmt, download)
 
 
 # -------------------- Online payments (invoice collection) ------------------

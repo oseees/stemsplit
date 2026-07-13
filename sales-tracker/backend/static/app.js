@@ -472,7 +472,7 @@ function renderAuth() {
   const btnLabel = buy ? `Continue to payment →`
     : signup ? "Create account" : reset ? "Set new password" : "Log in";
   const passLabel = reset ? "New password" : "Password";
-  const passPh = signup || reset ? "At least 6 characters" : "Your password";
+  const passPh = signup || reset ? "At least 8 characters" : "Your password";
   app.innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card">
@@ -1530,11 +1530,25 @@ function _waResolveNumber(cust) {
   return num;
 }
 
+// True inside the Android WebView app (its UA carries "; wv)"), where window.open
+// is a no-op with pop-up windows disabled.
+const _isWebViewApp = / wv\)/.test(navigator.userAgent) || !!window.SalesPalShare;
+
+// Open an external app/link (WhatsApp, mailto, tel). In the WebView app a
+// top-level navigation is intercepted natively (shouldOverrideUrlLoading) and
+// handed to the right app WITHOUT navigating the WebView away; in a browser we
+// open a new tab so the app stays put, falling back to navigation if blocked.
+function openExternal(url) {
+  if (_isWebViewApp) { location.href = url; return; }
+  const w = window.open(url, "_blank");
+  if (!w) location.href = url;
+}
+
 // Open WhatsApp to a number with a prefilled message. Called SYNCHRONOUSLY from
 // the tap (no await before it) so phones deep-link straight into the chat — a
 // delayed/scripted navigation to wa.me only loads its web "download" page.
 function _openWhatsApp(num, msg) {
-  window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank");
+  openExternal(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`);
 }
 
 function whatsappReminder(inv) {
@@ -1557,7 +1571,7 @@ function whatsappReminder(inv) {
 function whatsappCall(cust) {
   const num = _waResolveNumber(cust);
   if (!num) return;
-  window.open(`https://wa.me/${num}`, "_blank");
+  openExternal(`https://wa.me/${num}`);
 }
 
 // Build a tel: dial string — prefer the international +234… form when we can
@@ -1591,36 +1605,14 @@ async function markPaid(id, balance) {
 
 async function shareInvoice(id) {
   const pdfUrl = `${location.origin}/api/invoices/${id}/pdf`;
-  try {
-    const inv = await api.get(`/api/invoices/${id}`);
-    const biz = state.settings.business_name || "SalesPal";
-    const who = inv.customer ? inv.customer.name : "";
-    const title = `Invoice ${inv.invoice_no}`;
-    const text = `${biz} — Invoice ${inv.invoice_no}${who ? " for " + who : ""}\n`
-      + `Total: ${money(inv.total)}`
-      + (inv.balance > 0.01 ? `\nBalance due: ${money(inv.balance)}` : " (paid in full)");
-
-    // Best: share the actual PDF file via the native share sheet (WhatsApp, email…)
-    let file = null;
-    try {
-      const blob = await (await fetch(pdfUrl)).blob();
-      file = new File([blob], `${inv.invoice_no}.pdf`, { type: "application/pdf" });
-    } catch (e) { /* fall back to link sharing */ }
-
-    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title, text });
-      return;
-    }
-    if (navigator.share) { await navigator.share({ title, text, url: pdfUrl }); return; }
-
-    // Desktop / unsupported: copy a link to the PDF
-    await navigator.clipboard.writeText(pdfUrl);
-    toast("Invoice link copied to clipboard");
-  } catch (e) {
-    if (e && e.name === "AbortError") return; // user dismissed the share sheet
-    toast("Couldn't share — opening the PDF instead");
-    window.open(pdfUrl, "_blank");
-  }
+  const inv = await api.get(`/api/invoices/${id}`);
+  const biz = state.settings.business_name || "SalesPal";
+  const who = inv.customer ? inv.customer.name : "";
+  const title = `Invoice ${inv.invoice_no}`;
+  const text = `${biz} — Invoice ${inv.invoice_no}${who ? " for " + who : ""}\n`
+    + `Total: ${money(inv.total)}`
+    + (inv.balance > 0.01 ? `\nBalance due: ${money(inv.balance)}` : " (paid in full)");
+  await _shareFile(pdfUrl, `${inv.invoice_no}.pdf`, "application/pdf", title, text);
 }
 
 function paymentModal(id, balance) {
@@ -1650,26 +1642,60 @@ async function savePayment(id, balance) {
   render();
 }
 
-// ---------- shareable images (invoice / receipt) ----------
-// Share an image through the native share sheet (WhatsApp shows it inline);
-// fall back to opening it in a tab where the user can long-press / save.
-async function shareImageFile(url, filename, title, text) {
-  const mime = filename.endsWith(".jpg") ? "image/jpeg" : "image/png";
+// ---------- shareable files (invoice / receipt, PDF or image) ----------
+function _blobToB64(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onloadend = () => res(String(r.result).split(",")[1] || "");
+    r.onerror = rej;
+    r.readAsDataURL(blob);
+  });
+}
+
+// Share a generated file. Preference order:
+//   1) native app bridge → real Android share sheet WITH the file (installed app),
+//   2) browser Web Share with files (Chrome Android / iOS Safari),
+//   3) download it — NEVER window.open, which navigates (and strands) the WebView
+//      onto the raw file since the WebView has no navigator.share.
+async function _shareFile(url, filename, mime, title, text) {
+  const abs = url.startsWith("http") ? url : location.origin + url;
   try {
-    let file = null;
-    try {
-      const blob = await (await fetch(url)).blob();
-      file = new File([blob], filename, { type: mime });
-    } catch (e) { /* fall through to opening the URL */ }
-    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title, text });
-      return;
+    let blob = null;
+    try { blob = await (await fetch(url)).blob(); } catch (e) {}
+
+    // 1) Native app bridge → real Android share sheet WITH the file.
+    // Test only object PRESENCE (reliable); reading a method as a property can
+    // read back undefined on some WebViews even though it's callable — so we just
+    // CALL it inside try/catch instead of gating on `.shareFile`.
+    if (blob && window.SalesPalShare) {
+      try {
+        window.SalesPalShare.shareFile(await _blobToB64(blob), mime, filename, text || "");
+        return;
+      } catch (e) { /* bridge missing/failed → fall through */ }
     }
-    window.open(url, "_blank");
+    // 2) Browsers with Web Share (Chrome Android / iOS Safari).
+    if (blob) {
+      const file = new File([blob], filename, { type: mime });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title, text });
+        return;
+      }
+    }
+    // 3) Download fallback (native DownloadListener saves it; browsers download too).
+    const dl = abs + (abs.includes("?") ? "&" : "?") + "download=1";
+    const a = document.createElement("a");
+    a.href = dl; a.download = filename; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    toast("Saved to your phone — open it to share");
   } catch (e) {
     if (e && e.name === "AbortError") return; // user dismissed the share sheet
-    window.open(url, "_blank");
+    toast("Couldn't share — try again");
   }
+}
+
+async function shareImageFile(url, filename, title, text) {
+  const mime = filename.endsWith(".jpg") ? "image/jpeg" : "image/png";
+  await _shareFile(url, filename, mime, title, text);
 }
 
 async function shareInvoiceImage(id, fmt) {
@@ -2483,9 +2509,9 @@ function shareOrderLink(how) {
   const url = state.orders && state.orders.url;
   if (!url) return;
   const msg = `🛒 Order from ${activeShopName()}! Browse what's in stock and place your order here:\n${url}`;
-  if (how === "whatsapp") { window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank"); return; }
+  if (how === "whatsapp") { openExternal(`https://wa.me/?text=${encodeURIComponent(msg)}`); return; }
   if (navigator.share) { navigator.share({ title: activeShopName(), text: msg, url }).catch(() => {}); return; }
-  navigator.clipboard && navigator.clipboard.writeText(url);
+  if (navigator.clipboard) navigator.clipboard.writeText(url);
   toast("Link copied — paste it anywhere");
 }
 
@@ -2572,7 +2598,7 @@ async function viewSettings() {
       <div class="field"><label>Current password</label>
         <input id="cpCur" type="password" placeholder="Your current password" autocomplete="current-password"></div>
       <div class="field"><label>New password</label>
-        <input id="cpNew" type="password" placeholder="At least 6 characters" autocomplete="new-password">
+        <input id="cpNew" type="password" placeholder="At least 8 characters" autocomplete="new-password">
         <label class="auth-show"><input type="checkbox" onchange="document.getElementById('cpNew').type = this.checked ? 'text' : 'password'"> Show new password</label>
       </div>
       <button class="btn" onclick="changePassword()">Change password</button>
@@ -2583,7 +2609,7 @@ async function viewSettings() {
 async function changePassword() {
   const current_password = document.getElementById("cpCur").value;
   const new_password = document.getElementById("cpNew").value;
-  if ((new_password || "").length < 6) { toast("New password must be 6+ characters"); return; }
+  if ((new_password || "").length < 8) { toast("New password must be 8+ characters"); return; }
   try {
     await api.send("/api/auth/change-password", "POST", { current_password, new_password });
     document.getElementById("cpCur").value = "";
@@ -2618,7 +2644,7 @@ async function staffModal() {
     <div class="field"><label>Shop</label><select id="stShop">${shopOpts()}</select></div>
     <div class="field"><label>Username (they log in with this)</label>
       <input id="stUser" autocapitalize="none" autocomplete="off" placeholder="e.g. amaka"></div>
-    <div class="field"><label>Password / PIN</label><input id="stPass" placeholder="At least 4 characters"></div>
+    <div class="field"><label>Password / PIN</label><input id="stPass" placeholder="At least 6 characters"></div>
     <button class="btn" onclick="saveStaff()">Create attendant</button>
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Done</button>`);
 }
@@ -2628,7 +2654,7 @@ async function saveStaff() {
   const password = document.getElementById("stPass").value;
   const shop_id = parseInt(document.getElementById("stShop").value, 10) || null;
   if (username.length < 3) return toast("Username needs 3+ characters");
-  if ((password || "").length < 4) return toast("Password needs 4+ characters");
+  if ((password || "").length < 6) return toast("Password needs 6+ characters");
   try { await api.send("/api/staff", "POST", { name, username, password, shop_id }); }
   catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't add"); return; }
   toast(`Attendant @${username} created ✓`);

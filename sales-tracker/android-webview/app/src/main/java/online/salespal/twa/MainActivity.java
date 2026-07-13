@@ -2,6 +2,7 @@ package online.salespal.twa;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Context;
 import android.content.Intent;
@@ -10,8 +11,12 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.util.Base64;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.DownloadListener;
+import android.webkit.JsPromptResult;
+import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
@@ -20,7 +25,11 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
 import android.widget.Toast;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
 
 /**
  * SalesPal Android app — a plain native WebView wrapper around https://salespal.online/app/.
@@ -89,6 +98,46 @@ public class MainActivity extends Activity {
                 }
                 return true;
             }
+
+            // A WebView shows NO alert()/confirm()/prompt() unless the host handles
+            // them. Without these, confirm() returns false and prompt() returns null,
+            // so delete confirmations, payment toggles, the phone prompt, etc. all
+            // silently no-op. Render real Android dialogs instead.
+            @Override
+            public boolean onJsAlert(WebView v, String url, String message, JsResult result) {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage(message)
+                        .setPositiveButton("OK", (d, w) -> result.confirm())
+                        .setOnCancelListener(d -> result.cancel())
+                        .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView v, String url, String message, JsResult result) {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage(message)
+                        .setPositiveButton("OK", (d, w) -> result.confirm())
+                        .setNegativeButton("Cancel", (d, w) -> result.cancel())
+                        .setOnCancelListener(d -> result.cancel())
+                        .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView v, String url, String message,
+                                      String defaultValue, JsPromptResult result) {
+                final EditText input = new EditText(MainActivity.this);
+                if (defaultValue != null) input.setText(defaultValue);
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage(message)
+                        .setView(input)
+                        .setPositiveButton("OK", (d, w) -> result.confirm(input.getText().toString()))
+                        .setNegativeButton("Cancel", (d, w) -> result.cancel())
+                        .setOnCancelListener(d -> result.cancel())
+                        .show();
+                return true;
+            }
         });
 
         web.setDownloadListener(new DownloadListener() {
@@ -98,6 +147,10 @@ public class MainActivity extends Activity {
                 downloadFile(url, contentDisposition, mimetype);
             }
         });
+
+        // Bridge so the web app can share a generated invoice PDF/image through the
+        // real Android share sheet (the WebView has no navigator.share).
+        web.addJavascriptInterface(new ShareBridge(), "SalesPalShare");
 
         // Ask for the mic up front so the very first "Speak it" tap just records.
         ensureMicPermission();
@@ -218,5 +271,36 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (web.canGoBack()) web.goBack();
         else super.onBackPressed();
+    }
+
+    // JS bridge: window.SalesPalShare.shareFile(base64, mime, filename, text) writes
+    // the bytes to a cache file and opens the system share sheet via FileProvider.
+    // Only our own trusted origin (+ Paystack) can reach this — navigation is locked
+    // to those in shouldOverrideUrlLoading.
+    private class ShareBridge {
+        @JavascriptInterface
+        public void shareFile(String base64, String mime, String filename, String text) {
+            try {
+                byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+                File dir = new File(getCacheDir(), "shares");
+                dir.mkdirs();
+                String safe = (filename == null ? "invoice" : filename).replaceAll("[^A-Za-z0-9._-]", "_");
+                File f = new File(dir, safe);
+                FileOutputStream fos = new FileOutputStream(f);
+                fos.write(bytes);
+                fos.close();
+                Uri uri = FileProvider.getUriForFile(
+                        MainActivity.this, getPackageName() + ".fileprovider", f);
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType(mime == null || mime.isEmpty() ? "*/*" : mime);
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                if (text != null && !text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                runOnUiThread(() -> startActivity(Intent.createChooser(send, "Share invoice")));
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this, "Couldn't share — try again", Toast.LENGTH_SHORT).show());
+            }
+        }
     }
 }

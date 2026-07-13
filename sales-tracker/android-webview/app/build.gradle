@@ -9,8 +9,8 @@ android {
         applicationId "online.salespal.twa"   // same id + keystore as the old TWA → updates in place
         minSdkVersion 21
         targetSdkVersion 34                    // 34 avoids target-35 forced edge-to-edge (simpler layout)
-        versionCode 3
-        versionName "2.0.0"
+        versionCode 5
+        versionName "2.2.0"
     }
 
     signingConfigs {
@@ -34,4 +34,10 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
     lint { checkReleaseBuilds false }
+}
+
+dependencies {
+    // FileProvider — the standard way to hand a generated file (invoice PDF/image)
+    // to the Android share sheet via a content:// URI.
+    implementation 'androidx.core:core:1.12.0'
 }
