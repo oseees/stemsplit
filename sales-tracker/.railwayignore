@@ -1,0 +1,12 @@
+# Keep the railway up build context small so the upload doesn't time out.
+# The Dockerfile only needs backend/ source (incl. backend/downloads/*.apk,
+# which the app serves). Everything below is dead weight in the upload.
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/data/
+*.pyc
+android/
+android-webview/
+backups/
+.claude/
