@@ -510,7 +510,13 @@ body.signed-out .menu-sheet { display: none !important; }
 
 /* ============ DESKTOP / LAPTOP VIEW (body.desktop) ============ */
 /* Phone column → left sidebar + wide content. Toggled by the view switcher;
-   defaults on automatically at ≥900px (see inline script in index.html). */
+   defaults on automatically at ≥900px (see inline script in index.html).
+   Every rule below is ALSO gated by this same @media floor — belt and
+   suspenders: a stuck/incorrectly-persisted "desktop" preference (or any
+   future JS bug) can flip the .desktop class on a real phone, but it can
+   never again produce the sidebar squeezed onto a narrow screen, because
+   the CSS itself refuses to apply below 900px regardless of the class. */
+@media (min-width: 900px) {
 body.desktop { max-width: none; padding-bottom: 0; }
 
 /* --- signed in: sidebar + top bar + wide content --- */
@@ -575,10 +581,11 @@ body.desktop .modal {
 }
 body.desktop .modal-handle { display: none; }
 body.desktop .toast { left: 50%; right: auto; transform: translateX(-50%); }
+body.desktop .modal.paywall { max-width: 420px; }
+} /* /@media min-width:900px */
 
 /* --- Pro paywall (full-bleed sheet) --- */
 .modal.paywall { padding: 0; overflow: hidden; }
-body.desktop .modal.paywall { max-width: 420px; }
 .pw-hero { background: #0a5236; color: #fff; padding: 16px 22px 26px; position: relative; }
 .pw-close { position: absolute; top: 12px; right: 14px; background: none; border: 0; color: #7fc8a6; font-size: 20px; cursor: pointer; padding: 4px; }
 .pw-badge { display: inline-block; background: #0b3f2a; color: #12b981; font-size: 11px; font-weight: 700; letter-spacing: .5px; padding: 5px 12px; border-radius: 20px; margin: 6px 0 18px; }
@@ -610,6 +617,7 @@ body.desktop .modal.paywall { max-width: 420px; }
 @keyframes micpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 
 /* --- signed out (landing/auth): no sidebar, just go wider --- */
+@media (min-width: 900px) {
 body.desktop.signed-out main { margin: 0; padding: 0; }
 body.desktop .landing { max-width: 1000px; }
 body.desktop .land-hero h1 { font-size: 40px; }
@@ -617,6 +625,7 @@ body.desktop .land-sub { font-size: 17px; max-width: 560px; }
 body.desktop .price-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: start; }
 body.desktop .feat-grid { grid-template-columns: repeat(3, 1fr); }
 body.desktop .auth-wrap { min-height: 80vh; }
+}
 
 /* --- offline / sync status pill (sits just above the bottom nav) --- */
 .sync-bar {
@@ -627,4 +636,4 @@ body.desktop .auth-wrap { min-height: 80vh; }
   opacity: 0; pointer-events: none; transition: opacity .2s;
 }
 .sync-bar.show { opacity: .96; }
-body.desktop .sync-bar { bottom: 20px; }
+@media (min-width: 900px) { body.desktop .sync-bar { bottom: 20px; } }

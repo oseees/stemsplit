@@ -177,7 +177,12 @@
       }
       function applyView() {
         var m = pref();
-        var desk = m === "desktop" || (m !== "mobile" && window.innerWidth >= 900);
+        // A physically narrow screen is a hard floor: no persisted/explicit
+        // "desktop" choice can survive it. The sidebar layout is unusable
+        // below 900px (matches the CSS @media guard) — without this, a
+        // stuck "desktop" preference (old device, storage synced from a
+        // laptop, a past bug) renders the sidebar squeezed onto a phone.
+        var desk = window.innerWidth >= 900 && (m === "desktop" || m !== "mobile");
         document.body.classList.toggle("desktop", desk);
         // Desktop: the menu lives INSIDE the sidebar's flex column (a separate
         // fixed overlay gets painted over by the opaque sidebar). Mobile: back
