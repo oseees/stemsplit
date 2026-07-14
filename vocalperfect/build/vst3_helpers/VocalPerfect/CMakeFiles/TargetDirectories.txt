@@ -1,0 +1,3 @@
+/Users/oseabhi/stem split/vocalperfect/build/vst3_helpers/VocalPerfect/CMakeFiles/vst3_helper.dir
+/Users/oseabhi/stem split/vocalperfect/build/vst3_helpers/VocalPerfect/CMakeFiles/edit_cache.dir
+/Users/oseabhi/stem split/vocalperfect/build/vst3_helpers/VocalPerfect/CMakeFiles/rebuild_cache.dir

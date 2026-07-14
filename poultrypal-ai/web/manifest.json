@@ -1,0 +1,17 @@
+{
+  "name": "PoultryPal AI — Poultry Health Assistant",
+  "short_name": "PoultryPal",
+  "description": "Poultry disease guidance for farmers: symptoms, photos and voice in, top-3 likely diseases with confidence, drugs, tests, vaccination schedule and nearby vet labs.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#15803d",
+  "lang": "en",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

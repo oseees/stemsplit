@@ -1,0 +1,5 @@
+# Hashes of file build rules.
+3fab53b00aab8d32c86d491b41e46268 CMakeFiles/VocalPerfect_vst3_helper
+1d2a16466b59449719c30d83fa74d166 VocalPerfect_artefacts/JuceLibraryCode/VocalPerfect_AU/PkgInfo
+d728fec0406847e76d16b02fbfbb9862 VocalPerfect_artefacts/JuceLibraryCode/VocalPerfect_Standalone/PkgInfo
+78623bceb17eeee68c144f4584aad9d8 VocalPerfect_artefacts/JuceLibraryCode/VocalPerfect_VST3/PkgInfo

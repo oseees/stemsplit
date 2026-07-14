@@ -2714,9 +2714,61 @@ async def _weekly_scheduler():
         await asyncio.sleep(3600)  # check hourly
 
 
+def _overdue_summary(conn, user_id):
+    """(count, total_balance) of this user's overdue invoices — due in the past
+    with money still owed. Balance from payments, not the stored status (which
+    can be stale)."""
+    rows = conn.execute(
+        "SELECT i.total AS total, "
+        "COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) AS paid "
+        "FROM invoices i WHERE i.user_id=? AND i.due_date IS NOT NULL AND i.due_date < ?",
+        (user_id, today())).fetchall()
+    owed = [r["total"] - r["paid"] for r in rows]
+    owed = [b for b in owed if b > 0.01]
+    return len(owed), sum(owed)
+
+
+def _reminder_ping(user_id):
+    """Once/day, push the owner a nudge if invoices are overdue. Reuses the
+    global settings KV for a per-user 'last pinged on' date so it fires once a
+    day, not once an hour."""
+    key = f"overdue_ping:{user_id}"
+    with db.get_conn() as conn:
+        last = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if last and last["value"] == today():
+            return
+        n, owed = _overdue_summary(conn, user_id)
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, today()))
+    if not n:
+        return
+    cur = db.get_settings(user_id).get("currency", "₦")
+    push.notify(
+        user_id,
+        f"💰 {n} overdue invoice{'s' if n != 1 else ''}",
+        f"{cur}{owed:,.0f} still owed — tap to send WhatsApp reminders.",
+        url="/app/#sales/overdue")
+
+
+async def _reminder_scheduler():
+    """Every hour, once past 09:00 local, nudge each Pro user who has overdue
+    invoices (deduped to one push per day inside _reminder_ping)."""
+    while True:
+        try:
+            if datetime.now().hour >= 9:
+                with db.get_conn() as conn:
+                    users = db.all_users(conn)
+                for u in users:
+                    if is_pro(dict(u)):
+                        await asyncio.to_thread(_reminder_ping, u["id"])
+        except Exception:
+            pass
+        await asyncio.sleep(3600)
+
+
 @app.on_event("startup")
 async def _start_scheduler():
     asyncio.create_task(_weekly_scheduler())
+    asyncio.create_task(_reminder_scheduler())
 
 
 @app.get("/api/health")

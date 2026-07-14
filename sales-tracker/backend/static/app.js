@@ -797,6 +797,17 @@ async function bootstrap(user, prefetch) {
   document.querySelectorAll(".bottom-nav button").forEach(b =>
     b.classList.toggle("active", b.dataset.nav === "home"));
   render();
+  _consumeDeepLink();
+}
+
+// A push notification can deep-link into a view (the overdue nudge →
+// Sales filtered to Overdue). Consume the hash once, then clear it.
+function _consumeDeepLink() {
+  if (location.hash === "#sales/overdue") {
+    history.replaceState({}, "", location.pathname);
+    salesStatus = "overdue";
+    setView("sales");
+  }
 }
 
 // ================= SHOP ATTENDANT (limited login) =========================

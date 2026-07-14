@@ -1,0 +1,211 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  name          String
+  email         String         @unique
+  password      String
+  createdAt     DateTime       @default(now())
+  trips         Trip[]
+  conversations Conversation[]
+}
+
+model Trip {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  departureCity String
+  destination   String
+  startDate     DateTime
+  endDate       DateTime
+  currency      String    @default("USD")
+  // ponytail: money as Float — fine for Phase 1 budgeting; switch to Decimal/integer-cents if rounding bites
+  budget        Float
+  travelers     Int       @default(1)
+  createdAt     DateTime  @default(now())
+  expenses      Expense[]
+  selectedFlight    SelectedFlight?
+  selectedHotel     SelectedHotel?
+  analysis          TripAnalysis?
+  aiRecommendations AIRecommendation[]
+
+  @@index([userId])
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  tripId    String
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  amount    Float
+  category  Category
+  date      DateTime
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([tripId])
+}
+
+enum Category {
+  Flights
+  Accommodation
+  Food
+  Transport
+  Activities
+  Shopping
+  Accessories
+  Miscellaneous
+}
+
+// ---- Phase 2: travel search ----
+
+model Airport {
+  code    String @id // IATA, e.g. LHR
+  name    String
+  city    String
+  country String
+  lat     Float
+  lng     Float
+}
+
+model Airline {
+  code String @id // IATA, e.g. BA
+  name String
+}
+
+// A concrete flight offer returned by a provider. `sig` dedupes identical
+// offers across repeated searches so the table stays bounded.
+model FlightQuote {
+  id           String           @id @default(cuid())
+  sig          String           @unique
+  provider     String
+  origin       String
+  destination  String
+  departAt     DateTime
+  arriveAt     DateTime
+  durationMin  Int
+  stops        Int
+  layovers     String[]
+  airlineCode  String
+  airlineName  String
+  flightNumber String
+  cabin        String
+  baggage      String
+  price        Float
+  currency     String
+  createdAt    DateTime         @default(now())
+  selections   SelectedFlight[]
+}
+
+model HotelQuote {
+  id           String          @id @default(cuid())
+  sig          String          @unique
+  provider     String
+  name         String
+  city         String
+  image        String
+  rating       Float
+  stars        Int
+  nightlyPrice Float
+  nights       Int
+  totalPrice   Float
+  currency     String
+  distanceKm   Float
+  amenities    String[]
+  cancellation String
+  createdAt    DateTime        @default(now())
+  selections   SelectedHotel[]
+}
+
+// Point-in-time prices for a route/property. Ready for real ingestion; the
+// mock provider reads these and falls back to a synthetic series if empty.
+model PriceHistory {
+  id       String   @id @default(cuid())
+  kind     String // "flight" | "hotel"
+  route    String // "LHR-LIS" for flights, city for hotels
+  date     DateTime
+  price    Float
+  currency String
+
+  @@index([kind, route])
+}
+
+model SelectedFlight {
+  id        String      @id @default(cuid())
+  tripId    String      @unique
+  trip      Trip        @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  quoteId   String
+  quote     FlightQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  price     Float
+  currency  String
+  createdAt DateTime    @default(now())
+}
+
+model SelectedHotel {
+  id        String     @id @default(cuid())
+  tripId    String     @unique
+  trip      Trip       @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  quoteId   String
+  quote     HotelQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  price     Float
+  currency  String
+  createdAt DateTime   @default(now())
+}
+
+// ---- Phase 3: AI layer ----
+
+model TripAnalysis {
+  id        String   @id @default(cuid())
+  tripId    String   @unique
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  score     Int
+  health    String
+  analysis  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AIRecommendation {
+  id         String   @id @default(cuid())
+  tripId     String
+  trip       Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  type       String
+  title      String
+  savings    Float?
+  confidence Float
+  reasoning  String   @db.Text
+  priority   Int      @default(0)
+  dismissed  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([tripId])
+}
+
+model Conversation {
+  id        String                @id @default(cuid())
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tripId    String?
+  title     String?
+  messages  ConversationMessage[]
+  createdAt DateTime              @default(now())
+
+  @@index([userId])
+}
+
+model ConversationMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String       @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}

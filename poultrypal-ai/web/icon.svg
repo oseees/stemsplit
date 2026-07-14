@@ -1,0 +1,12 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="104" fill="#15803d"/>
+  <circle cx="256" cy="256" r="150" fill="#fff7ed" stroke="#0f5132" stroke-width="6"/>
+  <!-- comb -->
+  <path d="M150 150 q22 -54 44 -8 q22 -54 44 -4 q22 -46 36 14 q12 34 -10 46 l-150 0 q-16 -42 36 -44 Z" fill="#e11d48"/>
+  <!-- beak -->
+  <path d="M398 250 l64 16 -64 22 Z" fill="#f59e0b"/>
+  <!-- wattle -->
+  <path d="M300 348 q34 50 4 80 q-34 -4 -38 -64 Z" fill="#e11d48"/>
+  <!-- eye -->
+  <circle cx="288" cy="238" r="14" fill="#111"/>
+</svg>

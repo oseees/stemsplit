@@ -1,0 +1,10 @@
+.venv/
+.venv-asr/
+venv/
+__pycache__/
+*.pyc
+.env
+app/knowledge/index/*.json
+uploads/
+data/
+.DS_Store
