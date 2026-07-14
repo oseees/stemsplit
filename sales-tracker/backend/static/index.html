@@ -165,7 +165,16 @@
        automatic by screen width; the toggle stores an explicit override. -->
   <script>
     (function () {
-      function pref() { try { return localStorage.getItem("salespal_view"); } catch (e) { return null; } }
+      // In-memory override wins immediately, no round-trip through storage —
+      // some browsers (Safari ITP, Brave shields, private modes, partitioned
+      // WebView storage) silently drop the localStorage write below, which
+      // made the toggle look like it did nothing (write, then read back
+      // nothing, snap right back to the auto-detected desktop layout).
+      var override = null;
+      function pref() {
+        if (override !== null) return override;
+        try { return localStorage.getItem("salespal_view"); } catch (e) { return null; }
+      }
       function applyView() {
         var m = pref();
         var desk = m === "desktop" || (m !== "mobile" && window.innerWidth >= 900);
@@ -185,7 +194,8 @@
       }
       window.salespalToggleView = function () {
         var desk = document.body.classList.contains("desktop");
-        try { localStorage.setItem("salespal_view", desk ? "mobile" : "desktop"); } catch (e) {}
+        override = desk ? "mobile" : "desktop";
+        try { localStorage.setItem("salespal_view", override); } catch (e) {}
         var sheet = document.getElementById("menuSheet");
         if (sheet) sheet.classList.remove("open");
         applyView();
