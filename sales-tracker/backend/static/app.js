@@ -2650,6 +2650,33 @@ function shareReferral(how) {
   toast("Invite link copied — paste it anywhere");
 }
 
+// ---------- PROMO FLYER ----------
+// One-tap ad: a flyer of what's in stock + prices, ready for WhatsApp Status.
+async function promoModal() {
+  document.getElementById("menuSheet").classList.remove("open");
+  openModal(`<h2>\ud83d\udce3 Promo flyer</h2><div class="loading">Building your flyer\u2026</div>`);
+  let products = [];
+  try { products = await api.get("/api/products"); }
+  catch (e) { if (e.message === "__auth__") return; }
+  if (!products.filter(p => p.stock_qty > 0).length) {
+    updateModal(`<h2>\ud83d\udce3 Promo flyer</h2>
+      <p style="color:var(--muted);font-size:14px;margin:0 0 12px">Add products with stock first \u2014 the flyer advertises what you have available right now.</p>
+      <button class="btn" onclick="closeModal();setView('products')">Go to products</button>`);
+    return;
+  }
+  updateModal(`<h2>\ud83d\udce3 Promo flyer</h2>
+    <p style="color:var(--muted);font-size:14px;margin:0 0 12px">Your in-stock products and prices, ready to post on WhatsApp Status or send to customers.</p>
+    <img src="/api/promo/image?fmt=png&t=${Date.now()}" alt="Promo flyer"
+      style="width:100%;border:1px solid var(--line);border-radius:12px;margin-bottom:12px" />
+    <button class="btn" onclick="sharePromo('png')">\ud83d\udce4 Share flyer</button>
+    <button class="btn secondary" style="margin-top:10px" onclick="sharePromo('jpg')">Download JPG</button>`);
+}
+function sharePromo(fmt) {
+  const biz = state.settings.business_name || "My shop";
+  shareImageFile(`/api/promo/image?fmt=${fmt}`, `promo.${fmt}`,
+    `${biz} \u2014 today's prices`, `${biz} \u2014 see what's in stock today. Order now!`);
+}
+
 // ---------- SETTINGS ----------
 function transferCardHtml(pay) {
   // Instant bank transfer to the merchant's own account (no processor, no fee).
@@ -3006,7 +3033,7 @@ async function _sharePayLinkFallback(id) {
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
-  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral,
+  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral, promoModal, sharePromo,
   filterCustomerSuggest, pickCustomerSuggest, hideCustomerSuggest,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,

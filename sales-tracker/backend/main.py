@@ -1600,6 +1600,24 @@ def _img_response(data, filename, fmt, download=False):
     )
 
 
+@app.get("/api/promo/image")
+def promo_image(fmt: str = "png", download: int = 0, user=Depends(current_user)):
+    """Ready-to-post promo flyer of the active shop's in-stock products and
+    prices — the merchant's free ad for WhatsApp Status/groups."""
+    if fmt not in ("png", "jpg"):
+        raise HTTPException(400, "fmt must be png or jpg")
+    sf, sp = _shop_and(_active_shop(user))
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT name, unit_price, stock_qty, low_stock_at FROM products "
+            "WHERE user_id=? AND stock_qty > 0" + sf + " ORDER BY name LIMIT 12",
+            [user["id"]] + sp).fetchall()
+    if not rows:
+        raise HTTPException(400, "Add products with stock first — the flyer shows what's available")
+    data = imgdoc.build_promo_image(db.rows_to_list(rows), db.get_settings(user["id"]), fmt)
+    return _img_response(data, f"promo.{fmt}", fmt, download)
+
+
 @app.get("/api/invoices/{iid}/image")
 def invoice_image(iid: int, fmt: str = "png", download: int = 0, user=Depends(current_user)):
     """Invoice as a shareable image — previews inline in WhatsApp chats."""

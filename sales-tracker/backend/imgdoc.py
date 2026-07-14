@@ -229,6 +229,57 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
     return _export(img, fmt)
 
 
+def build_promo_image(products, settings, fmt="png"):
+    """Ready-to-post promo flyer: what's in stock right now, with prices.
+    Merchants share it on WhatsApp Status / groups — free advertising for
+    them (and the footer quietly advertises us). Low stock becomes a
+    scarcity hook ("Only 3 left!")."""
+    W, PAD = 1000, 56
+    cur = settings.get("currency", "$")
+    biz = settings.get("business_name") or "My Business"
+    phone = (settings.get("phone") or "").strip()
+
+    head_h, row_h = 230, 88
+    cta_h = 110 if phone else 0
+    H = head_h + 50 + len(products) * row_h + cta_h + 200
+    img = Image.new("RGB", (W, H + 300), "white")
+    _wm(img, biz, head_h + (len(products) * row_h) / 2 + 40)
+    d = ImageDraw.Draw(img)
+
+    # Header band
+    d.rectangle([0, 0, W, head_h], fill=BRAND)
+    d.text((PAD, 46), _fit(d, biz, _font(True, 52), W - 2 * PAD), font=_font(True, 52), fill="white")
+    d.text((PAD, 118), "NOW IN STOCK — TODAY'S PRICES", font=_font(True, 26), fill=(127, 200, 166))
+    import datetime as _dt
+    d.text((PAD, 158), _dt.date.today().strftime("%d %B %Y"), font=_font(False, 24), fill=(200, 226, 213))
+
+    y = head_h + 40
+    name_f, price_f, note_f = _font(True, 30), _font(True, 30), _font(True, 20)
+    for i, p in enumerate(products):
+        price = _money(cur, p["unit_price"])
+        price_w = d.textlength(price, font=price_f)
+        d.text((PAD, y), _fit(d, p["name"], name_f, W - 2 * PAD - price_w - 40),
+               font=name_f, fill=INK)
+        _right(d, W - PAD, y, price, price_f, BRAND)
+        low = p.get("low_stock_at") or 0
+        if low and p["stock_qty"] <= low:
+            d.text((PAD, y + 40), f"Only {p['stock_qty']:g} left — hurry!", font=note_f, fill=AMBER)
+        d.line([PAD, y + row_h - 20, W - PAD, y + row_h - 20], fill=LINE, width=1)
+        y += row_h
+
+    if phone:
+        y += 14
+        d.rounded_rectangle([PAD, y, W - PAD, y + 92], radius=16, fill=GREEN_BG)
+        _center(d, W / 2, y + 30, f"Call or WhatsApp to order: {phone}", _font(True, 26), GREEN)
+        y += 92 + 20
+    else:
+        y += 14
+
+    _powered(d, W, y + 24)
+    img = img.crop((0, 0, W, int(y + 84)))
+    return _export(img, fmt)
+
+
 def build_receipt_image(invoice, payment, customer, settings, paid, balance, fmt="png"):
     """Receipt for one payment: what was received, from whom, and what remains."""
     W, PAD = 1000, 56
