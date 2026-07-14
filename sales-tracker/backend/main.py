@@ -315,6 +315,18 @@ def paid_for(conn, invoice_id):
     return row["p"]
 
 
+def cash_paid_for(conn, invoice_id):
+    """How much of this invoice was paid in cash (method contains "cash",
+    case-insensitive — covers the controlled "Cash" value and free-typed
+    variants like "cash payment")."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) p FROM payments "
+        "WHERE invoice_id=? AND lower(method) LIKE '%cash%'",
+        (invoice_id,),
+    ).fetchone()
+    return row["p"]
+
+
 def status_for(total, paid):
     if paid <= 0.001:
         return "unpaid"
@@ -1400,6 +1412,7 @@ def list_invoices(request: Request, user=Depends(current_user)):
             d["paid"] = paid
             d["balance"] = inv["total"] - paid
             d["status"] = status_for(inv["total"], paid)
+            d["cash_paid"] = cash_paid_for(conn, inv["id"])
             if d["balance"] > 0.01:
                 d["pay_url"] = _pay_url_for(conn, user, inv["id"], base)
             if user.get("is_attendant"):  # attendants never see cost/margin

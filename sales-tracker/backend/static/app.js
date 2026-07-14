@@ -1373,7 +1373,7 @@ const SALES_SORTS = {
 };
 async function viewSales() {
   window._invoices = await api.get("/api/invoices");
-  const tabs = ["all", "unpaid", "overdue", "paid"];
+  const tabs = ["all", "unpaid", "overdue", "cash", "paid"];
   app.innerHTML = `
     <button class="btn" onclick="newSaleModal()" style="margin-bottom:12px">＋ New sale / invoice</button>
     <div class="field" style="margin-bottom:10px">
@@ -1406,7 +1406,8 @@ function renderSalesList() {
   const q = salesQuery.trim().toLowerCase();
   const list = all.filter(i => {
     if (salesStatus === "overdue" && !isOverdue(i)) return false;
-    if (salesStatus !== "all" && salesStatus !== "overdue" && i.status !== salesStatus) return false;
+    if (salesStatus === "cash" && !(i.cash_paid > 0.01)) return false;
+    if (!["all", "overdue", "cash"].includes(salesStatus) && i.status !== salesStatus) return false;
     if (q && !((i.customer_name || "").toLowerCase().includes(q)
       || (i.invoice_no || "").toLowerCase().includes(q))) return false;
     return true;
@@ -1416,14 +1417,18 @@ function renderSalesList() {
     host.innerHTML = `<div class="empty"><div class="big">🧾</div>No sales yet.<br>Tap ＋ to record your first one.</div>`;
     return;
   }
-  host.innerHTML = list.length ? list.map(i => `
+  const cashTotalHtml = salesStatus === "cash" && list.length
+    ? `<div class="list-row"><div class="main">💵 Total cash</div>
+        <div class="amount pos">${money(list.reduce((s, i) => s + (i.cash_paid || 0), 0))}</div></div>`
+    : "";
+  host.innerHTML = cashTotalHtml + (list.length ? list.map(i => `
     <div class="list-row" onclick="invoiceDetail(${i.id})">
       <div><div class="main">${esc(i.customer_name || "Walk-in")}${!state.activeShop && i.shop_name ? ` <span class="shop-tag">${esc(i.shop_name)}</span>` : ""}</div>
-        <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}${isOverdue(i) ? ` · <span class="neg">overdue</span>` : ""}</div></div>
+        <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}${isOverdue(i) ? ` · <span class="neg">overdue</span>` : ""}${i.cash_paid > 0.01 ? ` · 💵 ${money(i.cash_paid)} cash` : ""}</div></div>
       <div style="text-align:right">
         <div class="amount">${money(i.total)}</div>
         <span class="badge ${i.status}">${i.status}</span></div>
-    </div>`).join("") : `<div class="empty">No matching invoices</div>`;
+    </div>`).join("") : `<div class="empty">No matching invoices</div>`);
 }
 
 async function invoiceDetail(id) {
