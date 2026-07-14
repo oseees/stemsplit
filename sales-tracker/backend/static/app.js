@@ -603,7 +603,7 @@ function _paywallHero(reason) {
   if (owed >= 1000) return {
     kicker: "You're currently owed",
     big: money0(owed),
-    sub: "Pro sends automatic WhatsApp reminders so your customers pay you faster.",
+    sub: "Pro gets you one-tap WhatsApp reminders so your customers pay you faster.",
   };
   if (lim.invoices_per_month && u.invoices_this_month >= lim.invoices_per_month) return {
     kicker: "This month",
@@ -1487,12 +1487,86 @@ async function invoiceDetail(id) {
       ? `<button class="btn whatsapp" style="margin-bottom:10px" onclick='whatsappReminder(${attrJson(inv)})'>💬 WhatsApp reminder</button>`
       : ""}
     ${inv.balance > 0.01 ? `<button class="btn secondary" style="margin-bottom:10px" onclick="paymentModal(${id}, ${inv.balance})">Record part payment</button>` : ""}
-    <button class="btn danger" onclick="if(confirm('Delete this invoice?')){deleteInvoice(${id})}">Delete</button>`);
+    <div class="btn-row">
+      <button class="btn outline" onclick="editSaleModal(${id})">✏️ Edit sale</button>
+      <button class="btn danger" onclick="if(confirm('Delete this invoice? This also gives the stock back.')){deleteInvoice(${id})}">Delete</button>
+    </div>`);
 }
 
 async function deleteInvoice(id) {
-  await api.send(`/api/invoices/${id}`, "DELETE");
+  try { await api.send(`/api/invoices/${id}`, "DELETE"); }
+  catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return;
+    toast(e.message || "Couldn't delete"); return;
+  }
   closeModal(); toast("Invoice deleted"); render();
+}
+
+// ---------- EDIT SALE ----------
+// Reuses the New Sale item-builder (saleItems array + renderSaleItems/
+// addProductItem/pickProduct/updItem — same functions, just seeded from the
+// existing invoice instead of starting blank).
+async function editSaleModal(id) {
+  if (!requireShop()) return;
+  let inv;
+  try { inv = await api.get(`/api/invoices/${id}`); }
+  catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return;
+    toast(e.message || "Couldn't load invoice"); return;
+  }
+  const [products, customers] = await Promise.all([
+    api.get("/api/products"), api.get("/api/customers")]);
+  window._products = products;
+  window._customers = customers;
+  saleItems = inv.items.map(it => ({
+    product_id: it.product_id, description: it.description,
+    qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost,
+    custom: !it.product_id,
+  }));
+  openModal(`
+    <h2 style="margin:0 0 14px">Edit sale</h2>
+    <div class="field" style="position:relative">
+      <label>Customer name</label>
+      <input id="saleCustomer" autocomplete="off" value="${esc(inv.customer ? inv.customer.name : "")}"
+        placeholder="Type a name (or leave blank for walk-in)"
+        oninput="filterCustomerSuggest()" onfocus="filterCustomerSuggest()"
+        onblur="setTimeout(hideCustomerSuggest,150)">
+      <div id="custSuggest" class="suggest-list"></div>
+    </div>
+    <div class="section-title">Items</div>
+    <div id="saleItems"></div>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button class="btn outline btn-sm" onclick="addProductItem()">＋ Add product</button>
+      <button class="btn outline btn-sm" onclick="addCustomItem()">＋ Custom item</button>
+    </div>
+    <div class="field"><label>Due date (optional)</label><input id="saleDue" type="date" value="${inv.due_date || ""}"></div>
+    <div class="field"><label>Notes (optional)</label><textarea id="saleNotes">${esc(inv.notes || "")}</textarea></div>
+    <div class="card" style="background:var(--tint)">
+      <div class="list-row"><div class="main">Total</div>
+        <div class="amount" id="saleTotal">${money(0)}</div></div></div>
+    <button class="btn" onclick="saveEditedSale(${id})">Save changes</button>`);
+  renderSaleItems();
+}
+
+async function saveEditedSale(id) {
+  const items = saleItems.filter(it => it.description && it.qty > 0);
+  if (!items.length) return toast("Add at least one item");
+  const customer_name = document.getElementById("saleCustomer").value.trim();
+  try {
+    await api.send(`/api/invoices/${id}`, "PUT", {
+      customer_name: customer_name || null,
+      due_date: document.getElementById("saleDue").value || null,
+      notes: document.getElementById("saleNotes").value,
+      items: items.map(it => ({
+        product_id: it.product_id, description: it.description,
+        qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost,
+      })),
+    });
+  } catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return;
+    toast(e.message || "Couldn't save changes"); return;
+  }
+  closeModal(); toast("Sale updated"); render();
 }
 
 // Safely embed JSON in a single-quoted HTML attribute (escape apostrophes).
@@ -2929,7 +3003,7 @@ async function _sharePayLinkFallback(id) {
 })();
 
 // expose handlers used in inline onclick
-Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, shareInvoice, markPaid, paymentModal,
+Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral,

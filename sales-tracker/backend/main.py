@@ -1460,10 +1460,87 @@ def create_invoice(inv: InvoiceIn, user=Depends(current_user)):
         return {"id": iid, "invoice_no": no, "total": total}
 
 
+def _restore_stock(conn, iid, uid):
+    """Give back whatever stock a sale's items reserved — called before
+    deleting an invoice, and before replacing its items on edit."""
+    items = conn.execute(
+        "SELECT product_id, qty FROM invoice_items WHERE invoice_id=?", (iid,)).fetchall()
+    for it in items:
+        if it["product_id"]:
+            conn.execute(
+                "UPDATE products SET stock_qty = stock_qty + ? WHERE id=? AND user_id=?",
+                (it["qty"], it["product_id"], uid))
+
+
+@app.put("/api/invoices/{iid}")
+def update_invoice(iid: int, inv: InvoiceIn, user=Depends(current_user)):
+    """Edit an existing sale's customer/items/date/notes. Stock is reconciled
+    (old items' qty restored, new items' qty deducted) and the total/status
+    are recomputed — revenue, profit, and every report read these tables
+    live, so nothing else needs to change."""
+    if not inv.items:
+        raise HTTPException(400, "An invoice needs at least one item")
+    uid = user["id"]
+    with db.get_conn() as conn:
+        old = _owned_invoice(conn, iid, uid)
+        _restore_stock(conn, iid, uid)
+
+        customer_id = inv.customer_id
+        if customer_id:
+            owns = conn.execute(
+                "SELECT 1 FROM customers WHERE id=? AND user_id=?", (customer_id, uid)).fetchone()
+            if not owns:
+                customer_id = None
+        if not customer_id and inv.customer_name and inv.customer_name.strip():
+            name = inv.customer_name.strip()
+            row = conn.execute(
+                "SELECT id FROM customers WHERE user_id=? AND shop_id=? AND lower(name)=lower(?)",
+                (uid, old["shop_id"], name)).fetchone()
+            if row:
+                customer_id = row["id"]
+            else:
+                cur = conn.execute(
+                    "INSERT INTO customers(user_id,shop_id,name,created_at) VALUES(?,?,?,?)",
+                    (uid, old["shop_id"], name, db.now_iso()))
+                customer_id = cur.lastrowid
+
+        costs = []
+        for it in inv.items:
+            c = it.unit_cost
+            if user.get("is_attendant") and it.product_id:
+                prow = conn.execute(
+                    "SELECT unit_cost FROM products WHERE id=? AND user_id=?",
+                    (it.product_id, uid)).fetchone()
+                c = (prow["unit_cost"] if prow else 0) or 0
+            costs.append(c)
+        total = sum(it.qty * it.unit_price for it in inv.items)
+        cost_total = sum(it.qty * c for it, c in zip(inv.items, costs))
+
+        conn.execute(
+            "UPDATE invoices SET customer_id=?, date=?, due_date=?, notes=?, total=?, cost_total=? "
+            "WHERE id=?",
+            (customer_id, inv.date or old["date"], inv.due_date, inv.notes, total, cost_total, iid))
+        conn.execute("DELETE FROM invoice_items WHERE invoice_id=?", (iid,))
+        for it, c in zip(inv.items, costs):
+            conn.execute(
+                "INSERT INTO invoice_items(invoice_id,product_id,description,qty,"
+                "unit_price,unit_cost) VALUES(?,?,?,?,?,?)",
+                (iid, it.product_id, it.description, it.qty, it.unit_price, c))
+            if it.product_id:
+                conn.execute(
+                    "UPDATE products SET stock_qty = stock_qty - ? WHERE id=? AND user_id=?",
+                    (it.qty, it.product_id, uid))
+        conn.execute("UPDATE invoices SET status=? WHERE id=?",
+                     (status_for(total, paid_for(conn, iid)), iid))
+        return {"id": iid, "invoice_no": old["invoice_no"], "total": total}
+
+
 @app.delete("/api/invoices/{iid}")
 def delete_invoice(iid: int, user=Depends(current_user)):
     with db.get_conn() as conn:
-        conn.execute("DELETE FROM invoices WHERE id=? AND user_id=?", (iid, user["id"]))
+        _owned_invoice(conn, iid, user["id"])
+        _restore_stock(conn, iid, user["id"])
+        conn.execute("DELETE FROM invoices WHERE id=?", (iid,))
     return {"ok": True}
 
 
