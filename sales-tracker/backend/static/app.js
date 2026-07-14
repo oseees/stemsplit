@@ -2210,6 +2210,14 @@ function productModal(p) {
       <div class="field"><label>Selling price</label><input id="pPrice" type="number" inputmode="decimal" value="${p.unit_price || 0}"></div>
       <div class="field"><label>Unit cost</label><input id="pCost" type="number" inputmode="decimal" value="${p.unit_cost || 0}"></div>
     </div>
+    ${p.id ? `<div class="field"><label>Photo \u2014 shown on your promo flyer</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <img id="pPhotoPrev" src="/api/products/${p.id}/photo?t=${Date.now()}"
+          onerror="this.style.display='none'"
+          style="width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">
+        <input id="pPhotoFile" type="file" accept="image/*" style="font-size:13px"
+          onchange="uploadProductPhoto(${p.id})">
+      </div></div>` : ""}
     ${p.id ? `<button type="button" class="btn secondary btn-sm" style="margin:-4px 0 14px" onclick='priceCheckModal(${attrJson(p)})'>📈 Price check — should I charge more or less?</button>` : ""}
     <div class="field-row">
       <div class="field"><label>Current stock</label><input id="pStock" type="number" inputmode="decimal" value="${p.stock_qty || 0}"></div>
@@ -2226,6 +2234,18 @@ function productModal(p) {
 }
 // "What if I change the price?" — deterministic break-even math from the server
 // plus Claude's advice on customer reaction (Pro; 402 opens the paywall).
+async function uploadProductPhoto(id) {
+  const inp = document.getElementById("pPhotoFile");
+  if (!inp || !inp.files || !inp.files[0]) return;
+  const fd = new FormData();
+  fd.append("file", inp.files[0]);
+  try { await api.sendForm(`/api/products/${id}/photo`, fd); }
+  catch (e) { toast(e.message || "Couldn't upload photo"); return; }
+  const prev = document.getElementById("pPhotoPrev");
+  if (prev) { prev.style.display = ""; prev.src = `/api/products/${id}/photo?t=${Date.now()}`; }
+  toast("Photo added \u2014 it'll show on your promo flyer");
+}
+
 function priceCheckModal(p) {
   const margin = p.unit_price ? Math.round((p.unit_price - p.unit_cost) / p.unit_price * 100) : 0;
   openModal(`<h2>📈 Price check</h2>
@@ -3033,7 +3053,7 @@ async function _sharePayLinkFallback(id) {
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
-  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral, promoModal, sharePromo,
+  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
   filterCustomerSuggest, pickCustomerSuggest, hideCustomerSuggest,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,

@@ -265,6 +265,8 @@ def init_db():
         conn.executescript(SCHEMA)
         # migrations for databases created before these columns existed
         _ensure_column(conn, "products", "low_stock_at", "REAL NOT NULL DEFAULT 0")
+        # product photo (promo flyer thumbs): filename under <data>/photos/
+        _ensure_column(conn, "products", "photo", "TEXT")
         # suppliers are looked up by product — index the FK for fast joins
         conn.execute("CREATE INDEX IF NOT EXISTS idx_suppliers_product ON suppliers(product_id)")
         # per-shop monthly profit goal (0 = none). Each shop tracks its own.

@@ -170,6 +170,16 @@
         var m = pref();
         var desk = m === "desktop" || (m !== "mobile" && window.innerWidth >= 900);
         document.body.classList.toggle("desktop", desk);
+        // Desktop: the menu lives INSIDE the sidebar's flex column (a separate
+        // fixed overlay gets painted over by the opaque sidebar). Mobile: back
+        // to its own spot above <main> as the ☰ dropdown sheet.
+        var sheet = document.getElementById("menuSheet");
+        var nav = document.querySelector(".bottom-nav");
+        var main = document.querySelector("main");
+        if (sheet && nav && main) {
+          if (desk && sheet.parentElement !== nav) nav.appendChild(sheet);
+          else if (!desk && sheet.parentElement === nav) document.body.insertBefore(sheet, main);
+        }
         var b = document.getElementById("viewToggle");
         if (b) b.textContent = desk ? "📱 Switch to Mobile view" : "🖥️ Switch to Desktop view";
       }

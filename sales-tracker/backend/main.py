@@ -1086,6 +1086,66 @@ def create_product(p: Product, user=Depends(current_user)):
         return {"id": cur.lastrowid}
 
 
+# Product photos live beside the DB (the persisted volume on Railway).
+PHOTOS_DIR = os.path.join(os.path.dirname(db.DB_PATH), "photos")
+os.makedirs(PHOTOS_DIR, exist_ok=True)
+
+
+def _owned_product(conn, pid, user_id):
+    row = conn.execute(
+        "SELECT * FROM products WHERE id=? AND user_id=?", (pid, user_id)).fetchone()
+    if not row:
+        raise HTTPException(404, "Product not found")
+    return row
+
+
+@app.post("/api/products/{pid}/photo")
+async def upload_product_photo(pid: int, file: UploadFile = File(...),
+                               user=Depends(current_user)):
+    """Attach a photo to a product (shown on the promo flyer). The image is
+    re-encoded server-side — a resized JPEG is stored, never the raw upload."""
+    from PIL import Image as _PILImage
+    import io as _io
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(400, "Image too large (max 10MB)")
+    try:
+        img = _PILImage.open(_io.BytesIO(raw))
+        img = img.convert("RGB")
+        img.thumbnail((480, 480))
+    except Exception:
+        raise HTTPException(400, "That file isn't a readable image")
+    with db.get_conn() as conn:
+        _owned_product(conn, pid, user["id"])
+        name = f"{pid}.jpg"
+        img.save(os.path.join(PHOTOS_DIR, name), "JPEG", quality=85)
+        conn.execute("UPDATE products SET photo=? WHERE id=?", (name, pid))
+    return {"ok": True, "photo": name}
+
+
+@app.get("/api/products/{pid}/photo")
+def product_photo(pid: int, user=Depends(current_user)):
+    with db.get_conn() as conn:
+        row = _owned_product(conn, pid, user["id"])
+    path = os.path.join(PHOTOS_DIR, row["photo"] or "")
+    if not row["photo"] or not os.path.exists(path):
+        raise HTTPException(404, "No photo")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.delete("/api/products/{pid}/photo")
+def remove_product_photo(pid: int, user=Depends(current_user)):
+    with db.get_conn() as conn:
+        row = _owned_product(conn, pid, user["id"])
+        if row["photo"]:
+            try:
+                os.remove(os.path.join(PHOTOS_DIR, row["photo"]))
+            except OSError:
+                pass
+        conn.execute("UPDATE products SET photo=NULL WHERE id=?", (pid,))
+    return {"ok": True}
+
+
 @app.put("/api/products/{pid}")
 def update_product(pid: int, p: Product, user=Depends(current_user)):
     with db.get_conn() as conn:
@@ -1609,12 +1669,16 @@ def promo_image(fmt: str = "png", download: int = 0, user=Depends(current_user))
     sf, sp = _shop_and(_active_shop(user))
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT name, unit_price, stock_qty, low_stock_at FROM products "
+            "SELECT name, unit_price, stock_qty, low_stock_at, photo FROM products "
             "WHERE user_id=? AND stock_qty > 0" + sf + " ORDER BY name LIMIT 12",
             [user["id"]] + sp).fetchall()
     if not rows:
         raise HTTPException(400, "Add products with stock first — the flyer shows what's available")
-    data = imgdoc.build_promo_image(db.rows_to_list(rows), db.get_settings(user["id"]), fmt)
+    products = db.rows_to_list(rows)
+    for p in products:  # resolve to a readable file path for the renderer
+        path = os.path.join(PHOTOS_DIR, p["photo"]) if p.get("photo") else None
+        p["photo_path"] = path if (path and os.path.exists(path)) else None
+    data = imgdoc.build_promo_image(products, db.get_settings(user["id"]), fmt)
     return _img_response(data, f"promo.{fmt}", fmt, download)
 
 

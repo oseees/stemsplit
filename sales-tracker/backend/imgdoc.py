@@ -239,7 +239,13 @@ def build_promo_image(products, settings, fmt="png"):
     biz = settings.get("business_name") or "My Business"
     phone = (settings.get("phone") or "").strip()
 
-    head_h, row_h = 230, 88
+    # Rows grow to fit a thumbnail when any product has a photo; names indent
+    # uniformly so the left edge stays straight.
+    have_photos = any(p.get("photo_path") for p in products)
+    thumb = 84
+    head_h = 230
+    row_h = (thumb + 26) if have_photos else 88
+    name_x = PAD + thumb + 24 if have_photos else PAD
     cta_h = 110 if phone else 0
     H = head_h + 50 + len(products) * row_h + cta_h + 200
     img = Image.new("RGB", (W, H + 300), "white")
@@ -256,14 +262,28 @@ def build_promo_image(products, settings, fmt="png"):
     y = head_h + 40
     name_f, price_f, note_f = _font(True, 30), _font(True, 30), _font(True, 20)
     for i, p in enumerate(products):
+        ty = y + (14 if have_photos else 0)   # text baseline sits mid-thumb
+        if p.get("photo_path"):
+            try:
+                ph = Image.open(p["photo_path"]).convert("RGB")
+                # center-crop square, then rounded corners via an alpha mask
+                s = min(ph.size)
+                ph = ph.crop(((ph.width - s) // 2, (ph.height - s) // 2,
+                              (ph.width + s) // 2, (ph.height + s) // 2))
+                ph = ph.resize((thumb, thumb))
+                mask = Image.new("L", (thumb, thumb), 0)
+                ImageDraw.Draw(mask).rounded_rectangle([0, 0, thumb, thumb], radius=14, fill=255)
+                img.paste(ph, (PAD, y), mask)
+            except Exception:
+                pass   # unreadable file → row just renders without a thumb
         price = _money(cur, p["unit_price"])
         price_w = d.textlength(price, font=price_f)
-        d.text((PAD, y), _fit(d, p["name"], name_f, W - 2 * PAD - price_w - 40),
+        d.text((name_x, ty), _fit(d, p["name"], name_f, W - name_x - PAD - price_w - 40),
                font=name_f, fill=INK)
-        _right(d, W - PAD, y, price, price_f, BRAND)
+        _right(d, W - PAD, ty, price, price_f, BRAND)
         low = p.get("low_stock_at") or 0
         if low and p["stock_qty"] <= low:
-            d.text((PAD, y + 40), f"Only {p['stock_qty']:g} left — hurry!", font=note_f, fill=AMBER)
+            d.text((name_x, ty + 40), f"Only {p['stock_qty']:g} left — hurry!", font=note_f, fill=AMBER)
         d.line([PAD, y + row_h - 20, W - PAD, y + row_h - 20], fill=LINE, width=1)
         y += row_h
 
