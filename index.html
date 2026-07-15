@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>🐔 Fresh Farms - Dashboard</title>
+    <style>
+        :root {
+            --primary: #F97316;
+            --primary-dark: #EA580C;
+            --primary-light: #FFF7ED;
+            --bg: #F5F2ED;
+            --card-bg: #FFFFFF;
+            --text: #1C1917;
+            --text-secondary: #78716C;
+            --border: #E7E5E4;
+            --success: #16A34A;
+            --warning: #EAB308;
+            --danger: #DC2626;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+            --shadow: 0 4px 12px rgba(0,0,0,0.08);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+            --radius-sm: 0.75rem;
+            --radius: 1rem;
+            --radius-lg: 1.25rem;
+            --overdue-bg: #FEF2F2;
+        }
+        .dark-mode {
+            --primary: #FB923C;
+            --primary-dark: #F97316;
+            --primary-light: #2D1F14;
+            --bg: #1C1917;
+            --card-bg: #2D241F;
+            --text: #F5F2ED;
+            --text-secondary: #A8A29E;
+            --border: #44403C;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+            --shadow: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --overdue-bg: #3B1A1A;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #EDE8E0;
+            color: var(--text);
+            line-height: 1.5;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .dark-mode body { background: #1C1917; }
+        .mobile-frame {
+            width: 100%;
+            max-width: 430px;
+            min-height: 100vh;
+            background: var(--bg);
+            position: relative;
+            overflow-x: hidden;
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.05), 0 20px 60px rgba(0,0,0,0.2);
+            transition: background 0.3s, color 0.3s;
+        }
+        @media (min-width: 768px) {
+            body { padding: 2rem; align-items: flex-start; }
+            .mobile-frame {
+                min-height: 90vh; max-height: 95vh; border-radius: 2rem;
+                overflow-y: auto; overflow-x: hidden;
+            }
+        }
+        .dashboard-header {
+            background: linear-gradient(135deg, #F97316 0%, #FB923C 100%);
+            color: white; padding: 1rem 1.25rem; display: flex;
+            align-items: center; justify-content: space-between; gap: 0.75rem;
+            position: sticky; top: 0; z-index: 100;
+            box-shadow: 0 4px 20px rgba(249,115,22,0.3);
+        }
+        .header-brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+        .header-logo { width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; backdrop-filter: blur(4px); }
+        .header-info { min-width: 0; }
+        .header-info h3 { font-size: 0.95rem; font-weight: 700; letter-spacing: -0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .header-info span { font-size: 0.7rem; opacity: 0.85; white-space: nowrap; }
+        .header-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+        .icon-btn { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.2); border: none; color: white; font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; backdrop-filter: blur(4px); }
+        .icon-btn:active { background: rgba(255,255,255,0.35); transform: scale(0.95); }
+        .kpi-strip { display: flex; gap: 0.6rem; padding: 1rem 1.25rem; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+        .kpi-strip::-webkit-scrollbar { display: none; }
+        .kpi-card { flex: 0 0 auto; min-width: 100px; background: var(--card-bg); border-radius: var(--radius-sm); padding: 0.85rem 1rem; text-align: center; box-shadow: var(--shadow-sm); scroll-snap-align: start; border: 1px solid var(--border); transition: background 0.3s; }
+        .kpi-card .kpi-val { font-size: 1.5rem; font-weight: 800; color: var(--primary); line-height: 1; letter-spacing: -0.5px; }
+        .kpi-card .kpi-lbl { font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 0.3rem; }
+        .tab-content { padding: 0 1.25rem 5.5rem; display: none; }
+        .tab-content.active { display: block; animation: fadeSlideIn 0.3s ease; }
+        @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .section-card { background: var(--card-bg); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; box-shadow: var(--shadow-sm); border: 1px solid var(--border); transition: background 0.3s, border 0.3s; }
+        .section-card h4 { font-size: 0.9rem; font-weight: 700; margin-bottom: 1rem; color: var(--text); display: flex; align-items: center; gap: 0.5rem; }
+        .section-card h4 .emoji { font-size: 1.1rem; }
+        .form-row { display: flex; flex-direction: column; gap: 0.8rem; }
+        .field { display: flex; flex-direction: column; gap: 0.3rem; }
+        .field label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-secondary); }
+        .field input, .field select, .field textarea { padding: 0.65rem 0.85rem; border: 1.5px solid var(--border); border-radius: 0.6rem; font-size: 0.88rem; font-family: inherit; background: var(--card-bg); color: var(--text); transition: all 0.2s; width: 100%; -webkit-appearance: none; }
+        .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--primary); background: var(--card-bg); box-shadow: 0 0 0 3px rgba(249,115,22,0.2); }
+        .field textarea { resize: vertical; min-height: 60px; }
+        .chip-group { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+        .chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.4rem 0.75rem; border-radius: 1.5rem; font-size: 0.75rem; font-weight: 600; background: var(--bg); border: 1.5px solid var(--border); cursor: pointer; transition: all 0.2s; user-select: none; white-space: nowrap; color: var(--text); }
+        .chip:active { transform: scale(0.96); }
+        .chip.selected { background: var(--primary-light); border-color: var(--primary); color: var(--primary-dark); }
+        .btn { width: 100%; padding: 0.8rem; border-radius: 0.75rem; border: none; font-weight: 700; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; font-family: inherit; letter-spacing: 0.2px; display: flex; align-items: center; justify-content: center; gap: 0.4rem; }
+        .btn:active { transform: scale(0.97); }
+        .btn-primary { background: var(--primary); color: white; box-shadow: 0 4px 14px rgba(249,115,22,0.3); }
+        .btn-primary:active { background: var(--primary-dark); }
+        .btn-outline { background: transparent; color: var(--primary); border: 2px solid var(--primary); }
+        .btn-outline:active { background: var(--primary-light); }
+        .btn-danger { background: white; color: var(--danger); border: 1.5px solid #FECACA; }
+        .btn-danger:active { background: #FEF2F2; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:active { background: #15803D; }
+        .btn-sm { width: auto; padding: 0.35rem 0.7rem; font-size: 0.7rem; border-radius: 0.5rem; white-space: nowrap; }
+        .prospect-item { background: var(--card-bg); border-radius: var(--radius-sm); padding: 0.85rem 1rem; margin-bottom: 0.6rem; border: 1px solid var(--border); box-shadow: var(--shadow-sm); transition: all 0.2s; }
+        .prospect-item.won { border-left: 4px solid var(--success); background: #F0FDF4; }
+        .prospect-item.lost { border-left: 4px solid var(--danger); background: #FEF2F2; }
+        .prospect-item.overdue { border-left: 4px solid var(--danger); background: var(--overdue-bg); }
+        .prospect-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+        .prospect-top .name { font-weight: 700; font-size: 0.9rem; color: var(--text); }
+        .prospect-top .contact { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.1rem; }
+        .badge { display: inline-block; padding: 0.2rem 0.55rem; border-radius: 1rem; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0; }
+        .badge.hot { background: #FEE2E2; color: #991B1B; }
+        .badge.warm { background: #FEF3C7; color: #92400E; }
+        .badge.cold { background: #DBEAFE; color: #1E40AF; }
+        .badge.not-interested { background: #F3F4F6; color: #4B5563; }
+        .badge.won { background: #DCFCE7; color: #166534; }
+        .badge.lost { background: #FEE2E2; color: #991B1B; }
+        .badge.reminder { background: #FEE2E2; color: #991B1B; font-size: 0.6rem; }
+        .prospect-response { font-size: 0.8rem; color: var(--text); font-style: italic; margin-top: 0.4rem; padding: 0.4rem 0.6rem; background: var(--bg); border-radius: 0.4rem; line-height: 1.4; }
+        .feedback-bubble { margin-top: 0.5rem; padding: 0.6rem 0.75rem; background: #F0FDF4; border-radius: 0.5rem; font-size: 0.78rem; color: #166534; line-height: 1.5; border-left: 3px solid var(--success); }
+        .prospect-actions { display: flex; gap: 0.4rem; margin-top: 0.6rem; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
+        .reminder-row { font-size: 0.72rem; color: var(--danger); margin-top: 0.4rem; font-weight: 600; }
+        .activity-log { margin-top: 0.6rem; border-top: 1px solid var(--border); padding-top: 0.6rem; display: none; }
+        .activity-log.open { display: block; }
+        .activity-item { display: flex; justify-content: space-between; font-size: 0.72rem; margin-bottom: 0.3rem; }
+        .activity-item span { color: var(--text-secondary); }
+        .activity-input-row { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+        .activity-input-row input { flex: 1; padding: 0.4rem 0.6rem; font-size: 0.75rem; border: 1px solid var(--border); border-radius: 0.4rem; }
+        .empty-state { text-align: center; padding: 2rem 1rem; color: var(--text-secondary); font-size: 0.85rem; }
+        .empty-state .big-emoji { font-size: 2.5rem; display: block; margin-bottom: 0.5rem; }
+        .plan-block { background: var(--primary-light); border-radius: var(--radius-sm); padding: 1rem; margin-bottom: 0.75rem; border-left: 4px solid var(--primary); }
+        .plan-block h5 { font-size: 0.85rem; color: var(--primary-dark); margin-bottom: 0.4rem; }
+        .plan-block p, .plan-block li { font-size: 0.8rem; color: var(--text); line-height: 1.5; }
+        .plan-block ul { margin-left: 1.1rem; margin-top: 0.3rem; }
+        .plan-block li { margin-bottom: 0.2rem; }
+        .calculator { display: flex; flex-direction: column; gap: 0.6rem; }
+        .calc-row { display: flex; gap: 0.5rem; align-items: flex-end; }
+        .calc-row .field { flex: 1; }
+        .calc-result { font-size: 1.1rem; font-weight: 800; color: var(--primary); text-align: center; }
+        .stat-row { display: flex; gap: 0.6rem; margin-bottom: 1rem; }
+        .stat-box { flex: 1; background: var(--card-bg); border-radius: var(--radius-sm); padding: 0.8rem; text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
+        .stat-box .stat-val { font-size: 1.4rem; font-weight: 800; color: var(--primary); }
+        .stat-box .stat-lbl { font-size: 0.6rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 0.3rem; }
+        .stat-box.won .stat-val { color: var(--success); }
+        .stat-box.lost .stat-val { color: var(--danger); }
+        .source-bar { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
+        .source-bar .src-label { width: 90px; font-size: 0.72rem; font-weight: 600; text-align: right; flex-shrink: 0; color: var(--text); }
+        .source-bar .bar-track { flex: 1; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+        .source-bar .bar-fill { height: 100%; border-radius: 4px; background: var(--primary); }
+        .source-bar .bar-count { width: 28px; font-size: 0.7rem; color: var(--text-secondary); text-align: right; flex-shrink: 0; }
+        /* ===== FIXED BOTTOM NAV ===== */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 430px;
+            background: var(--card-bg);
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            border-top: 1px solid var(--border);
+            z-index: 200;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+            padding: 0.5rem 0.25rem env(safe-area-inset-bottom, 0.5rem);
+            transition: background 0.3s;
+            gap: 0;
+        }
+        .nav-item {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.2rem;
+            padding: 0.5rem 0.25rem;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 0.6rem;
+            transition: all 0.2s;
+            font-family: inherit;
+            color: var(--text-secondary);
+            font-size: 0.6rem;
+            font-weight: 600;
+            -webkit-tap-highlight-color: transparent;
+            position: relative;
+            text-align: center;
+            min-width: 0;
+        }
+        .nav-item .nav-icon { font-size: 1.3rem; transition: all 0.2s; display: block; }
+        .nav-item.active { color: var(--primary); }
+        .nav-item.active .nav-icon { transform: scale(1.1); }
+        .nav-item:active { background: var(--primary-light); }
+        .nav-badge {
+            position: absolute;
+            top: 2px;
+            right: calc(50% - 24px);
+            background: var(--danger);
+            color: white;
+            font-size: 0.55rem;
+            font-weight: 700;
+            min-width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        /* ===== END FIXED BOTTOM NAV ===== */
+        .followup-card { background: #FFF7ED; border: 1px solid var(--primary); }
+        .followup-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+        .followup-item:last-child { border-bottom: none; }
+        .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #1C1917; color: white; padding: 0.6rem 1.2rem; border-radius: 2rem; font-size: 0.8rem; font-weight: 600; box-shadow: var(--shadow-lg); z-index: 300; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+        .dark-mode .toast { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); }
+        @media (min-width: 768px) { .bottom-nav { position: sticky; bottom: 0; border-radius: 0 0 2rem 2rem; } }
+    </style>
+</head>
+<body>
+    <div class="mobile-frame" id="app">
+        <div class="dashboard-header">
+            <div class="header-brand">
+                <div class="header-logo">🐔</div>
+                <div class="header-info">
+                    <h3>Fresh Farms</h3>
+                    <span>Poultry · Est. 1998</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="icon-btn" id="darkModeToggle" title="Toggle dark mode">🌙</button>
+                <button class="icon-btn" onclick="toggleContact()" title="Contact">📞</button>
+            </div>
+        </div>
+
+        <div class="kpi-strip" id="kpiStrip">
+            <div class="kpi-card"><div class="kpi-val" id="kpiLeads">0</div><div class="kpi-lbl">Leads/mo</div></div>
+            <div class="kpi-card"><div class="kpi-val" id="kpiCPL">₦0</div><div class="kpi-lbl">Cost/Lead</div></div>
+            <div class="kpi-card"><div class="kpi-val" id="kpiConversion">0%</div><div class="kpi-lbl">Conversion</div></div>
+            <div class="kpi-card"><div class="kpi-val" id="kpiProspects">0</div><div class="kpi-lbl">Prospects</div></div>
+        </div>
+
+        <!-- Tab: Planner -->
+        <div class="tab-content active" id="tabPlanner">
+            <div class="section-card">
+                <h4><span class="emoji">📝</span> Acquisition Planner</h4>
+                <div class="form-row">
+                    <div class="field"><label>Product Focus</label><select id="productType"><option value="">Select product...</option><option value="whole">Whole Chickens</option><option value="cuts">Chicken Cuts</option><option value="eggs">Eggs</option><option value="valueadded">Value-Added</option><option value="specialty">Specialty</option><option value="all">Full Range</option></select></div>
+                    <div class="field"><label>Business Scale</label><select id="businessScale"><option value="small">Small Farm / Local</option><option value="medium">Regional Supplier</option><option value="large">Large Distributor</option></select></div>
+                    <div class="field"><label>Target Customers</label><textarea id="targetCustomers" rows="2" placeholder="e.g. restaurants, open markets, homes..."></textarea></div>
+                    <div class="field"><label>Monthly Budget (₦)</label><input type="number" id="monthlyBudget" placeholder="₦50,000" value="80000"></div>
+                    <div class="field"><label>Sales Goal (kg)</label><input type="text" id="salesGoal" placeholder="e.g. 500 kg chicken"></div>
+                    <div class="field"><label>Channels</label><div class="chip-group" id="channelChips"><span class="chip" data-val="Open Markets">🧺 Markets</span><span class="chip" data-val="Restaurant Supply">🍽️ Restaurants</span><span class="chip" data-val="Social Media">📱 Social</span><span class="chip" data-val="Home Delivery">🚚 Delivery</span><span class="chip" data-val="Wholesale">🏭 Wholesale</span><span class="chip" data-val="Customer Referrals">👥 Referrals</span><span class="chip" data-val="Local Ads">📰 Ads</span></div></div>
+                    <button class="btn btn-primary" id="generateBtn">🚀 Generate Plan</button>
+                    <button class="btn btn-outline" id="resetBtn">🔄 Reset</button>
+                </div>
+            </div>
+            <div id="planOutput"></div>
+
+            <!-- Calculator -->
+            <div class="section-card">
+                <h4><span class="emoji">🧮</span> Weight → Price Calculator</h4>
+                <div class="calculator">
+                    <div class="calc-row">
+                        <div class="field"><label>Price per kg (₦)</label><input type="number" id="calcPrice" placeholder="3500" value="3500"></div>
+                        <div class="field"><label>Weight (kg)</label><input type="number" id="calcWeight" placeholder="15" value="15"></div>
+                    </div>
+                    <div class="calc-result" id="calcTotal">₦52,500</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Prospects -->
+        <div class="tab-content" id="tabProspects">
+            <div class="section-card">
+                <h4><span class="emoji">➕</span> Add Prospect</h4>
+                <div class="form-row">
+                    <div class="field"><label>Name *</label><input type="text" id="prospectName" placeholder="John's Restaurant"></div>
+                    <div class="field"><label>Phone / Email</label><input type="text" id="prospectContact" placeholder="0800 000 0000"></div>
+                    <div class="field"><label>Source</label><select id="prospectSource"><option value="">-- select --</option><option value="Open Market">Open Market</option><option value="Restaurant">Restaurant</option><option value="Social Media">Social Media</option><option value="Referral">Referral</option><option value="Ad">Local Ad</option><option value="Other">Other</option></select></div>
+                    <div class="field"><label>Interest</label><select id="interestLevel"><option value="hot">🔥 Hot — Ready to buy</option><option value="warm">🟡 Warm — Interested</option><option value="cold">🔵 Cold — Maybe later</option><option value="not-interested">❌ Not Interested</option></select></div>
+                    <div class="field"><label>Follow-up Date</label><input type="date" id="followUpDate"></div>
+                    <div class="field"><label>Response *</label><textarea id="responseNotes" rows="2" placeholder="What did they say?"></textarea></div>
+                    <input type="hidden" id="editIndex" value="-1">
+                    <button class="btn btn-primary" id="addProspectBtn">➕ Add & Get Feedback</button>
+                    <button class="btn btn-outline" id="cancelEditBtn" style="display:none;">✖ Cancel Edit</button>
+                    <button class="btn btn-danger" id="clearProspectsBtn">🗑️ Clear All</button>
+                </div>
+            </div>
+
+            <!-- Follow-up Due Today section -->
+            <div class="section-card followup-card" id="followUpCard" style="display:none;">
+                <h4><span class="emoji">🔔</span> Follow-ups Due Today / Overdue</h4>
+                <div id="followUpList"></div>
+            </div>
+
+            <div id="prospectList"></div>
+        </div>
+
+        <!-- Tab: Analytics -->
+        <div class="tab-content" id="tabAnalytics">
+            <div class="section-card">
+                <h4><span class="emoji">📊</span> Conversion Overview</h4>
+                <div class="stat-row" id="conversionStats">
+                    <div class="stat-box won"><div class="stat-val" id="statWon">0</div><div class="stat-lbl">Won</div></div>
+                    <div class="stat-box lost"><div class="stat-val" id="statLost">0</div><div class="stat-lbl">Lost</div></div>
+                    <div class="stat-box"><div class="stat-val" id="statOpen">0</div><div class="stat-lbl">Open</div></div>
+                    <div class="stat-box"><div class="stat-val" id="statRate">0%</div><div class="stat-lbl">Win Rate</div></div>
+                </div>
+            </div>
+            <div class="section-card"><h4><span class="emoji">📈</span> Prospects by Source</h4><div id="sourceChart"></div></div>
+            <div class="section-card"><h4><span class="emoji">🎯</span> Prospects by Interest</h4><div id="interestChart"></div></div>
+        </div>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-tab="tabPlanner"><span class="nav-icon">📋</span> Planner</button>
+            <button class="nav-item" data-tab="tabProspects" id="navProspects"><span class="nav-icon">👥</span> Prospects <span class="nav-badge" id="navReminderBadge" style="display:none;">0</span></button>
+            <button class="nav-item" data-tab="tabAnalytics" id="navAnalytics"><span class="nav-icon">📊</span> Analytics</button>
+        </nav>
+        <div class="toast" id="toast"></div>
+    </div>
+
+    <script>
+        // ========== LOCAL STORAGE ==========
+        const STORAGE_KEY = 'freshfarms_prospects';
+        const THEME_KEY = 'freshfarms_dark';
+
+        function saveProspects() { localStorage.setItem(STORAGE_KEY, JSON.stringify(prospects)); }
+        function loadProspects() {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                try {
+                    prospects = JSON.parse(stored);
+                    prospects.forEach(p => {
+                        if (!p.status) p.status = 'open';
+                        if (!p.followUpDate) p.followUpDate = '';
+                        if (!p.activities) p.activities = [];
+                    });
+                } catch (e) { prospects = []; }
+            } else prospects = [];
+        }
+
+        // ========== DARK MODE ==========
+        const darkModeToggle = document.getElementById('darkModeToggle');
+        function applyTheme(isDark) {
+            if (isDark) {
+                document.documentElement.classList.add('dark-mode');
+                darkModeToggle.textContent = '☀️';
+            } else {
+                document.documentElement.classList.remove('dark-mode');
+                darkModeToggle.textContent = '🌙';
+            }
+            localStorage.setItem(THEME_KEY, isDark);
+        }
+        const savedDark = localStorage.getItem(THEME_KEY) === 'true';
+        applyTheme(savedDark);
+        darkModeToggle.addEventListener('click', () => {
+            const isDark = document.documentElement.classList.contains('dark-mode');
+            applyTheme(!isDark);
+        });
+
+        // ========== TOAST ==========
+        function showToast(msg, duration=2500) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), duration);
+        }
+
+        // ========== CHANNEL CHIPS ==========
+        const channelChips = document.querySelectorAll('#channelChips .chip');
+        channelChips.forEach(chip => chip.addEventListener('click', () => chip.classList.toggle('selected')));
+        function getSelectedChannels() { return [...document.querySelectorAll('#channelChips .chip.selected')].map(c => c.dataset.val); }
+
+        // ========== NAVIGATION ==========
+        const navItems = document.querySelectorAll('.nav-item');
+        const tabContents = document.querySelectorAll('.tab-content');
+        navItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const tabId = item.dataset.tab;
+                navItems.forEach(n => n.classList.remove('active'));
+                item.classList.add('active');
+                tabContents.forEach(tc => tc.classList.remove('active'));
+                document.getElementById(tabId).classList.add('active');
+                if (tabId === 'tabAnalytics') renderAnalytics();
+                if (tabId === 'tabProspects') { renderFollowUps(); }
+            });
+        });
+
+        // ========== UTILS ==========
+        function formatNaira(amount) { return '₦' + Math.round(amount).toLocaleString('en-NG'); }
+        function escapeHtml(text) { const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}; return text.replace(/[&<>"']/g, m => map[m]); }
+        function isOverdue(dateStr) { if (!dateStr) return false; const today = new Date(); today.setHours(0,0,0,0); return new Date(dateStr) <= today; }
+        function formatDate(dateStr) { if (!dateStr) return ''; const d = new Date(dateStr); return d.toLocaleDateString('en-NG', {month:'short', day:'numeric'}); }
+
+        // ========== CALCULATOR ==========
+        const calcPrice = document.getElementById('calcPrice');
+        const calcWeight = document.getElementById('calcWeight');
+        const calcTotal = document.getElementById('calcTotal');
+        function updateCalculator() {
+            const price = parseFloat(calcPrice.value) || 0;
+            const weight = parseFloat(calcWeight.value) || 0;
+            calcTotal.textContent = formatNaira(price * weight);
+        }
+        calcPrice.addEventListener('input', updateCalculator);
+        calcWeight.addEventListener('input', updateCalculator);
+        updateCalculator();
+
+        // ========== ACQUISITION PLANNER ==========
+        const productType = document.getElementById('productType');
+        const businessScale = document.getElementById('businessScale');
+        const targetCustomers = document.getElementById('targetCustomers');
+        const monthlyBudget = document.getElementById('monthlyBudget');
+        const salesGoal = document.getElementById('salesGoal');
+        const planOutput = document.getElementById('planOutput');
+
+        function updateKPIs() {
+            const budgetVal = parseFloat(monthlyBudget.value) || 0;
+            const scale = businessScale.value;
+            const selectedChannels = getSelectedChannels();
+            const estLeads = selectedChannels.length * (scale === 'large' ? 200 : scale === 'medium' ? 120 : 60) + budgetVal / 300;
+            const cpl = budgetVal > 0 ? budgetVal / (estLeads || 1) : 0;
+            const total = prospects.length;
+            const won = prospects.filter(p => p.status === 'won').length;
+            const conversionRate = total > 0 ? Math.round((won / total) * 100) : 0;
+            document.getElementById('kpiLeads').textContent = '~' + Math.round(estLeads);
+            document.getElementById('kpiCPL').textContent = formatNaira(cpl);
+            document.getElementById('kpiConversion').textContent = conversionRate + '%';
+            document.getElementById('kpiProspects').textContent = total;
+        }
+
+        function generatePlan() {
+            const product = productType.value;
+            const scale = businessScale.value;
+            const customers = targetCustomers.value.trim() || 'local consumers and businesses';
+            const budgetVal = parseFloat(monthlyBudget.value) || 0;
+            const goal = salesGoal.value.trim() || 'increase monthly sales (kg)';
+            const selectedChannels = getSelectedChannels();
+            if (!product) { alert('⚠️ Please select a product focus.'); return; }
+            updateKPIs();
+            let html = '<div class="section-card"><h4><span class="emoji">📋</span> Your Plan</h4>';
+            html += `<div class="plan-block"><h5>🐔 Snapshot</h5><p>Product: ${product} · Scale: ${scale}<br>Budget: ${formatNaira(budgetVal)} · Goal: ${goal}<br>Target: ${customers}</p></div>`;
+            if (selectedChannels.length === 0) {
+                html += '<div class="plan-block"><h5>⚠️ No channels selected</h5><p>Select channels above. Tip: ensure cold chain, get certifications, offer free samples.</p></div>';
+            } else {
+                html += '<div class="plan-block"><h5>🎯 Channel Tactics</h5>';
+                selectedChannels.forEach(ch => {
+                    html += `<p style="font-weight:700;margin-top:0.4rem;">${ch}</p><ul>`;
+                    switch(ch) {
+                        case 'Open Markets': html += '<li>Attractive stall with clear kg pricing</li><li>Collect phone numbers for SMS alerts</li><li>Free tasting samples</li><li>QR code for online orders</li>'; break;
+                        case 'Restaurant Supply': html += '<li>Wholesale price sheet to 20 restaurants/week</li><li>First-order 20% discount on bulk kg</li><li>Reliable delivery schedule</li><li>Request menu credit</li>'; break;
+                        case 'Social Media': html += '<li>Daily farm-to-table videos</li><li>Targeted ads within your city</li><li>Customer recipe shares</li><li>"Guess the kg" giveaways</li>'; break;
+                        case 'Home Delivery': html += '<li>Subscription boxes (5/10/20 kg)</li><li>Free delivery over ₦50,000</li><li>Thank-you notes with discount codes</li><li>Combo boxes with veggie farms</li>'; break;
+                        case 'Wholesale': html += '<li>Reach grocery buyers with kg pricing</li><li>Private-label options</li><li>Trade show attendance</li><li>POS materials for stockists</li>'; break;
+                        case 'Customer Referrals': html += '<li>Refer-a-friend = free crate of eggs</li><li>Encourage Google reviews</li><li>Buy 10 kg, get 1 kg free</li>'; break;
+                        case 'Local Ads': html += '<li>Community newspapers & radio</li><li>Sponsor local events</li><li>Neighbourhood flyers with coupons</li>'; break;
+                    }
+                    html += '</ul>';
+                });
+                html += '</div>';
+            }
+            html += '<div class="plan-block"><h5>📈 Scale Advice</h5>';
+            if (scale === 'small') html += '<p>Build a loyal local base. Join every open market within 30 km, start a simple WhatsApp newsletter, get featured in local media.</p>';
+            else if (scale === 'medium') html += '<p>Expand distribution, hire a sales rep for restaurants, invest in branding, run consistent geo-targeted social ads.</p>';
+            else html += '<p>Scale through contracts with grocery chains, invest in a CRM for wholesale, launch influencer brand ambassadors.</p>';
+            html += '</div></div>';
+            html += '<button class="btn btn-outline" onclick="sharePlanWhatsApp()">📤 Share Plan via WhatsApp</button>';
+            planOutput.innerHTML = html;
+            planOutput.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function sharePlanWhatsApp() {
+            const planText = document.getElementById('planOutput')?.textContent || 'Fresh Farms Acquisition Plan';
+            const msg = encodeURIComponent(planText.substring(0, 3000));
+            const url = `https://wa.me/?text=${msg}`;
+            window.open(url, '_blank');
+            showToast('📤 Plan shared via WhatsApp');
+        }
+
+        function resetPlanner() {
+            productType.value = '';
+            businessScale.value = 'small';
+            targetCustomers.value = '';
+            monthlyBudget.value = '80000';
+            salesGoal.value = '';
+            channelChips.forEach(c => c.classList.remove('selected'));
+            planOutput.innerHTML = '';
+            updateKPIs();
+        }
+
+        document.getElementById('generateBtn').addEventListener('click', generatePlan);
+        document.getElementById('resetBtn').addEventListener('click', resetPlanner);
+
+        // ========== PROSPECT TRACKER ==========
+        let prospects = [];
+        const prospectName = document.getElementById('prospectName');
+        const prospectContact = document.getElementById('prospectContact');
+        const prospectSource = document.getElementById('prospectSource');
+        const interestLevel = document.getElementById('interestLevel');
+        const followUpDate = document.getElementById('followUpDate');
+        const responseNotes = document.getElementById('responseNotes');
+        const editIndex = document.getElementById('editIndex');
+        const cancelEditBtn = document.getElementById('cancelEditBtn');
+        const addProspectBtn = document.getElementById('addProspectBtn');
+        const prospectListDiv = document.getElementById('prospectList');
+        const navReminderBadge = document.getElementById('navReminderBadge');
+        const followUpCard = document.getElementById('followUpCard');
+        const followUpList = document.getElementById('followUpList');
+
+        function generateFeedback(level, response) {
+            let feedback = '';
+            const lower = response.toLowerCase();
+            switch(level) {
+                case 'hot': feedback = '🚀 Act immediately! Contact within 24 hours to close the sale. Prepare sample packs and a clear kg price list.'; break;
+                case 'warm': feedback = '📞 Follow up within 48 hours. Send info via WhatsApp, ask for a trial order.'; break;
+                case 'cold': feedback = '📧 Nurture gradually. Add to broadcast, check back in 3 months.'; break;
+                case 'not-interested': feedback = '❌ Respect their decision. Send a polite thank-you.'; break;
+            }
+            if (lower.includes('price') || lower.includes('expensive') || lower.includes('₦'))
+                feedback += ' 💰 Emphasise quality, free-range practices, and a first-order discount. Share kg price comparison.';
+            if (lower.includes('delivery') || lower.includes('transport') || lower.includes('logistics'))
+                feedback += ' 🚚 Discuss delivery options. Offer flexible schedule or free delivery above a kg threshold.';
+            if (lower.includes('sample') || lower.includes('try') || lower.includes('taste'))
+                feedback += ' 🍗 Offer a complimentary sample pack. Let the chicken speak for itself!';
+            if (lower.includes('kg') || lower.includes('weight') || lower.includes('size'))
+                feedback += ' ⚖️ They think in weight. Provide clear kg pricing and bulk discount tiers (10 kg, 50 kg, 100 kg).';
+            if (lower.includes('later') || lower.includes('not now') || lower.includes('busy'))
+                feedback += ' ⏰ Set a reminder to reconnect in 2-4 weeks. Stay politely on their radar.';
+            if (lower.includes('competitor') || lower.includes('cheaper') || lower.includes('other supplier'))
+                feedback += ' 🔍 Highlight Fresh Farms\' unique points: farm-to-table freshness, heritage breeds, custom cuts.';
+            return feedback;
+        }
+
+        function renderFollowUps() {
+            const dueProspects = [];
+            prospects.forEach((p, idx) => {
+                if (p.status === 'open' && p.followUpDate && isOverdue(p.followUpDate)) {
+                    dueProspects.push({ ...p, _idx: idx });
+                }
+            });
+            if (dueProspects.length === 0) {
+                followUpCard.style.display = 'none';
+                return;
+            }
+            followUpCard.style.display = 'block';
+            let html = '';
+            dueProspects.forEach((p) => {
+                const overdue = isOverdue(p.followUpDate) ? '(OVERDUE)' : '';
+                html += `
+                <div class="followup-item">
+                    <div>
+                        <strong>${escapeHtml(p.name)}</strong><br>
+                        <small style="color:var(--text-secondary);">📅 ${p.followUpDate} ${overdue} · ${escapeHtml(p.source || 'N/A')}</small>
+                    </div>
+                    <button class="btn btn-sm btn-outline" onclick="completeFollowUp(${p._idx})">✔️ Done</button>
+                </div>`;
+            });
+            followUpList.innerHTML = html;
+        }
+
+        window.completeFollowUp = function(idx) {
+            if (prospects[idx]) {
+                prospects[idx].followUpDate = '';
+                prospects[idx].activities.push({ text: 'Followed up (completed)', date: new Date().toISOString() });
+                saveProspects();
+                renderProspects();
+                renderFollowUps();
+                showToast('Follow-up marked as done');
+            }
+        };
+
+        function renderProspects() {
+            if (prospects.length === 0) {
+                prospectListDiv.innerHTML = '<div class="empty-state"><span class="big-emoji">📭</span>No prospects yet.<br>Add your first one above!</div>';
+            } else {
+                let html = '';
+                prospects.forEach((p, i) => {
+                    let statusClass = '';
+                    const isWon = p.status === 'won';
+                    const isLost = p.status === 'lost';
+                    const overdue = p.status === 'open' && isOverdue(p.followUpDate);
+                    if (isWon) statusClass = 'won';
+                    if (isLost) statusClass = 'lost';
+                    if (overdue) statusClass = 'overdue';
+                    const statusBadge = isWon ? ' <span class="badge won">WON</span>' : isLost ? ' <span class="badge lost">LOST</span>' : '';
+                    const reminderBadge = overdue ? ' <span class="badge reminder">🔔 OVERDUE</span>' : '';
+                    const followUpDisplay = p.followUpDate ? `<div class="reminder-row">📅 Follow-up: ${p.followUpDate} ${overdue ? '⚠️' : ''}</div>` : '';
+                    const activities = p.activities || [];
+                    const logId = `log-${i}`;
+                    html += `
+                    <div class="prospect-item ${statusClass}">
+                        <div class="prospect-top">
+                            <div>
+                                <div class="name">${escapeHtml(p.name)}${statusBadge}${reminderBadge}</div>
+                                <div class="contact">${p.contact ? '📞 ' + escapeHtml(p.contact) + ' · ' : ''}${escapeHtml(p.source || 'N/A')}</div>
+                            </div>
+                            <span class="badge ${p.interestLevel.replace('-',' ').replace('not interested','not-interested')}">${p.interestLevel.toUpperCase()}</span>
+                        </div>
+                        ${followUpDisplay}
+                        <div class="prospect-response">"${escapeHtml(p.response)}"</div>
+                        <div class="feedback-bubble"><strong>💡</strong> ${p.feedback}</div>
+                        <div class="prospect-actions">
+                            ${!isWon && !isLost ? `<button class="btn btn-success btn-sm" onclick="markProspect(${i}, 'won')">✅ Won</button>` : ''}
+                            ${!isWon && !isLost ? `<button class="btn btn-danger btn-sm" onclick="markProspect(${i}, 'lost')">❌ Lost</button>` : ''}
+                            ${isWon || isLost ? `<button class="btn btn-outline btn-sm" onclick="markProspect(${i}, 'open')">🔄 Reopen</button>` : ''}
+                            <button class="btn btn-outline btn-sm" onclick="editProspect(${i})">✏️ Edit</button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteProspect(${i})">🗑️ Delete</button>
+                            <button class="btn btn-outline btn-sm toggle-log-btn" data-index="${i}">📝 Activity</button>
+                        </div>
+                        <div class="activity-log" id="${logId}">
+                            ${activities.length === 0 ? '<p style="font-size:0.7rem; color:var(--text-secondary);">No activity recorded yet.</p>' : ''}
+                            ${activities.map(act => `<div class="activity-item"><span>${escapeHtml(act.text)}</span><small>${formatDate(act.date)}</small></div>`).join('')}
+                            <div class="activity-input-row">
+                                <input type="text" id="activityInput-${i}" placeholder="Add a note..." class="activity-input">
+                                <button class="btn btn-sm btn-primary" onclick="addActivity(${i})">➕</button>
+                            </div>
+                        </div>
+                    </div>`;
+                });
+                prospectListDiv.innerHTML = html;
+            }
+            document.querySelectorAll('.toggle-log-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const index = this.dataset.index;
+                    const logDiv = document.getElementById(`log-${index}`);
+                    if (logDiv) logDiv.classList.toggle('open');
+                });
+            });
+            const reminderCount = prospects.filter(p => p.status === 'open' && p.followUpDate && isOverdue(p.followUpDate)).length;
+            navReminderBadge.textContent = reminderCount;
+            navReminderBadge.style.display = reminderCount > 0 ? 'flex' : 'none';
+            updateKPIs();
+            renderFollowUps();
+        }
+
+        window.addActivity = function(index) {
+            const input = document.getElementById(`activityInput-${index}`);
+            if (!input || !input.value.trim()) return;
+            const text = input.value.trim();
+            if (!prospects[index]) return;
+            if (!prospects[index].activities) prospects[index].activities = [];
+            prospects[index].activities.push({ text, date: new Date().toISOString() });
+            saveProspects();
+            renderProspects();
+            setTimeout(() => {
+                const logDiv = document.getElementById(`log-${index}`);
+                if (logDiv) logDiv.classList.add('open');
+            }, 50);
+        };
+
+        function markProspect(index, status) {
+            if (!prospects[index]) return;
+            prospects[index].status = status;
+            if (status === 'won' || status === 'lost') prospects[index].closedAt = new Date().toISOString();
+            else delete prospects[index].closedAt;
+            saveProspects();
+            renderProspects();
+            renderFollowUps();
+        }
+
+        function addProspect() {
+            const name = prospectName.value.trim();
+            const response = responseNotes.value.trim();
+            if (!name) { alert('Please enter the prospect name.'); return; }
+            if (!response) { alert('Please enter the response/comments.'); return; }
+            const idx = parseInt(editIndex.value);
+            const existing = idx >= 0 ? prospects[idx] : null;
+            const prospectData = {
+                name,
+                contact: prospectContact.value.trim(),
+                source: prospectSource.value,
+                interestLevel: interestLevel.value,
+                response,
+                feedback: generateFeedback(interestLevel.value, response),
+                status: existing ? existing.status : 'open',
+                followUpDate: followUpDate.value,
+                activities: existing ? existing.activities || [] : [],
+                timestamp: existing ? existing.timestamp : new Date().toISOString(),
+                closedAt: existing ? existing.closedAt || null : null
+            };
+            if (existing) prospects[idx] = prospectData;
+            else prospects.push(prospectData);
+            saveProspects();
+            resetProspectForm();
+            renderProspects();
+            prospectListDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function editProspect(index) {
+            const p = prospects[index];
+            if (!p) return;
+            prospectName.value = p.name;
+            prospectContact.value = p.contact || '';
+            prospectSource.value = p.source || '';
+            interestLevel.value = p.interestLevel;
+            followUpDate.value = p.followUpDate || '';
+            responseNotes.value = p.response;
+            editIndex.value = index;
+            addProspectBtn.textContent = '✏️ Update Prospect';
+            cancelEditBtn.style.display = 'flex';
+            document.querySelector('.nav-item[data-tab="tabProspects"]').click();
+            document.querySelector('#tabProspects .section-card').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function deleteProspect(index) {
+            if (!confirm('Delete this prospect?')) return;
+            prospects.splice(index, 1);
+            saveProspects();
+            renderProspects();
+            renderFollowUps();
+        }
+
+        function resetProspectForm() {
+            prospectName.value = '';
+            prospectContact.value = '';
+            prospectSource.value = '';
+            interestLevel.value = 'hot';
+            followUpDate.value = '';
+            responseNotes.value = '';
+            editIndex.value = '-1';
+            addProspectBtn.textContent = '➕ Add & Get Feedback';
+            cancelEditBtn.style.display = 'none';
+        }
+
+        function clearProspects() {
+            if (prospects.length > 0 && confirm('Delete all prospects? This cannot be undone.')) {
+                prospects = [];
+                saveProspects();
+                renderProspects();
+                renderFollowUps();
+            }
+        }
+
+        document.getElementById('addProspectBtn').addEventListener('click', addProspect);
+        document.getElementById('clearProspectsBtn').addEventListener('click', clearProspects);
+        cancelEditBtn.addEventListener('click', resetProspectForm);
+
+        // ========== ANALYTICS ==========
+        function renderAnalytics() {
+            const total = prospects.length;
+            const won = prospects.filter(p => p.status === 'won').length;
+            const lost = prospects.filter(p => p.status === 'lost').length;
+            const open = prospects.filter(p => p.status === 'open').length;
+            const winRate = (won+lost) > 0 ? Math.round((won/(won+lost))*100) : 0;
+            document.getElementById('statWon').textContent = won;
+            document.getElementById('statLost').textContent = lost;
+            document.getElementById('statOpen').textContent = open;
+            document.getElementById('statRate').textContent = winRate + '%';
+            const sourceChart = document.getElementById('sourceChart');
+            const sourceCounts = {};
+            prospects.forEach(p => { const src = p.source || 'Unknown'; sourceCounts[src] = (sourceCounts[src]||0)+1; });
+            const sourceEntries = Object.entries(sourceCounts).sort((a,b) => b[1]-a[1]);
+            const maxSource = Math.max(...sourceEntries.map(e=>e[1]), 1);
+            if (sourceEntries.length===0) sourceChart.innerHTML = '<div class="empty-state">No data yet.</div>';
+            else {
+                let srcHtml = '';
+                sourceEntries.forEach(([src,cnt]) => {
+                    const pct = Math.round((cnt/maxSource)*100);
+                    srcHtml += `<div class="source-bar"><span class="src-label">${escapeHtml(src)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><span class="bar-count">${cnt}</span></div>`;
+                });
+                sourceChart.innerHTML = srcHtml;
+            }
+            const interestChart = document.getElementById('interestChart');
+            const interestCounts = {hot:0,warm:0,cold:0,'not-interested':0};
+            prospects.forEach(p => { if (interestCounts[p.interestLevel]!==undefined) interestCounts[p.interestLevel]++; });
+            const interestEntries = Object.entries(interestCounts);
+            const maxInterest = Math.max(...interestEntries.map(e=>e[1]),1);
+            const labels = {hot:'🔥 Hot',warm:'🟡 Warm',cold:'🔵 Cold','not-interested':'❌ Not Int.'};
+            if (maxInterest===0) interestChart.innerHTML = '<div class="empty-state">No data yet.</div>';
+            else {
+                let intHtml = '';
+                interestEntries.forEach(([key,cnt]) => {
+                    const pct = Math.round((cnt/maxInterest)*100);
+                    const color = key==='hot'?'#DC2626':key==='warm'?'#EAB308':key==='cold'?'#3B82F6':'#9CA3AF';
+                    intHtml += `<div class="source-bar"><span class="src-label">${labels[key]}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${color}"></div></div><span class="bar-count">${cnt}</span></div>`;
+                });
+                interestChart.innerHTML = intHtml;
+            }
+            updateKPIs();
+        }
+
+        // ========== CONTACT ==========
+        function toggleContact() {
+            alert('📞 Fresh Farms Poultry\n\n📋 0801 234 5678\n📱 0809 876 5432\n✉️ orders@freshfarmspoultry.com\n📍 Est. 1998');
+        }
+
+        // ========== INIT ==========
+        loadProspects();
+        updateKPIs();
+        renderProspects();
+        renderFollowUps();
+    </script>
+</body>
+</html>
