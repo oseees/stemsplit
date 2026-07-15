@@ -1,59 +1,21 @@
-# Node / Next.js
-node_modules/
-.next/
-out/
-*.tsbuildinfo
-next-env.d.ts
-
-# Env files (never commit secrets)
-.env
-.env.local
-.env.*.local
-
-# Python
-__pycache__/
-*.py[cod]
-venv/
-.venv/
-
-# Backend runtime data
-backend/uploads/
-backend/outputs/
-backend/jobs/
-backend/licenses.json
-backend/*.log
-
-# SalesPal databases (live customer data — never commit)
-sales-tracker/backups/
-sales-tracker/backend/data/
-
-# Android build artifacts (APK is built locally, not committed)
-sales-tracker/backend/downloads/
-sales-tracker/android/*.keystore
-sales-tracker/android/keystore.pass
-sales-tracker/android/*.idsig
-sales-tracker/android/build/
-sales-tracker/android/manifest-checksum.txt
-sales-tracker/android/app/
-sales-tracker/android/gradle*
-sales-tracker/android/build.gradle
-sales-tracker/android/settings.gradle
-sales-tracker/android/*.properties
-sales-tracker/android/store_icon.png
-sales-tracker/android/.gradle/
-sales-tracker/android/.bubblewrap/
-sales-tracker/android/app-release-*.apk
-sales-tracker/android/*.aab
-
-# WebView app (hand-written source IS committed; ignore only build outputs)
-sales-tracker/android-webview/local.properties
-sales-tracker/android-webview/.gradle/
-sales-tracker/android-webview/build/
-sales-tracker/android-webview/app/build/
-sales-tracker/android-webview/**/*.apk
-sales-tracker/android-webview/**/*.idsig
-sales-tracker/android-webview/**/*.aab
-
-# OS
-.DS_Store
-vocalmatch/build/
+# Unrelated sibling projects that live in this workspace but are NOT part of the
+# tracked repo. Listed so an accidental `git add -A` from a subdir can never
+# sweep them into a commit again (they each have their own home/repo).
+.roo/
+autosense_ai/
+beat-uploader/
+image-converter/
+instagram-downloader/
+mechanic-app/
+nairabulk/
+poultrypal-ai/
+rentscout-lagos/
+routewise/
+supplier-tracker/
+track2midi/
+viralclip-ai/
+vocalmatch/
+vocalperfect/
+yt-downloader/
+expense-tracker/
+random/
