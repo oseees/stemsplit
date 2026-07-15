@@ -4,7 +4,12 @@ Multi-tenant: every business-data row carries a user_id, and settings are per-us
 """
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# A session cookie stops being accepted this many days after it was issued, so a
+# leaked/stolen cookie can't be used forever. Env-tunable; the cookie's own
+# max_age is a year, but the server is the authority.
+SESSION_TTL_DAYS = int(os.environ.get("SALESPAL_SESSION_TTL_DAYS", "180"))
 from contextlib import contextmanager
 
 DB_PATH = os.environ.get("SALESPAL_DB", os.path.join(os.path.dirname(__file__), "data", "salespal.db"))
@@ -472,12 +477,14 @@ def user_for_session(conn, token):
     # Returns the OWNER's user row (data scoping is by user_id) plus, for an
     # attendant session, that staff member's id/shop/name so the app can lock
     # them to their shop and restricted UI.
+    cutoff = (datetime.utcnow() - timedelta(days=SESSION_TTL_DAYS)).isoformat()
     row = conn.execute(
         "SELECT u.*, se.staff_id AS staff_id, st.shop_id AS staff_shop_id, "
         "       st.name AS staff_name "
         "FROM sessions se JOIN users u ON u.id=se.user_id "
-        "LEFT JOIN staff st ON st.id=se.staff_id WHERE se.token=?",
-        (token,)).fetchone()
+        "LEFT JOIN staff st ON st.id=se.staff_id "
+        "WHERE se.token=? AND se.created_at >= ?",
+        (token, cutoff)).fetchone()
     return row
 
 

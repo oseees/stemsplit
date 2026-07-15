@@ -27,6 +27,36 @@ def available() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
+# Hard global ceiling on paid AI calls per day — the backstop against a runaway
+# API bill no matter which endpoint or account drives the spend. Set
+# SALESPAL_AI_DAILY_CAP=0 to disable.
+DAILY_CAP = int(os.environ.get("SALESPAL_AI_DAILY_CAP", "1500"))
+
+
+def _over_cap() -> bool:
+    """True once today's AI-call count hits DAILY_CAP. Counter is an approximate
+    read-then-write in the settings KV — a few races at the boundary don't matter
+    for a cost cap, and counting before the call (even one that then fails) only
+    makes the ceiling conservative, which is the safe direction for a bill.
+    ponytail: global daily counter; per-account quotas only if a tenant needs
+    isolating."""
+    if DAILY_CAP <= 0:
+        return False
+    import db
+    from datetime import date
+    key = f"ai_calls:{date.today().isoformat()}"
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        n = int(row["value"]) if row and str(row["value"]).isdigit() else 0
+        if n >= DAILY_CAP:
+            return True
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, str(n + 1)))
+    return False
+
+
+_CAP_MSG = "Daily AI limit reached — please try again tomorrow."
+
+
 # Groq Whisper speech-to-text for voice sale entry. The browser Web Speech API is
 # blocked inside the Android TWA wrapper and unsupported on iOS, so the app
 # records audio and we transcribe it here. Free tier, OpenAI-compatible endpoint.
@@ -43,6 +73,8 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "sale.webm", content_ty
     key = os.environ.get("GROQ_API_KEY")
     if not key:
         return {"ok": False, "error": "Voice isn't set up on the server yet"}
+    if _over_cap():
+        return {"ok": False, "error": _CAP_MSG}
     try:
         import httpx  # ships with the anthropic SDK
         resp = httpx.post(
@@ -206,6 +238,8 @@ def parse_sale(transcript: str, products: list, customers: list, currency: str) 
     client = _client()
     if client is None:
         return {"ok": False, "text": "AI is not set up on this server."}
+    if _over_cap():
+        return {"ok": False, "text": _CAP_MSG}
 
     catalog = "\n".join(f"- id {p['id']}: {p['name']} @ {p['unit_price']}" for p in products) or "(no products yet)"
     names = ", ".join(customers) or "(none yet)"
@@ -247,6 +281,8 @@ def parse_sale(transcript: str, products: list, customers: list, currency: str) 
 
 
 def _call(client, prompt: str) -> dict:
+    if _over_cap():
+        return {"ok": False, "text": _CAP_MSG}
     try:
         resp = client.messages.create(
             model=MODEL,
