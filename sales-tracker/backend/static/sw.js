@@ -1,11 +1,11 @@
 // SalesPal service worker — instant loads via stale-while-revalidate.
 // Scoped to /app/ (the dashboard); the marketing page at / is not cached here.
-const CACHE = "salespal-v87";
+const CACHE = "salespal-v88";
 // Separate cache for API GET responses so the app shows last-known data offline
 // (network-first: fresh when online, cached copy when the connection is gone).
 const API_CACHE = "salespal-api-v1";
 const SHELL = [
-  "/app/", "/app/index.html", "/app/styles.css", "/app/app.js",
+  "/app/", "/app/index.html", "/app/styles.css", "/app/app.js", "/app/icons.js",
   "/app/manifest.webmanifest",
   "/icons/icon-192.png", "/icons/icon-512.png",
 ];

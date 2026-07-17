@@ -24,7 +24,9 @@
         var dark = p === "dark" || (!p && mq.matches);
         document.documentElement.classList.toggle("dark", dark);
         var b = document.getElementById("themeToggle");
-        if (b) b.textContent = dark ? "☀️ Light mode" : "🌙 Dark mode";
+        if (b) b.innerHTML = dark
+          ? '<svg class="ic"><use href="#i-sun"/></svg>Light mode'
+          : '<svg class="ic"><use href="#i-moon"/></svg>Dark mode';
       }
       window.salespalToggleTheme = function () {
         var dark = document.documentElement.classList.contains("dark");
@@ -80,7 +82,7 @@
         <div class="appbar-title" id="bizName">SalesPal</div>
         <div class="appbar-sub" id="periodLabel">Last 30 days</div>
       </div>
-      <button class="icon-btn" id="menuBtn" aria-label="Menu">&#9776;</button>
+      <button class="icon-btn" id="menuBtn" aria-label="Menu"><svg class="ic"><use href="#i-menu"/></svg></button>
     </div>
     <div class="period-tabs" id="periodTabs">
       <button data-period="week">Week</button>
@@ -92,17 +94,17 @@
 
   <!-- Slide-down menu -->
   <div class="menu-sheet" id="menuSheet">
-    <button data-nav="products">📦 Products</button>
-    <button data-nav="orders">🛒 Orders</button>
-    <button data-nav="suppliers">🚚 Suppliers</button>
-    <button data-nav="customers">👥 Customers</button>
-    <button data-nav="settings">⚙️ Business settings</button>
-    <button onclick="promoModal()">📣 Promo flyer</button>
-    <button onclick="referralModal()">🎁 Refer &amp; earn</button>
-    <button data-nav="admin" id="adminNav" style="display:none">📊 Admin</button>
-    <button id="viewToggle">🖥️ Switch to Desktop view</button>
-    <button id="themeToggle">🌙 Dark mode</button>
-    <button id="installBtn" style="display:none">📲 Install app</button>
+    <button data-nav="products"><svg class="ic"><use href="#i-products"/></svg>Products</button>
+    <button data-nav="orders"><svg class="ic"><use href="#i-orders"/></svg>Orders</button>
+    <button data-nav="suppliers"><svg class="ic"><use href="#i-suppliers"/></svg>Suppliers</button>
+    <button data-nav="customers"><svg class="ic"><use href="#i-customers"/></svg>Customers</button>
+    <button data-nav="settings"><svg class="ic"><use href="#i-settings"/></svg>Business settings</button>
+    <button onclick="promoModal()"><svg class="ic"><use href="#i-promo"/></svg>Promo flyer</button>
+    <button onclick="referralModal()"><svg class="ic"><use href="#i-gift"/></svg>Refer &amp; earn</button>
+    <button data-nav="admin" id="adminNav" style="display:none"><svg class="ic"><use href="#i-admin"/></svg>Admin</button>
+    <button id="viewToggle"><svg class="ic"><use href="#i-desktop"/></svg>Switch to Desktop view</button>
+    <button id="themeToggle"><svg class="ic"><use href="#i-moon"/></svg>Dark mode</button>
+    <button id="installBtn" style="display:none"><svg class="ic"><use href="#i-install"/></svg>Install app</button>
   </div>
 
   <main id="app"><div class="skeleton" aria-busy="true"><span class="sr-only">Loading</span>
@@ -112,11 +114,11 @@
 
   <!-- Bottom navigation -->
   <nav class="bottom-nav">
-    <button data-nav="home" class="active"><span>🏠</span>Home</button>
-    <button data-nav="sales"><span>🧾</span>Sales</button>
-    <button data-nav="new" class="fab"><span>＋</span></button>
-    <button data-nav="money"><span>💸</span>Expenses</button>
-    <button data-nav="insights"><span>💡</span>Insights</button>
+    <button data-nav="home" class="active"><svg class="ic"><use href="#i-home"/></svg>Home</button>
+    <button data-nav="sales"><svg class="ic"><use href="#i-sales"/></svg>Sales</button>
+    <button data-nav="new" class="fab"><svg class="ic"><use href="#i-plus"/></svg></button>
+    <button data-nav="money"><svg class="ic"><use href="#i-expenses"/></svg>Expenses</button>
+    <button data-nav="insights"><svg class="ic"><use href="#i-insights"/></svg>Insights</button>
   </nav>
 
   <!-- Modal host -->
@@ -195,7 +197,9 @@
           else if (!desk && sheet.parentElement === nav) document.body.insertBefore(sheet, main);
         }
         var b = document.getElementById("viewToggle");
-        if (b) b.textContent = desk ? "📱 Switch to Mobile view" : "🖥️ Switch to Desktop view";
+        if (b) b.innerHTML = desk
+          ? '<svg class="ic"><use href="#i-mobile"/></svg>Switch to Mobile view'
+          : '<svg class="ic"><use href="#i-desktop"/></svg>Switch to Desktop view';
       }
       window.salespalToggleView = function () {
         var desk = document.body.classList.contains("desktop");
@@ -214,6 +218,7 @@
       applyView();
     })();
   </script>
+  <script src="/app/icons.js"></script>
   <script src="/app/app.js"></script>
   <script>
     // Register service worker (offline + installable)

@@ -17,58 +17,58 @@ async function _err(r) { return new Error((await _detail(r)) || "Something went 
 // feels instant: serve the last response immediately (within TTL) and refresh
 // in the background; any write (api.send) clears the cache so changes show at
 // once. No polling in the app, so caching reads is safe.
-const _getCache = new Map();   // path -> { at, data }
+const _getCache = new Map(); // path -> { at, data }
 const _inflight = new Set();
 const GET_TTL = 15000;
 function apiCacheClear() { _getCache.clear(); }
 
 async function _rawGet(p, quiet) {
-  const r = await fetch(p);
-  if (quiet) {                 // background refresh: update cache, no UI side effects
-    if (!r.ok) return undefined;
-  } else {
-    if (_handle401(p, r.status)) throw new Error("__auth__");
-    if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
-    if (!r.ok) throw await _err(r);
-  }
-  const data = await r.json();
-  _getCache.set(p, { at: Date.now(), data });
-  return data;
+ const r = await fetch(p);
+ if (quiet) { // background refresh: update cache, no UI side effects
+ if (!r.ok) return undefined;
+ } else {
+ if (_handle401(p, r.status)) throw new Error("__auth__");
+ if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
+ if (!r.ok) throw await _err(r);
+ }
+ const data = await r.json();
+ _getCache.set(p, { at: Date.now(), data });
+ return data;
 }
 function _bgRefresh(p) {
-  if (_inflight.has(p)) return;
-  _inflight.add(p);
-  _rawGet(p, true).catch(() => {}).finally(() => _inflight.delete(p));
+ if (_inflight.has(p)) return;
+ _inflight.add(p);
+ _rawGet(p, true).catch(() => {}).finally(() => _inflight.delete(p));
 }
 
 const api = {
-  async get(p, opts) {
-    const hit = _getCache.get(p);
-    if (!(opts && opts.fresh) && hit && (Date.now() - hit.at) < GET_TTL) {
-      _bgRefresh(p);           // serve instantly, keep the cache warm for next time
-      return _applyOverlay(p, hit.data);
-    }
-    try {
-      return _applyOverlay(p, await _rawGet(p, false));
-    } catch (e) {
-      if (e.message === "__auth__" || e.message === "__upgrade__") throw e;
-      // Offline/network fail: serve the last value we have (even if stale) so the
-      // app stays usable; for the offline-editable lists, fall back to empty so
-      // queued-but-unsynced items still show through the overlay.
-      if (hit) return _applyOverlay(p, hit.data);
-      if (_isOverlayList(p)) return _applyOverlay(p, []);
-      throw e;
-    }
-  },
-  async send(p, method, body) {
-    const writable = _offlineWritable(p, method);
-    if (writable && !navigator.onLine) return _enqueue(p, method, body);
-    try {
-      return await _rawSend(p, method, body);
-    } catch (e) {
-      if (e.message === "__net__") {
-        if (writable) return _enqueue(p, method, body);
-        throw new Error("You're offline — reconnect to do that");
+ async get(p, opts) {
+ const hit = _getCache.get(p);
+ if (!(opts && opts.fresh) && hit && (Date.now() - hit.at) < GET_TTL) {
+ _bgRefresh(p); // serve instantly, keep the cache warm for next time
+ return _applyOverlay(p, hit.data);
+ }
+ try {
+ return _applyOverlay(p, await _rawGet(p, false));
+ } catch (e) {
+ if (e.message === "__auth__" || e.message === "__upgrade__") throw e;
+ // Offline/network fail: serve the last value we have (even if stale) so the
+ // app stays usable; for the offline-editable lists, fall back to empty so
+ // queued-but-unsynced items still show through the overlay.
+ if (hit) return _applyOverlay(p, hit.data);
+ if (_isOverlayList(p)) return _applyOverlay(p, []);
+ throw e;
+ }
+ },
+ async send(p, method, body) {
+ const writable = _offlineWritable(p, method);
+ if (writable && !navigator.onLine) return _enqueue(p, method, body);
+ try {
+ return await _rawSend(p, method, body);
+ } catch (e) {
+ if (e.message === "__net__") {
+ if (writable) return _enqueue(p, method, body);
+ throw new Error("You're offline — reconnect to do that");
       }
       throw e;
     }
@@ -79,26 +79,26 @@ const api = {
     let r;
     try { r = await fetch(p, { method: "POST", body: formData }); }
     catch (e) { throw new Error("You're offline — reconnect to do that"); }
-    if (_handle401(p, r.status)) throw new Error("__auth__");
-    if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
-    if (!r.ok) throw await _err(r);
-    apiCacheClear();
-    return r.json();
-  },
+ if (_handle401(p, r.status)) throw new Error("__auth__");
+ if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
+ if (!r.ok) throw await _err(r);
+ apiCacheClear();
+ return r.json();
+ },
 };
 
 async function _rawSend(p, method, body) {
-  let r;
-  try {
-    r = await fetch(p, { method, headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined });
-  } catch (e) { throw new Error("__net__"); }   // no connection (or SW unreachable)
-  if (_handle401(p, r.status)) throw new Error("__auth__");
-  if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
-  if (!r.ok) throw await _err(r);
-  const data = await r.json();
-  apiCacheClear();             // a write may change dashboards/lists → drop caches
-  return data;
+ let r;
+ try {
+ r = await fetch(p, { method, headers: { "Content-Type": "application/json" },
+ body: body ? JSON.stringify(body) : undefined });
+ } catch (e) { throw new Error("__net__"); } // no connection (or SW unreachable)
+ if (_handle401(p, r.status)) throw new Error("__auth__");
+ if (r.status === 402) { showUpgrade(await _detail(r)); throw new Error("__upgrade__"); }
+ if (!r.ok) throw await _err(r);
+ const data = await r.json();
+ apiCacheClear(); // a write may change dashboards/lists → drop caches
+ return data;
 }
 // ---------- offline write queue (sales, products, customers) ----------
 // Offline, the whitelisted writes below are stored locally and replayed in order
@@ -190,58 +190,58 @@ function _overlayInvoices(list, ob) {
 // Replay the queue in order, mapping each created row's temp id to its real id
 // so later ops (a payment, or a product used in a sale) target the right row.
 async function flushOutbox() {
-  if (_flushing || !navigator.onLine || !_outbox().length) return;
-  _flushing = true;
-  const idMap = {};
-  try {
-    while (navigator.onLine) {
-      const q = _outbox();
-      if (!q.length) break;
-      const e = q[0];
-      const res = await _flushSend(_remapPath(e.path, idMap), e.method, _remapBody(e.body, idMap));
-      if (res.net || res.status === 401 || res.status >= 500) break;   // transient — retry later
-      if (!res.ok) { _recordFailed(e, (res.data && res.data.detail) || ("Error " + res.status)); _shiftOutbox(); continue; }
-      if (e.tempId != null && res.data && res.data.id != null) idMap[e.tempId] = res.data.id;
-      _shiftOutbox();
-    }
-  } finally {
-    _flushing = false;
-    apiCacheClear();
-    updateSyncBar();
-    if (!document.body.classList.contains("signed-out")) render();
-  }
+ if (_flushing || !navigator.onLine || !_outbox().length) return;
+ _flushing = true;
+ const idMap = {};
+ try {
+ while (navigator.onLine) {
+ const q = _outbox();
+ if (!q.length) break;
+ const e = q[0];
+ const res = await _flushSend(_remapPath(e.path, idMap), e.method, _remapBody(e.body, idMap));
+ if (res.net || res.status === 401 || res.status >= 500) break; // transient — retry later
+ if (!res.ok) { _recordFailed(e, (res.data && res.data.detail) || ("Error " + res.status)); _shiftOutbox(); continue; }
+ if (e.tempId != null && res.data && res.data.id != null) idMap[e.tempId] = res.data.id;
+ _shiftOutbox();
+ }
+ } finally {
+ _flushing = false;
+ apiCacheClear();
+ updateSyncBar();
+ if (!document.body.classList.contains("signed-out")) render();
+ }
 }
 // Like _rawSend but with no UI side effects (no upgrade modal / cache churn mid-sync).
 async function _flushSend(path, method, body) {
-  let r;
-  try {
-    r = await fetch(path, { method, headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined });
-  } catch (e) { return { net: true }; }
-  let data = null; try { data = await r.json(); } catch (e) {}
-  return { ok: r.ok, status: r.status, data };
+ let r;
+ try {
+ r = await fetch(path, { method, headers: { "Content-Type": "application/json" },
+ body: body ? JSON.stringify(body) : undefined });
+ } catch (e) { return { net: true }; }
+ let data = null; try { data = await r.json(); } catch (e) {}
+ return { ok: r.ok, status: r.status, data };
 }
 function _remapId(id, idMap) { return (id != null && idMap[id] != null) ? idMap[id] : id; }
 function _remapPath(path, idMap) {
-  return path.replace(/\/(-\d+)(\/|$)/, (m, id, tail) => "/" + _remapId(parseInt(id, 10), idMap) + tail);
+ return path.replace(/\/(-\d+)(\/|$)/, (m, id, tail) => "/" + _remapId(parseInt(id, 10), idMap) + tail);
 }
 function _remapBody(body, idMap) {
-  if (!body) return body;
-  const b = { ...body };
-  if (Array.isArray(b.items)) b.items = b.items.map(it => ({ ...it, product_id: _remapId(it.product_id, idMap) }));
-  if (b.customer_id != null) b.customer_id = _remapId(b.customer_id, idMap);
-  return b;
+ if (!body) return body;
+ const b = { ...body };
+ if (Array.isArray(b.items)) b.items = b.items.map(it => ({ ...it, product_id: _remapId(it.product_id, idMap) }));
+ if (b.customer_id != null) b.customer_id = _remapId(b.customer_id, idMap);
+ return b;
 }
 // A queued write the server rejected (e.g. product deleted before sync). Never
 // dropped silently — kept for the record and surfaced so nothing money-related
 // vanishes without the merchant knowing.
 function _recordFailed(e, msg) {
-  try {
-    const f = JSON.parse(localStorage.getItem(FAILED_KEY) || "[]");
-    f.push({ ...e, error: msg, at: Date.now() });
-    localStorage.setItem(FAILED_KEY, JSON.stringify(f));
-  } catch (err) {}
-  toast("A queued change couldn't sync: " + msg);
+ try {
+ const f = JSON.parse(localStorage.getItem(FAILED_KEY) || "[]");
+ f.push({ ...e, error: msg, at: Date.now() });
+ localStorage.setItem(FAILED_KEY, JSON.stringify(f));
+ } catch (err) {}
+ toast("A queued change couldn't sync: " + msg);
 }
 
 // Small status pill: offline notice + how many changes are waiting to sync.
@@ -252,7 +252,7 @@ function updateSyncBar() {
   const off = !navigator.onLine;
   if (!n && !off) { bar.classList.remove("show"); return; }
   bar.textContent = off
-    ? (n ? `📴 Offline · ${n} change${n > 1 ? "s" : ""} waiting to sync` : "📴 Offline — changes will sync when you reconnect")
+    ? (n ? `<svg class="ic"><use href="#i-offline"/></svg> Offline · ${n} change${n > 1 ? "s" : ""} waiting to sync` : "Offline — changes will sync when you reconnect")
     : `⧗ Syncing ${n} change${n > 1 ? "s" : ""}…`;
   bar.classList.add("show");
 }
@@ -353,12 +353,12 @@ async function renderLanding() {
     try { _pricing = await api.get("/api/pricing"); } catch (e) { _pricing = null; }
   }
   const features = [
-    ["🧾", "Invoices in seconds", "Create &amp; share professional invoices on WhatsApp."],
-    ["📊", "Know your profit", "Track sales, expenses &amp; profit at a glance."],
-    ["💬", "Payment reminders", "Nudge customers on WhatsApp with one tap."],
-    ["📦", "Stock &amp; customers", "Manage products and customers in one place."],
-    ["🤖", "AI business advice", "Get weekly insights tailored to your numbers."],
-    ["🔒", "Private &amp; yours", "Your own account &amp; data — nobody else sees it."],
+    ["", "Invoices in seconds", "Create &amp; share professional invoices on WhatsApp."],
+    ["", "Know your profit", "Track sales, expenses &amp; profit at a glance."],
+    ["", "Payment reminders", "Nudge customers on WhatsApp with one tap."],
+    ["", "Stock &amp; customers", "Manage products and customers in one place."],
+    ["", "AI business advice", "Get weekly insights tailored to your numbers."],
+    ["", "Private &amp; yours", "Your own account &amp; data — nobody else sees it."],
   ];
   app.innerHTML = `
     <div class="landing">
@@ -366,8 +366,8 @@ async function renderLanding() {
         <div class="land-top">
           <div class="land-logo">SalesPal</div>
           <div class="land-top-right">
-            <a class="land-view" onclick="salespalToggleTheme()">${document.documentElement.classList.contains("dark") ? "☀️ Light" : "🌙 Dark"}</a>
-            <a class="land-view" onclick="salespalToggleView()">${document.body.classList.contains("desktop") ? "📱 Mobile" : "🖥️ Desktop"}</a>
+            <a class="land-view" onclick="salespalToggleTheme()">${document.documentElement.classList.contains("dark") ? " Light" : "Dark"}</a>
+            <a class="land-view" onclick="salespalToggleView()">${document.body.classList.contains("desktop") ? "Mobile" : " Desktop"}</a>
             <a class="land-login" onclick="setAuthMode('login')">Log in</a>
           </div>
         </div>
@@ -382,37 +382,37 @@ async function renderLanding() {
         <div class="land-free">
           <button class="btn ghost" onclick="startFree()">Prefer to try first? Start free →</button>
           <div class="land-fine">Free includes core invoicing, sales &amp; expenses. Upgrade anytime — Pro simply lapses if you don't renew.</div>
-        </div>
-      </section>
+ </div>
+ </section>
 
-      <section class="land-section">
-        <h2>Everything you get</h2>
-        <div class="feat-grid">
-          ${features.map(([i, t, d]) => `
-            <div class="feat">
-              <div class="feat-i">${i}</div>
-              <div class="feat-t">${t}</div>
-              <div class="feat-d">${d}</div>
-            </div>`).join("")}
-        </div>
-      </section>
+ <section class="land-section">
+ <h2>Everything you get</h2>
+ <div class="feat-grid">
+ ${features.map(([i, t, d]) => `
+ <div class="feat">
+ <div class="feat-i">${i}</div>
+ <div class="feat-t">${t}</div>
+ <div class="feat-d">${d}</div>
+ </div>`).join("")}
+ </div>
+ </section>
 
-      <footer class="land-foot">
-        <button class="btn" onclick="document.querySelector('.pricing-first').scrollIntoView({behavior:'smooth'})">See plans ↑</button>
-        <div class="land-foot-link">Already have an account? <a onclick="setAuthMode('login')">Log in</a></div>
-      </footer>
-    </div>`;
+ <footer class="land-foot">
+ <button class="btn" onclick="document.querySelector('.pricing-first').scrollIntoView({behavior:'smooth'})">See plans ↑</button>
+ <div class="land-foot-link">Already have an account? <a onclick="setAuthMode('login')">Log in</a></div>
+ </footer>
+ </div>`;
 }
 
 // Reusable pricing cards. opts: { ctaLabel, onClick(key) , payable }
 function pricingCardsHtml(pricing, opts) {
-  opts = opts || {};
-  const plans = (pricing && pricing.plans) || [
-    { key: "monthly", naira: "₦3,000", per: "/month", label: "Monthly" },
-    { key: "yearly", naira: "₦30,000", per: "/year", label: "Yearly", save: "2 months free" },
-    { key: "earlybird", naira: "₦20,000", per: "/year", label: "Early Bird", save: "Founding rate" },
-  ];
-  // Early Bird is the cheapest yearly rate, so it's the best value while slots
+ opts = opts || {};
+ const plans = (pricing && pricing.plans) || [
+ { key: "monthly", naira: "₦3,000", per: "/month", label: "Monthly" },
+ { key: "yearly", naira: "₦30,000", per: "/year", label: "Yearly", save: "2 months free" },
+ { key: "earlybird", naira: "₦20,000", per: "/year", label: "Early Bird", save: "Founding rate" },
+ ];
+ // Early Bird is the cheapest yearly rate, so it's the best value while slots
   // remain; once it sells out, Yearly takes over the "Best value" highlight.
   const eb = plans.find(p => p.key === "earlybird");
   const ebAvailable = eb && eb.available !== false;
@@ -443,9 +443,9 @@ function pricingCardsHtml(pricing, opts) {
         <div class="price-amt">${p.naira}<span>${p.per || ""}</span></div>
         ${save ? `<div class="price-save">${save}</div>` : ""}
         <ul class="price-feats">
-          <li>🤖 AI advice &amp; reports</li>
-          <li>🧾 Unlimited invoices</li>
-          <li>📦 Unlimited products</li>
+          <li><svg class="ic"><use href="#i-ai"/></svg> AI advice &amp; reports</li>
+          <li><svg class="ic"><use href="#i-sales"/></svg> Unlimited invoices</li>
+          <li><svg class="ic"><use href="#i-products"/></svg> Unlimited products</li>
         </ul>
         ${cta}
       </div>`;
@@ -467,21 +467,21 @@ function renderAuth() {
   const reset = mode === "reset";
   const buy = _buyPlanInfo();             // set when a paid plan was picked on the landing
   const tagline = buy ? `You're getting <strong>${buy.label}</strong>`
-    : signup ? "Create your free account"
-    : reset ? "Reset your password" : "Welcome back";
-  const btnLabel = buy ? `Continue to payment →`
-    : signup ? "Create account" : reset ? "Set new password" : "Log in";
-  const passLabel = reset ? "New password" : "Password";
-  const passPh = signup || reset ? "At least 8 characters" : "Your password";
-  app.innerHTML = `
-    <div class="auth-wrap">
-      <div class="auth-card">
-        <div class="auth-logo">SalesPal</div>
-        <div class="auth-tagline">${tagline}</div>
-        ${buy ? `<div class="auth-buy">${buy.naira}${buy.per || ""} · secure payment by Paystack next</div>` : ""}
-        <form onsubmit="doAuth(event)">
-          ${signup ? `<div class="field"><label>Business name</label>
-            <input id="auBiz" placeholder="e.g. Ada's Store" autocomplete="organization"></div>` : ""}
+ : signup ? "Create your free account"
+ : reset ? "Reset your password" : "Welcome back";
+ const btnLabel = buy ? `Continue to payment →`
+ : signup ? "Create account" : reset ? "Set new password" : "Log in";
+ const passLabel = reset ? "New password" : "Password";
+ const passPh = signup || reset ? "At least 8 characters" : "Your password";
+ app.innerHTML = `
+ <div class="auth-wrap">
+ <div class="auth-card">
+ <div class="auth-logo">SalesPal</div>
+ <div class="auth-tagline">${tagline}</div>
+ ${buy ? `<div class="auth-buy">${buy.naira}${buy.per || ""} · secure payment by Paystack next</div>` : ""}
+ <form onsubmit="doAuth(event)">
+ ${signup ? `<div class="field"><label>Business name</label>
+ <input id="auBiz" placeholder="e.g. Ada's Store" autocomplete="organization"></div>` : ""}
           <div class="field"><label>${signup || reset ? "Email" : "Email or username"}</label>
             <input id="auEmail" type="${signup || reset ? "email" : "text"}" placeholder="${signup || reset ? "you@email.com" : "email, or attendant username"}" autocomplete="username" required></div>
           ${reset ? `<div class="field"><label>Reset code</label>
@@ -539,56 +539,56 @@ async function doAuth(ev) {
       btn.textContent = "Opening payment…";
       await startCheckout(plan);             // redirects to Paystack; if it fails, falls through
       return;                                // we're either redirecting or already in the app
-    }
-    await bootstrap(user);
-    if (user.referral_bonus) toast("\ud83c\udf81 1 month of Pro free \u2014 welcome!");
-    setTimeout(maybePromptInstall, 800);     // one-tap Add-to-Home-Screen offer
-  } catch (e) {
-    errEl.textContent = e.message || "Something went wrong";
-    btn.disabled = false;
-    btn.textContent = mode === "signup" ? "Create account" : mode === "reset" ? "Set new password" : "Log in";
-  }
+ }
+ await bootstrap(user);
+ if (user.referral_bonus) toast("\ud83c\udf81 1 month of Pro free \u2014 welcome!");
+ setTimeout(maybePromptInstall, 800); // one-tap Add-to-Home-Screen offer
+ } catch (e) {
+ errEl.textContent = e.message || "Something went wrong";
+ btn.disabled = false;
+ btn.textContent = mode === "signup" ? "Create account" : mode === "reset" ? "Set new password" : "Log in";
+ }
 }
 
 // ---------- one-tap "Add to Home Screen" (shown once, right after login) ----------
 function maybePromptInstall() {
-  if (document.body.classList.contains("signed-out")) return;
-  let done = null;
-  try { done = localStorage.getItem("salespal_install_prompt_done"); } catch (e) {}
-  if (done) return;
-  const st = window.salespalInstallState ? window.salespalInstallState() : "none";
-  if (st === "installed") return;
-  if (st === "none") {
-    // Chrome may not have offered the install prompt yet — show when it does.
-    window.salespalOnInstallReady = maybePromptInstall;
-    return;
-  }
-  try { localStorage.setItem("salespal_install_prompt_done", "1"); } catch (e) {}
-  const ios = st === "ios";
-  openModal(`
-    <div style="text-align:center">
-      <img src="/icons/icon-192.png" alt="" width="64" height="64" style="border-radius:16px" />
-      <h2 style="margin:12px 0 6px">Put SalesPal on your home screen</h2>
-      <p style="color:var(--muted);font-size:14px;margin:0 0 16px">
-        Opens in one tap like a normal app — full screen, works offline.</p>
-      ${ios
-        ? `<div class="card" style="text-align:left;font-size:14px;margin-bottom:12px">
-             1. Tap the <b>Share</b> button <span style="opacity:.7">(square with ↑)</span><br/>
-             2. Choose <b>&ldquo;Add to Home Screen&rdquo;</b></div>
-           <button class="btn" id="instOk">Got it</button>`
-        : `<button class="btn" id="instGo">📲 Add to Home Screen</button>`}
-      <button class="btn ghost" id="instLater" style="margin-top:10px">Maybe later</button>
-    </div>`);
-  const go = document.getElementById("instGo");
-  if (go) go.onclick = async () => {
-    closeModal();
-    const ok = await (window.salespalInstall ? window.salespalInstall() : false);
-    if (ok) toast("SalesPal added to your home screen 🎉");
-  };
-  const okBtn = document.getElementById("instOk");
-  if (okBtn) okBtn.onclick = closeModal;
-  const later = document.getElementById("instLater");
-  if (later) later.onclick = closeModal;
+ if (document.body.classList.contains("signed-out")) return;
+ let done = null;
+ try { done = localStorage.getItem("salespal_install_prompt_done"); } catch (e) {}
+ if (done) return;
+ const st = window.salespalInstallState ? window.salespalInstallState() : "none";
+ if (st === "installed") return;
+ if (st === "none") {
+ // Chrome may not have offered the install prompt yet — show when it does.
+ window.salespalOnInstallReady = maybePromptInstall;
+ return;
+ }
+ try { localStorage.setItem("salespal_install_prompt_done", "1"); } catch (e) {}
+ const ios = st === "ios";
+ openModal(`
+ <div style="text-align:center">
+ <img src="/icons/icon-192.png" alt="" width="64" height="64" style="border-radius:16px" />
+ <h2 style="margin:12px 0 6px">Put SalesPal on your home screen</h2>
+ <p style="color:var(--muted);font-size:14px;margin:0 0 16px">
+ Opens in one tap like a normal app — full screen, works offline.</p>
+ ${ios
+ ? `<div class="card" style="text-align:left;font-size:14px;margin-bottom:12px">
+ 1. Tap the <b>Share</b> button <span style="opacity:.7">(square with ↑)</span><br/>
+ 2. Choose <b>&ldquo;Add to Home Screen&rdquo;</b></div>
+ <button class="btn" id="instOk">Got it</button>`
+ : `<button class="btn" id="instGo">Add to Home Screen</button>`}
+ <button class="btn ghost" id="instLater" style="margin-top:10px">Maybe later</button>
+ </div>`);
+ const go = document.getElementById("instGo");
+ if (go) go.onclick = async () => {
+ closeModal();
+ const ok = await (window.salespalInstall ? window.salespalInstall() : false);
+ if (ok) toast("SalesPal added to your home screen");
+ };
+ const okBtn = document.getElementById("instOk");
+ if (okBtn) okBtn.onclick = closeModal;
+ const later = document.getElementById("instLater");
+ if (later) later.onclick = closeModal;
 }
 
 function isPro() { return !!(state.plan && state.plan.is_pro); }
@@ -598,10 +598,10 @@ let _paywallPlan = null; // plan key selected inside the paywall sheet
 // Context-aware hero: lead with the strongest true fact we have about THIS
 // account, so the pitch is personal (their money / their usage), not generic.
 function _paywallHero(reason) {
-  const pl = state.plan || {}, u = pl.usage || {}, lim = pl.limits || {};
-  const owed = Number(u.outstanding_total || 0);
-  if (owed >= 1000) return {
-    kicker: "You're currently owed",
+ const pl = state.plan || {}, u = pl.usage || {}, lim = pl.limits || {};
+ const owed = Number(u.outstanding_total || 0);
+ if (owed >= 1000) return {
+ kicker: "You're currently owed",
     big: money0(owed),
     sub: "Pro gets you one-tap WhatsApp reminders so your customers pay you faster.",
   };
@@ -609,11 +609,11 @@ function _paywallHero(reason) {
     kicker: "This month",
     big: `${u.invoices_this_month} of ${lim.invoices_per_month} invoices`,
     sub: "You've reached the free limit. Go Pro for unlimited invoices and receipts.",
-  };
-  if (lim.products && u.products >= lim.products) return {
-    kicker: "Your products",
-    big: `${u.products} of ${lim.products}`,
-    sub: "You've reached the free limit. Go Pro for unlimited products.",
+ };
+ if (lim.products && u.products >= lim.products) return {
+ kicker: "Your products",
+ big: `${u.products} of ${lim.products}`,
+ sub: "You've reached the free limit. Go Pro for unlimited products.",
   };
   return {
     kicker: "SalesPal Pro",
@@ -659,28 +659,28 @@ function showUpgrade(reason) {
   if (!canPay) {
     const msg = reason && reason !== "__upgrade__" ? reason : "";
     openModal(`
-      <h2>⭐ SalesPal Pro</h2>
+      <h2><svg class="ic"><use href="#i-star"/></svg> SalesPal Pro</h2>
       ${msg ? `<p style="color:var(--muted);font-size:14px;margin:0 0 14px">${esc(msg)}</p>` : ""}
       <div class="card"><ul class="pro-list">
-        <li>🤖 AI advice &amp; weekly reports</li>
-        <li>🧾 Unlimited invoices</li>
-        <li>📦 Unlimited products</li>
+        <li><svg class="ic"><use href="#i-ai"/></svg> AI advice &amp; weekly reports</li>
+        <li><svg class="ic"><use href="#i-sales"/></svg> Unlimited invoices</li>
+        <li><svg class="ic"><use href="#i-products"/></svg> Unlimited products</li>
       </ul></div>
-      <p style="font-size:13px;color:var(--muted);text-align:center;margin:0 0 12px">💳 In-app payment is coming soon — you'll be able to upgrade right here.</p>
-      <button class="btn" onclick="closeModal()">Got it</button>`);
-    return;
-  }
-  const best = _bestPlan();
-  const plans = (state.plan.pricing && state.plan.pricing.plans) || [];
-  const monthly = plans.find(p => p.key === "monthly");
-  _paywallPlan = best ? best.key : "monthly";
-  const h = _paywallHero(reason);
-  // Show the best plan first, then monthly as the alternate (skip plain yearly
-  // when early bird is the cheaper yearly rate — it's redundant).
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin:0 0 12px"><svg class="ic"><use href="#i-card"/></svg> In-app payment is coming soon — you'll be able to upgrade right here.</p>
+ <button class="btn" onclick="closeModal()">Got it</button>`);
+ return;
+ }
+ const best = _bestPlan();
+ const plans = (state.plan.pricing && state.plan.pricing.plans) || [];
+ const monthly = plans.find(p => p.key === "monthly");
+ _paywallPlan = best ? best.key : "monthly";
+ const h = _paywallHero(reason);
+ // Show the best plan first, then monthly as the alternate (skip plain yearly
+ // when early bird is the cheaper yearly rate — it's redundant).
   const altRows = (best && monthly && best.key !== "monthly") ? _planRow(monthly, false) : "";
   openModal(`
     <div class="pw-hero">
-      <button class="pw-close" onclick="closeModal()" aria-label="Close">✕</button>
+      <button class="pw-close" onclick="closeModal()" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
       <div class="pw-badge">SALESPAL PRO</div>
       <div class="pw-kicker">${esc(h.kicker)}</div>
       <div class="pw-big">${h.big}</div>
@@ -692,34 +692,34 @@ function showUpgrade(reason) {
         <li><span class="pw-check">✓</span>WhatsApp payment reminders</li>
         <li><span class="pw-check">✓</span>Profit and expense insights</li>
         <li><span class="pw-check">✓</span>Voice sale entry — speak, don't type</li>
-        <li><span class="pw-check">✓</span>Multiple shops and staff logins</li>
-      </ul>
-      <div class="pw-plans">
-        ${_planRow(best, true)}
-        ${altRows}
-      </div>
-      <button class="btn pw-cta" id="pwCta" onclick="paywallCheckout()"></button>
-      <p class="pw-reassure">🔒 Card, bank transfer or USSD · cancel anytime</p>
-      <button class="pw-later" onclick="closeModal()">Maybe later</button>
-    </div>`, "paywall");
-  _paywallUpdateCta();
+ <li><span class="pw-check">✓</span>Multiple shops and staff logins</li>
+ </ul>
+ <div class="pw-plans">
+ ${_planRow(best, true)}
+ ${altRows}
+ </div>
+ <button class="btn pw-cta" id="pwCta" onclick="paywallCheckout()"></button>
+ <p class="pw-reassure">Card, bank transfer or USSD · cancel anytime</p>
+ <button class="pw-later" onclick="closeModal()">Maybe later</button>
+ </div>`, "paywall");
+ _paywallUpdateCta();
 }
 
 function paywallCheckout() { startCheckout(_paywallPlan || "monthly"); }
 
 function paywallSelect(key) {
-  _paywallPlan = key;
-  document.querySelectorAll(".pw-plan").forEach(el => {
-    el.classList.toggle("sel", el.getAttribute("onclick").includes(`'${key}'`));
-  });
-  _paywallUpdateCta();
+ _paywallPlan = key;
+ document.querySelectorAll(".pw-plan").forEach(el => {
+ el.classList.toggle("sel", el.getAttribute("onclick").includes(`'${key}'`));
+ });
+ _paywallUpdateCta();
 }
 
 function _paywallUpdateCta() {
-  const plans = (state.plan && state.plan.pricing && state.plan.pricing.plans) || [];
-  const p = plans.find(x => x.key === _paywallPlan);
-  const cta = document.getElementById("pwCta");
-  if (cta && p) cta.textContent = `Start Pro — ${p.naira}${p.per || ""}`;
+ const plans = (state.plan && state.plan.pricing && state.plan.pricing.plans) || [];
+ const p = plans.find(x => x.key === _paywallPlan);
+ const cta = document.getElementById("pwCta");
+ if (cta && p) cta.textContent = `Start Pro — ${p.naira}${p.per || ""}`;
 }
 
 // After a free user records a sale (highest-intent moment), show the paywall
@@ -743,54 +743,54 @@ async function startCheckout(plan) {
   } catch (e) {
     if (e.message === "__upgrade__" || e.message === "__auth__") return;
     toast(e.message || "Couldn't start payment");
-    btns.forEach(b => { b.disabled = false; });
-  }
+ btns.forEach(b => { b.disabled = false; });
+ }
 }
 
 async function handlePaymentReturn() {
-  const params = new URLSearchParams(location.search);
-  if (!params.get("paid")) return;
-  const ref = params.get("reference") || params.get("trxref");
-  history.replaceState({}, "", location.pathname); // clean the URL
-  if (!ref) return;
-  try {
-    const info = await api.get("/api/billing/verify?reference=" + encodeURIComponent(ref));
-    state.plan = info;
-    if (info.paid) {
-      // Pro was just applied by the verify call above — but bootstrap already
-      // loaded the Pro-gated state (e.g. /api/shops can_add=false) a moment
-      // earlier, before payment landed. Drop the cache and reload it so
-      // multi-shop and other Pro features unlock now, without a manual refresh.
-      apiCacheClear();
-      await loadShops();
-      const until = info.plan_expires_at ? fmtDate(info.plan_expires_at) : "";
-      openModal(`<h2>🎉 You're on Pro!</h2>
+ const params = new URLSearchParams(location.search);
+ if (!params.get("paid")) return;
+ const ref = params.get("reference") || params.get("trxref");
+ history.replaceState({}, "", location.pathname); // clean the URL
+ if (!ref) return;
+ try {
+ const info = await api.get("/api/billing/verify?reference=" + encodeURIComponent(ref));
+ state.plan = info;
+ if (info.paid) {
+ // Pro was just applied by the verify call above — but bootstrap already
+ // loaded the Pro-gated state (e.g. /api/shops can_add=false) a moment
+ // earlier, before payment landed. Drop the cache and reload it so
+ // multi-shop and other Pro features unlock now, without a manual refresh.
+ apiCacheClear();
+ await loadShops();
+ const until = info.plan_expires_at ? fmtDate(info.plan_expires_at) : "";
+ openModal(`<h2>You're on Pro!</h2>
         <p style="font-size:15px;margin:0 0 14px">Thanks for upgrading. AI insights and unlimited invoices are unlocked${until ? ` until <strong>${until}</strong>` : ""}.</p>
         <button class="btn" onclick="closeModal()">Start using Pro</button>`);
       render();
     } else {
       toast("Payment wasn't completed");
-    }
-  } catch (e) { /* ignore */ }
+ }
+ } catch (e) { /* ignore */ }
 }
 
 async function bootstrap(user, prefetch) {
-  // The page loads with body.signed-out (dashboard chrome hidden) — reveal it
-  // only now that the server has confirmed a valid session.
-  document.body.classList.remove("signed-out");
-  state.me = user;
-  if (user.is_attendant) return bootstrapAttendant(user, prefetch);
-  document.getElementById("bizName").textContent = user.business_name || "SalesPal";
-  // Consume the requests init() already kicked off in parallel (fall back to a
-  // fresh fetch if bootstrap was called directly, e.g. right after login).
-  prefetch = prefetch || {};
-  state.settings = (await prefetch.settings) || await api.get("/api/settings").catch(() => state.settings);
-  state.plan = (await prefetch.plan) || await api.get("/api/plan").catch(() => state.plan);
-  state.pay = (await prefetch.pay) || await api.get("/api/pay/status").catch(() => state.pay);
-  state.orders = (await prefetch.orders) || await api.get("/api/orders/status").catch(() => state.orders);
-  const adminNav = document.getElementById("adminNav");
-  if (adminNav) adminNav.style.display = (state.plan && state.plan.is_owner) ? "block" : "none";
-  // keep this device's new-order alert subscription fresh (no prompt)
+ // The page loads with body.signed-out (dashboard chrome hidden) — reveal it
+ // only now that the server has confirmed a valid session.
+ document.body.classList.remove("signed-out");
+ state.me = user;
+ if (user.is_attendant) return bootstrapAttendant(user, prefetch);
+ document.getElementById("bizName").textContent = user.business_name || "SalesPal";
+ // Consume the requests init() already kicked off in parallel (fall back to a
+ // fresh fetch if bootstrap was called directly, e.g. right after login).
+ prefetch = prefetch || {};
+ state.settings = (await prefetch.settings) || await api.get("/api/settings").catch(() => state.settings);
+ state.plan = (await prefetch.plan) || await api.get("/api/plan").catch(() => state.plan);
+ state.pay = (await prefetch.pay) || await api.get("/api/pay/status").catch(() => state.pay);
+ state.orders = (await prefetch.orders) || await api.get("/api/orders/status").catch(() => state.orders);
+ const adminNav = document.getElementById("adminNav");
+ if (adminNav) adminNav.style.display = (state.plan && state.plan.is_owner) ? "block" : "none";
+ // keep this device's new-order alert subscription fresh (no prompt)
   if (state.orders && state.orders.enabled) pushSubscribe(true);
   await loadShops(await prefetch.shops);
   state.view = "home";
@@ -826,144 +826,144 @@ async function bootstrapAttendant(user, prefetch) {
   const bn = document.getElementById("bizName"); bn.onclick = null; bn.style.cursor = "default";
   const mb = document.getElementById("menuBtn"); if (mb) mb.style.display = "none";
   // Rebuild the bottom nav for the attendant's four actions + a quick logout.
-  const nav = document.querySelector(".bottom-nav");
-  nav.innerHTML = `
-    <button data-nav="home" class="active"><span>🏠</span>Home</button>
-    <button data-nav="sales"><span>🧾</span>Sales</button>
-    <button data-nav="new" class="fab"><span>＋</span></button>
-    <button data-nav="stock"><span>📦</span>Stock</button>
-    <button data-nav="logout"><span>🚪</span>Log out</button>`;
-  nav.querySelectorAll("button").forEach(b => {
-    b.onclick = () => {
-      if (b.dataset.nav === "new") return attendantSaleModal();
-      if (b.dataset.nav === "logout") return logout();
-      attendantSetView(b.dataset.nav);
-    };
-  });
-  state.view = "home";
-  renderAttendant();
+ const nav = document.querySelector(".bottom-nav");
+ nav.innerHTML = `
+ <button data-nav="home" class="active"><span></span>Home</button>
+ <button data-nav="sales"><span></span>Sales</button>
+ <button data-nav="new" class="fab"><span>＋</span></button>
+ <button data-nav="stock"><span></span>Stock</button>
+ <button data-nav="logout"><span></span>Log out</button>`;
+ nav.querySelectorAll("button").forEach(b => {
+ b.onclick = () => {
+ if (b.dataset.nav === "new") return attendantSaleModal();
+ if (b.dataset.nav === "logout") return logout();
+ attendantSetView(b.dataset.nav);
+ };
+ });
+ state.view = "home";
+ renderAttendant();
 }
 
 function attendantSetView(v) {
-  if (v === "new") return attendantSaleModal();
-  if (v === "logout") return logout();
-  state.view = v;
-  document.querySelectorAll(".bottom-nav button").forEach(b =>
-    b.classList.toggle("active", b.dataset.nav === v));
-  renderAttendant();
+ if (v === "new") return attendantSaleModal();
+ if (v === "logout") return logout();
+ state.view = v;
+ document.querySelectorAll(".bottom-nav button").forEach(b =>
+ b.classList.toggle("active", b.dataset.nav === v));
+ renderAttendant();
 }
 
 async function renderAttendant() {
-  app.innerHTML = SKELETON;
-  try {
-    const r = ({ home: viewAttendantHome, sales: viewSales, stock: viewStock })[state.view] || viewAttendantHome;
-    await r();
-  } catch (e) {
-    if (e.message === "__auth__" || e.message === "__upgrade__") return;
-    app.innerHTML = `<div class="card"><div class="empty">⚠️<br>${esc(e.message)}</div></div>`;
-  }
+ app.innerHTML = SKELETON;
+ try {
+ const r = ({ home: viewAttendantHome, sales: viewSales, stock: viewStock })[state.view] || viewAttendantHome;
+ await r();
+ } catch (e) {
+ if (e.message === "__auth__" || e.message === "__upgrade__") return;
+ app.innerHTML = `<div class="card"><div class="empty"><br>${esc(e.message)}</div></div>`;
+ }
 }
 
 async function viewAttendantHome() {
-  const invoices = await api.get("/api/invoices");
-  const today = new Date().toISOString().slice(0, 10);
-  const todays = invoices.filter(i => (i.date || "").slice(0, 10) === today);
-  const collected = todays.reduce((s, i) => s + (i.total - (i.balance || 0)), 0);
-  app.innerHTML = `
-    <div class="card" style="text-align:center">
-      <div style="font-size:13px;color:var(--muted)">${esc(state.me.shop_name || "")} · ${esc(state.me.staff_name || "Attendant")}</div>
-      <button class="btn" style="margin:14px 0 2px;font-size:17px;padding:16px" onclick="attendantSaleModal()">＋ Record a sale</button>
-    </div>
-    <div class="kpi-grid">
-      <div class="kpi"><div class="label">Today's sales</div><div class="value">${todays.length}</div></div>
+ const invoices = await api.get("/api/invoices");
+ const today = new Date().toISOString().slice(0, 10);
+ const todays = invoices.filter(i => (i.date || "").slice(0, 10) === today);
+ const collected = todays.reduce((s, i) => s + (i.total - (i.balance || 0)), 0);
+ app.innerHTML = `
+ <div class="card" style="text-align:center">
+ <div style="font-size:13px;color:var(--muted)">${esc(state.me.shop_name || "")} · ${esc(state.me.staff_name || "Attendant")}</div>
+ <button class="btn" style="margin:14px 0 2px;font-size:17px;padding:16px" onclick="attendantSaleModal()">＋ Record a sale</button>
+ </div>
+ <div class="kpi-grid">
+ <div class="kpi"><div class="label">Today's sales</div><div class="value">${todays.length}</div></div>
       <div class="kpi"><div class="label">Collected today</div><div class="value">${money(collected)}</div></div>
     </div>
     <div class="card"><div class="section-title">Today's sales</div>
-      ${todays.length ? todays.map(i => `
-        <div class="list-row" onclick="attendantInvoice(${i.id})">
-          <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
-            <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
-          <div style="text-align:right"><div class="amount">${money(i.total)}</div>
-            <span class="badge ${i.status}">${i.status}</span></div>
-        </div>`).join("") : `<div class="empty">No sales yet today. Tap ＋ to record one.</div>`}
-    </div>`;
+ ${todays.length ? todays.map(i => `
+ <div class="list-row" onclick="attendantInvoice(${i.id})">
+ <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
+ <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
+ <div style="text-align:right"><div class="amount">${money(i.total)}</div>
+ <span class="badge ${i.status}">${i.status}</span></div>
+ </div>`).join("") : `<div class="empty">No sales yet today. Tap ＋ to record one.</div>`}
+ </div>`;
 }
 
 async function viewStock() {
-  const products = await api.get("/api/products");
-  app.innerHTML = `<div class="card"><div class="section-title">Stock</div>
-    ${products.length ? products.map(p => {
-      const low = p.low_stock_at > 0 && p.stock_qty <= p.low_stock_at;
-      return `<div class="list-row">
-        <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low</span>' : ""}</div>
-          <div class="meta">Price ${money(p.unit_price)}</div></div>
-        <div class="amount ${low ? "neg" : ""}">${(+p.stock_qty).toLocaleString()} left</div></div>`;
-    }).join("") : `<div class="empty"><div class="big">📦</div>No products yet</div>`}
-  </div>`;
+ const products = await api.get("/api/products");
+ app.innerHTML = `<div class="card"><div class="section-title">Stock</div>
+ ${products.length ? products.map(p => {
+ const low = p.low_stock_at > 0 && p.stock_qty <= p.low_stock_at;
+ return `<div class="list-row">
+ <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low</span>' : ""}</div>
+ <div class="meta">Price ${money(p.unit_price)}</div></div>
+ <div class="amount ${low ? "neg" : ""}">${(+p.stock_qty).toLocaleString()} left</div></div>`;
+ }).join("") : `<div class="empty"><div class="big"></div>No products yet</div>`}
+ </div>`;
 }
 
 async function attendantSaleModal() {
-  saleItems = [];
-  const products = await api.get("/api/products");
-  window._products = products;
-  if (!products.length) { toast("No products yet — ask the owner to add stock"); return; }
-  _payMode = "cash";
-  openModal(`
-    <h2>Record a sale</h2>
-    <div class="field"><label>Customer (optional)</label>
-      <input id="saleCustomer" placeholder="Name, or leave blank for walk-in"></div>
-    <div class="section-title">Items</div>
-    <div id="saleItems"></div>
-    <button class="btn outline btn-sm" style="margin-bottom:12px" onclick="addProductItem()">＋ Add item</button>
-    <div class="card" style="background:var(--tint)"><div class="list-row"><div class="main">Total</div>
-      <div class="amount" id="saleTotal">${money(0)}</div></div></div>
-    <div class="section-title">Payment</div>
-    <div class="seg" id="payMode">
-      <button data-mode="cash" class="active" onclick="setPayMode('cash')">💵 Cash</button>
-      <button data-mode="transfer" onclick="setPayMode('transfer')">🏦 Transfer</button>
-      <button data-mode="owing" onclick="setPayMode('owing')">🕓 Owing</button>
-    </div>
-    <button class="btn" style="margin-top:14px" onclick="attendantSaveSale()">Save sale</button>`);
-  addProductItem();
+ saleItems = [];
+ const products = await api.get("/api/products");
+ window._products = products;
+ if (!products.length) { toast("No products yet — ask the owner to add stock"); return; }
+ _payMode = "cash";
+ openModal(`
+ <h2>Record a sale</h2>
+ <div class="field"><label>Customer (optional)</label>
+ <input id="saleCustomer" placeholder="Name, or leave blank for walk-in"></div>
+ <div class="section-title">Items</div>
+ <div id="saleItems"></div>
+ <button class="btn outline btn-sm" style="margin-bottom:12px" onclick="addProductItem()">＋ Add item</button>
+ <div class="card" style="background:var(--tint)"><div class="list-row"><div class="main">Total</div>
+ <div class="amount" id="saleTotal">${money(0)}</div></div></div>
+ <div class="section-title">Payment</div>
+ <div class="seg" id="payMode">
+ <button data-mode="cash" class="active" onclick="setPayMode('cash')">Cash</button>
+ <button data-mode="transfer" onclick="setPayMode('transfer')">Transfer</button>
+ <button data-mode="owing" onclick="setPayMode('owing')">Owing</button>
+ </div>
+ <button class="btn" style="margin-top:14px" onclick="attendantSaveSale()">Save sale</button>`);
+ addProductItem();
 }
 
 function setPayMode(m) {
-  _payMode = m;
-  document.querySelectorAll("#payMode button").forEach(b => b.classList.toggle("active", b.dataset.mode === m));
+ _payMode = m;
+ document.querySelectorAll("#payMode button").forEach(b => b.classList.toggle("active", b.dataset.mode === m));
 }
 
 async function attendantSaveSale() {
-  const items = saleItems.filter(it => it.product_id && it.qty > 0);
-  if (!items.length) return toast("Add at least one item");
-  const customer_name = document.getElementById("saleCustomer").value.trim();
-  const owing = _payMode === "owing"; // no payment → no receipt to offer
-  const total = items.reduce((s, it) => s + it.qty * it.unit_price, 0);
-  let res;
-  try {
-    // Bundle the payment into the sale (one request) so it also works offline:
-    // the queue never holds a payment that points at a not-yet-synced invoice.
-    res = await api.send("/api/invoices", "POST", {
-      customer_name: customer_name || null,
-      // unit_cost is ignored server-side for attendants (refilled from product)
-      items: items.map(it => ({ product_id: it.product_id, description: it.description,
-        qty: it.qty, unit_price: it.unit_price, unit_cost: 0 })),
-      payment: owing ? null : { amount: total, method: _payMode === "cash" ? "Cash" : "Transfer" },
-    });
-  } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save"); return; }
+ const items = saleItems.filter(it => it.product_id && it.qty > 0);
+ if (!items.length) return toast("Add at least one item");
+ const customer_name = document.getElementById("saleCustomer").value.trim();
+ const owing = _payMode === "owing"; // no payment → no receipt to offer
+ const total = items.reduce((s, it) => s + it.qty * it.unit_price, 0);
+ let res;
+ try {
+ // Bundle the payment into the sale (one request) so it also works offline:
+ // the queue never holds a payment that points at a not-yet-synced invoice.
+ res = await api.send("/api/invoices", "POST", {
+ customer_name: customer_name || null,
+ // unit_cost is ignored server-side for attendants (refilled from product)
+ items: items.map(it => ({ product_id: it.product_id, description: it.description,
+ qty: it.qty, unit_price: it.unit_price, unit_cost: 0 })),
+ payment: owing ? null : { amount: total, method: _payMode === "cash" ? "Cash" : "Transfer" },
+ });
+ } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save"); return; }
   closeModal();
   _payMode = "cash";
   const pending = res.invoice_no === "Pending";
   toast(pending ? "Sale saved offline — will sync when you're back online" : `Sale saved · ${res.invoice_no}`);
-  if (!owing && !pending) receiptOffer(res.id);   // receipt image needs the server
-  render();
+ if (!owing && !pending) receiptOffer(res.id); // receipt image needs the server
+ render();
 }
 
 async function attendantInvoice(id) {
-  if (id < 0) { toast("This sale opens once it syncs online"); return; }
-  openModal(`<div class="loading">Loading…</div>`);
-  let inv;
-  try { inv = await api.get(`/api/invoices/${id}`); }
-  catch (e) { if (e.message === "__auth__" || e.message === "__upgrade__") { closeModal(); return; } closeModal(); toast(e.message || "Couldn't load"); return; }
+ if (id < 0) { toast("This sale opens once it syncs online"); return; }
+ openModal(`<div class="loading">Loading…</div>`);
+ let inv;
+ try { inv = await api.get(`/api/invoices/${id}`); }
+ catch (e) { if (e.message === "__auth__" || e.message === "__upgrade__") { closeModal(); return; } closeModal(); toast(e.message || "Couldn't load"); return; }
   const items = (inv.items || []).map(it => `<div class="list-row">
       <div style="flex:1;min-width:0"><div class="main">${esc(it.description)}</div>
         <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
@@ -977,20 +977,20 @@ async function attendantInvoice(id) {
     ${owing ? `<div class="list-row"><div class="main neg">Balance owing</div><div class="amount neg">${money(inv.balance)}</div></div>
       <div class="section-title">Mark paid</div>
       <div class="btn-row">
-        <button class="btn" onclick="attendantPay(${id},${inv.balance},'Cash')">💵 Cash</button>
-        <button class="btn secondary" onclick="attendantPay(${id},${inv.balance},'Transfer')">🏦 Transfer</button>
+        <button class="btn" onclick="attendantPay(${id},${inv.balance},'Cash')"><svg class="ic"><use href="#i-cash"/></svg> Cash</button>
+        <button class="btn secondary" onclick="attendantPay(${id},${inv.balance},'Transfer')"><svg class="ic"><use href="#i-bank"/></svg> Transfer</button>
       </div>`
       : `<div style="margin:8px 0"><span class="badge paid">Paid</span></div>`}
-    <button class="btn outline" style="margin-top:14px" onclick="shareReceipt(${id},'png')">📤 Send receipt</button>
+    <button class="btn outline" style="margin-top:14px" onclick="shareReceipt(${id},'png')"><svg class="ic"><use href="#i-send"/></svg> Send receipt</button>
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Close</button>`);
 }
 
 async function attendantPay(id, amount, method) {
   try { await api.send(`/api/invoices/${id}/payments`, "POST", { amount, method }); }
   catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't record"); return; }
-  closeModal();
-  if (navigator.onLine && id > 0) { toast(`Marked paid (${method}) ✓`); receiptOffer(id); }
-  else toast("Payment saved offline — syncs when you're online");
+ closeModal();
+ if (navigator.onLine && id > 0) { toast(`Marked paid (${method}) ✓`); receiptOffer(id); }
+ else toast("Payment saved offline — syncs when you're online");
   render();
 }
 
@@ -1024,16 +1024,16 @@ function shopSwitcher() {
   const shops = state.shops || [];
   const rows = shops.map(s => `
     <button class="shop-opt ${s.id === state.activeShop ? "active" : ""}" onclick="switchShop(${s.id})">
-      <span>🏪 ${esc(s.name)}</span>${s.id === state.activeShop ? '<span class="shop-check">✓</span>' : ""}
+      <span><svg class="ic"><use href="#i-store"/></svg> ${esc(s.name)}</span>${s.id === state.activeShop ? '<span class="shop-check">✓</span>' : ""}
     </button>`).join("");
   const allOpt = shops.length > 1 ? `
     <button class="shop-opt ${!state.activeShop ? "active" : ""}" onclick="switchShop(0)">
-      <span>📊 All shops (overview)</span>${!state.activeShop ? '<span class="shop-check">✓</span>' : ""}
+      <span><svg class="ic"><use href="#i-admin"/></svg> All shops (overview)</span>${!state.activeShop ? '<span class="shop-check">✓</span>' : ""}
     </button>` : "";
   openModal(`
     <h2>Your shops</h2>
     <div class="shop-list">${rows}${allOpt}</div>
-    <button class="btn" onclick="addShop()">➕ Add a shop${state.canAddShop ? "" : " (Pro)"}</button>`);
+    <button class="btn" onclick="addShop()"><svg class="ic"><use href="#i-plus"/></svg> Add a shop${state.canAddShop ? "" : " (Pro)"}</button>`);
 }
 
 async function switchShop(id) {
@@ -1113,7 +1113,7 @@ async function render() {
     await r();
   } catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") return; // overlay already shown
-    app.innerHTML = `<div class="card"><div class="empty">⚠️<br>${esc(e.message)}</div></div>`;
+    app.innerHTML = `<div class="card"><div class="empty"><svg class="ic"><use href="#i-warn"/></svg><br>${esc(e.message)}</div></div>`;
   }
 }
 
@@ -1122,9 +1122,9 @@ async function viewAdmin() {
   const s = await api.get("/api/admin/stats");
   const stat = (label, val, sub) => `
     <div class="kpi"><div class="label">${label}</div><div class="value">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
-  const srcLabel = { search: "🔍 Search", social: "📱 Social", direct: "↗️ Direct",
+  const srcLabel = { search: "Search", social: "Social", direct: "↗ Direct",
                      unknown: "• Unknown" };
-  const label = (k) => srcLabel[k] || ("🔗 " + k);
+  const label = (k) => srcLabel[k] || ("" + k);
   const totalSrc = (s.sources || []).reduce((a, x) => a + x.count, 0) || 1;
   const srcRows = (s.sources || []).map(x => {
     const pct = Math.round((x.count / totalSrc) * 100);
@@ -1158,24 +1158,24 @@ async function viewAdmin() {
     </div>
     <div class="card"><div class="section-title">Where signups come from</div>${srcRows}</div>
     <div class="card"><div class="section-title">Recent signups</div>${rows}</div>
-    <div class="card"><div class="section-title">💾 Backup</div>
+    <div class="card"><div class="section-title"><svg class="ic"><use href="#i-save"/></svg> Backup</div>
       ${backupNudge(s.last_backup_at)}
       <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Download a full copy of the database (every account, all data). Do this weekly and keep it somewhere safe — it's the only way to recover if the server's disk is lost.</p>
-      <a class="btn secondary" href="/api/admin/backup" download>⬇️ Download backup</a></div>`;
+      <a class="btn secondary" href="/api/admin/backup" download><svg class="ic"><use href="#i-download"/></svg> Download backup</a></div>`;
 }
 // Warning when the last backup is stale (>7 days) or was never taken.
 function backupNudge(at) {
   const days = at ? Math.floor((Date.now() - new Date(at)) / 86400000) : null;
   if (days !== null && days <= 7)
-    return `<p style="font-size:13px;margin:0 0 10px" class="pos">✅ Last backup: ${days === 0 ? "today" : days + " day" + (days > 1 ? "s" : "") + " ago"}</p>`;
-  return `<p style="font-size:13px;margin:0 0 10px" class="neg">⚠️ ${at ? `Last backup was ${days} days ago` : "No backup has ever been taken"} — download one now.</p>`;
+    return `<p style="font-size:13px;margin:0 0 10px" class="pos"><svg class="ic"><use href="#i-check-circle"/></svg> Last backup: ${days === 0 ? "today" : days + " day" + (days > 1 ? "s" : "") + " ago"}</p>`;
+  return `<p style="font-size:13px;margin:0 0 10px" class="neg"><svg class="ic"><use href="#i-warn"/></svg> ${at ? `Last backup was ${days} days ago` : "No backup has ever been taken"} — download one now.</p>`;
 }
 
 // ---------- HOME / dashboard ----------
 // Initials for the avatar circle on sale rows ("Chidi Okafor" → "CO").
 function _initials(name) {
   const parts = (name || "").trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "👤";
+  if (!parts.length) return "";
   return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
 }
 
@@ -1204,27 +1204,27 @@ async function viewHome() {
     </div>
     <div class="quick-acts">
       <button class="qa" onclick="newSaleModal()"><span class="qa-i">＋</span>New sale</button>
-      <button class="qa" onclick="expenseModal()"><span class="qa-i">🧾</span>Expense</button>
-      <button class="qa" onclick="setView('products')"><span class="qa-i">📦</span>Stock</button>
-      <button class="qa" onclick="setView('insights')"><span class="qa-i">💡</span>Insights</button>
+      <button class="qa" onclick="expenseModal()"><span class="qa-i"><svg class="ic"><use href="#i-sales"/></svg></span>Expense</button>
+      <button class="qa" onclick="setView('products')"><span class="qa-i"><svg class="ic"><use href="#i-products"/></svg></span>Stock</button>
+      <button class="qa" onclick="setView('insights')"><span class="qa-i"><svg class="ic"><use href="#i-insights"/></svg></span>Insights</button>
     </div>
     ${(claims && claims.length) ? `<div class="card alert" style="border:1.5px solid var(--indigo)">
-      <div class="section-title">⚡ ${claims.length} payment${claims.length > 1 ? "s" : ""} to confirm</div>
+      <div class="section-title"><svg class="ic"><use href="#i-zap"/></svg> ${claims.length} payment${claims.length > 1 ? "s" : ""} to confirm</div>
       ${claims.map(c => `<div class="list-row" onclick="invoiceDetail(${c.invoice_id})">
         <div><div class="main">${esc(c.invoice_no)}</div><div class="meta">Customer says they've transferred</div></div>
-        <div class="amount">${money(c.amount)}</div></div>`).join("")}
-    </div>` : ""}
-    ${(orders && orders.length) ? `<div class="card alert" style="border:1.5px solid var(--indigo)" onclick="setView('orders')">
-      <div class="section-title">🛒 ${orders.length} new order${orders.length > 1 ? "s" : ""} to review</div>
-      ${orders.map(o => `<div class="list-row" onclick='event.stopPropagation(); orderDetail(${attrJson(o)})'>
-        <div style="flex:1;min-width:0"><div class="main">${esc(o.customer_name || "Customer")}</div>
-          <div class="meta">${o.items.length} item${o.items.length > 1 ? "s" : ""} · ${fmtDate(o.created_at)}</div></div>
-        <div class="amount">${money(o.total)}</div></div>`).join("")}
-    </div>` : ""}
-    ${goalCardHtml(d)}
-    <div class="card">
-      <div class="card-head">
-        <div class="section-title" style="margin:0">Today's sales</div>
+ <div class="amount">${money(c.amount)}</div></div>`).join("")}
+ </div>` : ""}
+ ${(orders && orders.length) ? `<div class="card alert" style="border:1.5px solid var(--indigo)" onclick="setView('orders')">
+ <div class="section-title">${orders.length} new order${orders.length > 1 ? "s" : ""} to review</div>
+ ${orders.map(o => `<div class="list-row" onclick='event.stopPropagation(); orderDetail(${attrJson(o)})'>
+ <div style="flex:1;min-width:0"><div class="main">${esc(o.customer_name || "Customer")}</div>
+ <div class="meta">${o.items.length} item${o.items.length > 1 ? "s" : ""} · ${fmtDate(o.created_at)}</div></div>
+ <div class="amount">${money(o.total)}</div></div>`).join("")}
+ </div>` : ""}
+ ${goalCardHtml(d)}
+ <div class="card">
+ <div class="card-head">
+ <div class="section-title" style="margin:0">Today's sales</div>
         <a class="see-all" onclick="setView('sales')">See all ›</a>
       </div>
       ${todays.length ? todays.map(i => `
@@ -1241,17 +1241,17 @@ async function viewHome() {
       <div class="kpi"><div class="label">Expenses</div><div class="value">${money(d.expenses)}</div></div>
     </div>
     ${(d.low_stock && d.low_stock.length) ? `<div class="card alert" onclick="setView('products')">
-      <div class="section-title">⚠️ Low stock — time to restock</div>
+      <div class="section-title"><svg class="ic"><use href="#i-warn"/></svg> Low stock — time to restock</div>
       ${d.low_stock.map(p => `<div class="list-row">
         <div style="flex:1;min-width:0"><div class="main">${esc(p.name)}</div></div>
         <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
           <div class="amount neg">${p.stock_qty} left</div>
-          ${(p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'>📞 Supplier</button>` : ""}
+          ${(p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'><svg class="ic"><use href="#i-phone"/></svg> Supplier</button>` : ""}
         </div></div>`).join("")}
     </div>` : ""}
     <div class="card">
       <div class="card-head">
-        <div class="section-title" style="margin:0">📦 Stock levels</div>
+        <div class="section-title" style="margin:0"><svg class="ic"><use href="#i-products"/></svg> Stock levels</div>
         <button class="add-btn" onclick="productModal()" aria-label="Add product">＋</button>
       </div>
       ${products.length ? products.slice().sort((a, b) => a.stock_qty - b.stock_qty).map(p => {
@@ -1260,7 +1260,7 @@ async function viewHome() {
           <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low</span>' : ''}</div>
             <div class="meta">${low ? 'Reorder soon' : 'In stock'}</div></div>
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-            ${(low && p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'>📞 Supplier</button>` : ""}
+            ${(low && p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'><svg class="ic"><use href="#i-phone"/></svg> Supplier</button>` : ""}
             <div class="amount ${low ? 'neg' : ''}">${p.stock_qty}</div></div></div>`;
       }).join("") : `<div class="empty">No products yet — tap ＋ to add one</div>`}
     </div>
@@ -1284,14 +1284,14 @@ async function viewHome() {
 // prefill it (0 on the All-shops overview, where the card is read-only).
 let _currentGoal = 0;
 // Card on Home: progress toward this calendar month's profit goal. Tapping it
-// fetches AI tips on closing the gap; the ✎ button edits/removes the goal.
+// fetches AI tips on closing the gap; the <svg class="ic"><use href="#i-edit"/></svg> button edits/removes the goal.
 // On the All-shops overview the goal is the combined total and read-only.
 function goalCardHtml(d) {
   const g = d.goal;
   if (!g || !g.target) {
     _currentGoal = 0;
     return `<div class="card goal-card" onclick="goalModal()">
-      <div class="section-title" style="margin:0">🎯 Set a monthly profit goal</div>
+      <div class="section-title" style="margin:0"><svg class="ic"><use href="#i-target"/></svg> Set a monthly profit goal</div>
       <p style="font-size:13px;color:var(--muted);margin:6px 0 0">See how close you are each day — and get tips to hit it.${state.activeShop ? "" : " Each shop has its own."}</p>
     </div>`;
   }
@@ -1301,8 +1301,8 @@ function goalCardHtml(d) {
   const hit = g.month_profit >= g.target;
   const left = Math.max(0, g.target - g.month_profit);
   const monthName = new Date().toLocaleString("en", { month: "long" });
-  const title = combined ? `📊 ${monthName} goal · all shops` : `🎯 ${monthName} profit goal`;
-  const editBtn = combined ? "" : `<button class="add-btn" onclick="event.stopPropagation(); goalModal()" aria-label="Edit goal">✎</button>`;
+  const title = combined ? `<svg class="ic"><use href="#i-admin"/></svg> ${monthName} goal · all shops` : `<svg class="ic"><use href="#i-target"/></svg> ${monthName} profit goal`;
+  const editBtn = combined ? "" : `<button class="add-btn" onclick="event.stopPropagation(); goalModal()" aria-label="Edit goal"><svg class="ic"><use href="#i-edit"/></svg></button>`;
   return `<div class="card goal-card" onclick="goalTips()">
     <div class="card-head">
       <div class="section-title" style="margin:0">${title}</div>
@@ -1311,42 +1311,42 @@ function goalCardHtml(d) {
     <div class="goal-bar"><div class="goal-fill ${hit ? "hit" : ""}" style="width:${pct}%"></div></div>
     <div class="goal-meta">
       <span><strong>${money(g.month_profit)}</strong> of ${money(g.target)}</span>
-      <span class="${hit ? "pos" : ""}">${hit ? "🎉 Goal reached!" : `${pct}% · ${money(left)} to go`}</span>
+      <span class="${hit ? "pos" : ""}">${hit ? "Goal reached!" : `${pct}% · ${money(left)} to go`}</span>
     </div>
-    <p style="font-size:12px;color:var(--muted);margin:8px 0 0">${combined ? "Combined across your shops · open a shop to change its goal · " : ""}💡 Tap for tips to ${hit ? "finish even stronger" : "hit your goal"} ›</p>
+    <p style="font-size:12px;color:var(--muted);margin:8px 0 0">${combined ? "Combined across your shops · open a shop to change its goal · " : ""}<svg class="ic"><use href="#i-insights"/></svg> Tap for tips to ${hit ? "finish even stronger" : "hit your goal"} ›</p>
   </div>`;
 }
 function goalModal() {
   // Goals live on a specific shop — from the All-shops overview, ask them to pick one.
   if (!state.activeShop) { toast("Open a specific shop to set its goal"); shopSwitcher(); return; }
   const cur = _currentGoal || 0;
-  openModal(`<h2>🎯 Monthly profit goal</h2>
+  openModal(`<h2><svg class="ic"><use href="#i-target"/></svg> Monthly profit goal</h2>
     <p style="font-size:13px;color:var(--muted);margin:-6px 0 14px">Net profit you're aiming for at <strong>${esc(activeShopName())}</strong> each month. Progress resets on the 1st.</p>
-    <div class="field"><label>Goal amount</label><input id="goalAmt" type="number" inputmode="decimal" value="${cur || ""}" placeholder="e.g. 100000"></div>
-    <button class="btn" onclick="saveGoal()">Save goal</button>
-    ${cur ? `<button class="btn ghost" style="margin-top:10px" onclick="saveGoal(0)">Remove goal</button>` : ""}`);
+ <div class="field"><label>Goal amount</label><input id="goalAmt" type="number" inputmode="decimal" value="${cur || ""}" placeholder="e.g. 100000"></div>
+ <button class="btn" onclick="saveGoal()">Save goal</button>
+ ${cur ? `<button class="btn ghost" style="margin-top:10px" onclick="saveGoal(0)">Remove goal</button>` : ""}`);
 }
 async function saveGoal(v) {
-  const amt = v !== undefined ? v : (parseFloat(document.getElementById("goalAmt").value) || 0);
-  if (amt < 0) return toast("Goal must be 0 or more");
-  try { await api.send("/api/goal", "PUT", { amount: amt }); }
-  catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't save goal"); return; }
-  closeModal(); toast(amt > 0 ? "Goal set — go get it! 🎯" : "Goal removed"); render();
+ const amt = v !== undefined ? v : (parseFloat(document.getElementById("goalAmt").value) || 0);
+ if (amt < 0) return toast("Goal must be 0 or more");
+ try { await api.send("/api/goal", "PUT", { amount: amt }); }
+ catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't save goal"); return; }
+  closeModal(); toast(amt > 0 ? "Goal set — go get it!" : "Goal removed"); render();
 }
 async function goalTips(refresh) {
-  openModal(`<h2>💡 Hit your goal</h2><div class="loading">${refresh ? "Claude is refreshing your advice…" : "Loading your advice…"}</div>`);
+  openModal(`<h2><svg class="ic"><use href="#i-insights"/></svg> Hit your goal</h2><div class="loading">${refresh ? "Claude is refreshing your advice…" : "Loading your advice…"}</div>`);
   try {
     // fresh:true → always reflect what's saved (bypass the 15s GET cache); the
-    // backend serves the stored advice unless refresh regenerates it.
-    const r = await api.get("/api/insights/goal-tips" + (refresh ? "?refresh=1" : ""), { fresh: true });
-    const saved = r.saved_at ? `<div class="goal-meta" style="margin-top:12px">Saved ${fmtDate(r.saved_at)}</div>` : "";
-    updateModal(`<h2>💡 Hit your goal</h2><div class="md">${md(r.text)}</div>${saved}
-      <button class="btn" style="margin-top:14px" onclick="goalTips(true)">🔄 Generate new advice</button>
-      <button class="btn secondary" style="margin-top:10px" onclick="closeModal()">Close</button>`);
-  } catch (e) {
-    // 402 → showUpgrade already swapped in the upgrade modal; leave it up.
-    if (e.message === "__upgrade__" || e.message === "__auth__") return;
-    closeModal(); toast(e.message || "Couldn't load tips");
+ // backend serves the stored advice unless refresh regenerates it.
+ const r = await api.get("/api/insights/goal-tips" + (refresh ? "?refresh=1" : ""), { fresh: true });
+ const saved = r.saved_at ? `<div class="goal-meta" style="margin-top:12px">Saved ${fmtDate(r.saved_at)}</div>` : "";
+ updateModal(`<h2>Hit your goal</h2><div class="md">${md(r.text)}</div>${saved}
+ <button class="btn" style="margin-top:14px" onclick="goalTips(true)">Generate new advice</button>
+ <button class="btn secondary" style="margin-top:10px" onclick="closeModal()">Close</button>`);
+ } catch (e) {
+ // 402 → showUpgrade already swapped in the upgrade modal; leave it up.
+ if (e.message === "__upgrade__" || e.message === "__auth__") return;
+ closeModal(); toast(e.message || "Couldn't load tips");
   }
 }
 
@@ -1388,7 +1388,7 @@ async function viewSales() {
   app.innerHTML = `
     <button class="btn" onclick="newSaleModal()" style="margin-bottom:12px">＋ New sale / invoice</button>
     <div class="field" style="margin-bottom:10px">
-      <input id="salesSearch" placeholder="🔍 Search customer or invoice #" value="${esc(salesQuery)}"
+      <input id="salesSearch" placeholder="Search customer or invoice #" value="${esc(salesQuery)}"
         oninput="salesQuery=this.value;renderSalesList()"></div>
     <div class="seg">
       ${tabs.map(s => `<button data-st="${s}" class="${salesStatus === s ? 'active' : ''}"
@@ -1425,17 +1425,17 @@ function renderSalesList() {
   }).sort(SALES_SORTS[salesSort] || SALES_SORTS.newest);
   const host = document.getElementById("salesList");
   if (!all.length) {
-    host.innerHTML = `<div class="empty"><div class="big">🧾</div>No sales yet.<br>Tap ＋ to record your first one.</div>`;
+    host.innerHTML = `<div class="empty"><div class="big"><svg class="ic"><use href="#i-sales"/></svg></div>No sales yet.<br>Tap ＋ to record your first one.</div>`;
     return;
   }
   const cashTotalHtml = salesStatus === "cash" && list.length
-    ? `<div class="list-row"><div class="main">💵 Total cash</div>
+    ? `<div class="list-row"><div class="main"><svg class="ic"><use href="#i-cash"/></svg> Total cash</div>
         <div class="amount pos">${money(list.reduce((s, i) => s + (i.cash_paid || 0), 0))}</div></div>`
     : "";
   host.innerHTML = cashTotalHtml + (list.length ? list.map(i => `
     <div class="list-row" onclick="invoiceDetail(${i.id})">
       <div><div class="main">${esc(i.customer_name || "Walk-in")}${!state.activeShop && i.shop_name ? ` <span class="shop-tag">${esc(i.shop_name)}</span>` : ""}</div>
-        <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}${isOverdue(i) ? ` · <span class="neg">overdue</span>` : ""}${i.cash_paid > 0.01 ? ` · 💵 ${money(i.cash_paid)} cash` : ""}</div></div>
+        <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}${isOverdue(i) ? ` · <span class="neg">overdue</span>` : ""}${i.cash_paid > 0.01 ? ` · <svg class="ic"><use href="#i-cash"/></svg> ${money(i.cash_paid)} cash` : ""}</div></div>
       <div style="text-align:right">
         <div class="amount">${money(i.total)}</div>
         <span class="badge ${i.status}">${i.status}</span></div>
@@ -1456,26 +1456,26 @@ async function invoiceDetail(id) {
   catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") { closeModal(); return; }
     closeModal(); toast(e.message || "Couldn't load invoice"); return;
-  }
-  const items = inv.items.map(it => `
-    <div class="list-row"><div><div class="main">${esc(it.description)}</div>
-      <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
-      <div class="amount">${money(it.qty * it.unit_price)}</div></div>`).join("");
-  const pays = inv.payments.map(p => `
-    <div class="list-row"><div><div class="main">${money(p.amount)}</div>
-      <div class="meta">${fmtDate(p.date)}${p.method ? " · " + esc(p.method) : ""}</div></div></div>`).join("")
-    || `<div class="empty">No payments yet</div>`;
-  const overdue = isOverdue(inv);
-  const due = inv.due_date
-    ? ` · <span class="${overdue ? 'neg' : ''}">Due ${fmtDate(inv.due_date)}${overdue ? ' (overdue)' : ''}</span>`
-    : "";
-  updateModal(`
-    <h2>${inv.invoice_no} <span class="badge ${inv.status}">${inv.status}</span></h2>
-    <div class="meta" style="color:var(--muted);font-size:13px;margin-bottom:12px">
-      ${esc(inv.customer ? inv.customer.name : "Walk-in customer")} · ${fmtDate(inv.date)}${due}</div>
-    ${(inv.claims || []).map(cl => `
-      <div class="card" style="border:1.5px solid var(--indigo);background:var(--tint)">
-        <div style="font-weight:700;margin-bottom:4px">⚡ Customer says they've paid</div>
+ }
+ const items = inv.items.map(it => `
+ <div class="list-row"><div><div class="main">${esc(it.description)}</div>
+ <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
+ <div class="amount">${money(it.qty * it.unit_price)}</div></div>`).join("");
+ const pays = inv.payments.map(p => `
+ <div class="list-row"><div><div class="main">${money(p.amount)}</div>
+ <div class="meta">${fmtDate(p.date)}${p.method ? " · " + esc(p.method) : ""}</div></div></div>`).join("")
+ || `<div class="empty">No payments yet</div>`;
+ const overdue = isOverdue(inv);
+ const due = inv.due_date
+ ? ` · <span class="${overdue ? 'neg' : ''}">Due ${fmtDate(inv.due_date)}${overdue ? ' (overdue)' : ''}</span>`
+ : "";
+ updateModal(`
+ <h2>${inv.invoice_no} <span class="badge ${inv.status}">${inv.status}</span></h2>
+ <div class="meta" style="color:var(--muted);font-size:13px;margin-bottom:12px">
+ ${esc(inv.customer ? inv.customer.name : "Walk-in customer")} · ${fmtDate(inv.date)}${due}</div>
+ ${(inv.claims || []).map(cl => `
+ <div class="card" style="border:1.5px solid var(--indigo);background:var(--tint)">
+ <div style="font-weight:700;margin-bottom:4px">Customer says they've paid</div>
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px">They reported sending <strong>${money(cl.amount)}</strong> by bank transfer. Confirm once it shows in your account.</div>
         <div class="btn-row">
           <button class="btn success" onclick="confirmClaim(${id}, ${cl.id})">✓ Confirm received</button>
@@ -1489,22 +1489,22 @@ async function invoiceDetail(id) {
     </div>
     <div class="card"><div class="section-title">Payments</div>${pays}</div>
     ${inv.balance > 0.01 ? `<button class="btn success" style="margin-bottom:10px" onclick="markPaid(${id}, ${inv.balance})">✓ Mark as paid</button>` : ""}
-    ${inv.balance > 0.01 && state.pay && (state.pay.connected || state.pay.transfer_enabled) ? `<button class="btn" style="margin-bottom:10px" onclick='sharePaymentLink(${attrJson({ id: inv.id, invoice_no: inv.invoice_no, balance: inv.balance, pay_url: inv.pay_url, customer: inv.customer })})'>💳 Send payment link on WhatsApp</button>` : ""}
+    ${inv.balance > 0.01 && state.pay && (state.pay.connected || state.pay.transfer_enabled) ? `<button class="btn" style="margin-bottom:10px" onclick='sharePaymentLink(${attrJson({ id: inv.id, invoice_no: inv.invoice_no, balance: inv.balance, pay_url: inv.pay_url, customer: inv.customer })})'><svg class="ic"><use href="#i-card"/></svg> Send payment link on WhatsApp</button>` : ""}
     <div class="btn-row" style="margin-bottom:10px">
-      <button class="btn" onclick="shareInvoice(${id})">📤 Share</button>
-      <a class="btn secondary" href="/api/invoices/${id}/pdf" target="_blank">📄 PDF</a>
+      <button class="btn" onclick="shareInvoice(${id})"><svg class="ic"><use href="#i-send"/></svg> Share</button>
+      <a class="btn secondary" href="/api/invoices/${id}/pdf" target="_blank"><svg class="ic"><use href="#i-file"/></svg> PDF</a>
     </div>
     <div class="btn-row" style="margin-bottom:10px">
-      <button class="btn outline" onclick="shareInvoiceImage(${id},'png')">🖼️ PNG</button>
-      <button class="btn outline" onclick="shareInvoiceImage(${id},'jpg')">🖼️ JPG</button>
-      ${inv.paid > 0.01 ? `<button class="btn outline" onclick="receiptOffer(${id}, 'Send a receipt')">🧾 Receipt</button>` : ""}
+      <button class="btn outline" onclick="shareInvoiceImage(${id},'png')"><svg class="ic"><use href="#i-image"/></svg> PNG</button>
+      <button class="btn outline" onclick="shareInvoiceImage(${id},'jpg')"><svg class="ic"><use href="#i-image"/></svg> JPG</button>
+      ${inv.paid > 0.01 ? `<button class="btn outline" onclick="receiptOffer(${id}, 'Send a receipt')"><svg class="ic"><use href="#i-sales"/></svg> Receipt</button>` : ""}
     </div>
     ${inv.balance > 0.01
-      ? `<button class="btn whatsapp" style="margin-bottom:10px" onclick='whatsappReminder(${attrJson(inv)})'>💬 WhatsApp reminder</button>`
+      ? `<button class="btn whatsapp" style="margin-bottom:10px" onclick='whatsappReminder(${attrJson(inv)})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp reminder</button>`
       : ""}
     ${inv.balance > 0.01 ? `<button class="btn secondary" style="margin-bottom:10px" onclick="paymentModal(${id}, ${inv.balance})">Record part payment</button>` : ""}
     <div class="btn-row">
-      <button class="btn outline" onclick="editSaleModal(${id})">✏️ Edit sale</button>
+      <button class="btn outline" onclick="editSaleModal(${id})"><svg class="ic"><use href="#i-edit"/></svg> Edit sale</button>
       <button class="btn danger" onclick="if(confirm('Delete this invoice? This also gives the stock back.')){deleteInvoice(${id})}">Delete</button>
     </div>`);
 }
@@ -1514,8 +1514,8 @@ async function deleteInvoice(id) {
   catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") return;
     toast(e.message || "Couldn't delete"); return;
-  }
-  closeModal(); toast("Invoice deleted"); render();
+ }
+ closeModal(); toast("Invoice deleted"); render();
 }
 
 // ---------- EDIT SALE ----------
@@ -1523,12 +1523,12 @@ async function deleteInvoice(id) {
 // addProductItem/pickProduct/updItem — same functions, just seeded from the
 // existing invoice instead of starting blank).
 async function editSaleModal(id) {
-  if (!requireShop()) return;
-  let inv;
-  try { inv = await api.get(`/api/invoices/${id}`); }
-  catch (e) {
-    if (e.message === "__auth__" || e.message === "__upgrade__") return;
-    toast(e.message || "Couldn't load invoice"); return;
+ if (!requireShop()) return;
+ let inv;
+ try { inv = await api.get(`/api/invoices/${id}`); }
+ catch (e) {
+ if (e.message === "__auth__" || e.message === "__upgrade__") return;
+ toast(e.message || "Couldn't load invoice"); return;
   }
   const [products, customers] = await Promise.all([
     api.get("/api/products"), api.get("/api/customers")]);
@@ -1581,8 +1581,8 @@ async function saveEditedSale(id) {
   } catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") return;
     toast(e.message || "Couldn't save changes"); return;
-  }
-  closeModal(); toast("Sale updated"); render();
+ }
+ closeModal(); toast("Sale updated"); render();
 }
 
 // Safely embed JSON in a single-quoted HTML attribute (escape apostrophes).
@@ -1609,16 +1609,16 @@ async function _saveCustomerPhone(custId, phone) {
 // Resolve the customer's WhatsApp number: use the saved phone, otherwise ask
 // once and remember it on the customer. Returns a wa.me-ready number or null.
 function _waResolveNumber(cust) {
-  let phone = cust && cust.phone;
-  if (!phone) {
-    const typed = prompt(
-      `Enter ${cust && cust.name ? cust.name + "'s" : "the customer's"} WhatsApp number\n(e.g. 0803… or +234803…):`);
-    if (!typed || !typed.trim()) return null;
-    phone = typed.trim();
-    if (cust && cust.id) _saveCustomerPhone(cust.id, phone); // remember it (background)
-  }
-  const num = waNumber(phone);
-  if (!num) { toast("That doesn't look like a valid number"); return null; }
+ let phone = cust && cust.phone;
+ if (!phone) {
+ const typed = prompt(
+ `Enter ${cust && cust.name ? cust.name + "'s" : "the customer's"} WhatsApp number\n(e.g. 0803… or +234803…):`);
+ if (!typed || !typed.trim()) return null;
+ phone = typed.trim();
+ if (cust && cust.id) _saveCustomerPhone(cust.id, phone); // remember it (background)
+ }
+ const num = waNumber(phone);
+ if (!num) { toast("That doesn't look like a valid number"); return null; }
   return num;
 }
 
@@ -1661,37 +1661,37 @@ function whatsappReminder(inv) {
 // auto-starts a call, so opening the chat in the tap gesture is the reliable
 // path (a delayed/scripted wa.me nav only loads the "download" page).
 function whatsappCall(cust) {
-  const num = _waResolveNumber(cust);
-  if (!num) return;
-  openExternal(`https://wa.me/${num}`);
+ const num = _waResolveNumber(cust);
+ if (!num) return;
+ openExternal(`https://wa.me/${num}`);
 }
 
 // Build a tel: dial string — prefer the international +234… form when we can
 // normalise it, else dial the digits as entered (the OS dialer handles locals).
 function telNumber(phone) {
-  const intl = waNumber(phone);
-  if (intl && (intl.startsWith("234") || intl.length >= 12)) return "+" + intl;
-  return (phone || "").replace(/[^\d+]/g, "");
+ const intl = waNumber(phone);
+ if (intl && (intl.startsWith("234") || intl.length >= 12)) return "+" + intl;
+ return (phone || "").replace(/[^\d+]/g, "");
 }
 
 // Dial the customer directly with the phone's own dialer (a normal cellular
 // call, not WhatsApp). tel: doesn't unload the app — the OS intercepts it.
 function phoneCall(cust) {
-  const num = telNumber(cust && cust.phone);
-  if (!num) { toast("No number to call"); return; }
-  window.location.href = "tel:" + num;
+ const num = telNumber(cust && cust.phone);
+ if (!num) { toast("No number to call"); return; }
+ window.location.href = "tel:" + num;
 }
 
 function isOverdue(inv) {
-  return !!inv.due_date && inv.balance > 0.01
-    && inv.due_date < new Date().toISOString().slice(0, 10);
+ return !!inv.due_date && inv.balance > 0.01
+ && inv.due_date < new Date().toISOString().slice(0, 10);
 }
 
 async function markPaid(id, balance) {
-  await api.send(`/api/invoices/${id}/payments`, "POST",
-    { amount: balance, method: "Marked paid" });
-  if (navigator.onLine && id > 0) { toast("Marked as paid ✓"); receiptOffer(id); }
-  else toast("Payment saved offline — syncs when you're online");
+ await api.send(`/api/invoices/${id}/payments`, "POST",
+ { amount: balance, method: "Marked paid" });
+ if (navigator.onLine && id > 0) { toast("Marked as paid ✓"); receiptOffer(id); }
+ else toast("Payment saved offline — syncs when you're online");
   render();
 }
 
@@ -1710,54 +1710,54 @@ async function shareInvoice(id) {
 function paymentModal(id, balance) {
   // Amount starts EMPTY (not pre-filled with the full balance) so a part payment
   // isn't accidentally saved as payment-in-full. Full settlement has its own
-  // "✓ Mark as paid" button. Placeholder suggests a partial amount.
-  openModal(`
-    <h2>Record part payment</h2>
-    <p style="font-size:13px;color:var(--muted);margin:-6px 0 14px">Outstanding balance: <strong>${money(balance)}</strong></p>
-    <div class="field"><label>Amount received now</label>
-      <input id="payAmt" type="number" inputmode="decimal" placeholder="e.g. ${Math.max(1, Math.round(balance / 2))}" autofocus /></div>
-    <div class="field"><label>Method (optional)</label>
-      <input id="payMethod" placeholder="Cash, transfer, card…" /></div>
-    <button class="btn" onclick="savePayment(${id}, ${balance})">Save payment</button>`);
+ // "✓ Mark as paid" button. Placeholder suggests a partial amount.
+ openModal(`
+ <h2>Record part payment</h2>
+ <p style="font-size:13px;color:var(--muted);margin:-6px 0 14px">Outstanding balance: <strong>${money(balance)}</strong></p>
+ <div class="field"><label>Amount received now</label>
+ <input id="payAmt" type="number" inputmode="decimal" placeholder="e.g. ${Math.max(1, Math.round(balance / 2))}" autofocus /></div>
+ <div class="field"><label>Method (optional)</label>
+ <input id="payMethod" placeholder="Cash, transfer, card…" /></div>
+ <button class="btn" onclick="savePayment(${id}, ${balance})">Save payment</button>`);
 }
 async function savePayment(id, balance) {
-  const amount = parseFloat(document.getElementById("payAmt").value);
-  if (!amount || amount <= 0) return toast("Enter a valid amount");
-  if (balance != null && amount > balance + 0.01
-      && !confirm(`That's more than the ${money(balance)} balance. Record ${money(amount)} anyway?`)) return;
+ const amount = parseFloat(document.getElementById("payAmt").value);
+ if (!amount || amount <= 0) return toast("Enter a valid amount");
+ if (balance != null && amount > balance + 0.01
+ && !confirm(`That's more than the ${money(balance)} balance. Record ${money(amount)} anyway?`)) return;
   const r = await api.send(`/api/invoices/${id}/payments`, "POST",
     { amount, method: document.getElementById("payMethod").value });
   if (navigator.onLine && id > 0 && r && typeof r.balance === "number") {
     toast(r.balance > 0.01 ? `Recorded — ${money(r.balance)} still due` : "Paid in full ✓");
     receiptOffer(id);
   } else toast("Payment saved offline — syncs when you're online");
-  render();
+ render();
 }
 
 // ---------- shareable files (invoice / receipt, PDF or image) ----------
 function _blobToB64(blob) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onloadend = () => res(String(r.result).split(",")[1] || "");
-    r.onerror = rej;
-    r.readAsDataURL(blob);
-  });
+ return new Promise((res, rej) => {
+ const r = new FileReader();
+ r.onloadend = () => res(String(r.result).split(",")[1] || "");
+ r.onerror = rej;
+ r.readAsDataURL(blob);
+ });
 }
 
 // Share a generated file. Preference order:
-//   1) native app bridge → real Android share sheet WITH the file (installed app),
-//   2) browser Web Share with files (Chrome Android / iOS Safari),
-//   3) download it — NEVER window.open, which navigates (and strands) the WebView
-//      onto the raw file since the WebView has no navigator.share.
+// 1) native app bridge → real Android share sheet WITH the file (installed app),
+// 2) browser Web Share with files (Chrome Android / iOS Safari),
+// 3) download it — NEVER window.open, which navigates (and strands) the WebView
+// onto the raw file since the WebView has no navigator.share.
 async function _shareFile(url, filename, mime, title, text) {
-  const abs = url.startsWith("http") ? url : location.origin + url;
-  try {
-    let blob = null;
-    try { blob = await (await fetch(url)).blob(); } catch (e) {}
+ const abs = url.startsWith("http") ? url : location.origin + url;
+ try {
+ let blob = null;
+ try { blob = await (await fetch(url)).blob(); } catch (e) {}
 
-    // 1) Native app bridge → real Android share sheet WITH the file.
-    // Test only object PRESENCE (reliable); reading a method as a property can
-    // read back undefined on some WebViews even though it's callable — so we just
+ // 1) Native app bridge → real Android share sheet WITH the file.
+ // Test only object PRESENCE (reliable); reading a method as a property can
+ // read back undefined on some WebViews even though it's callable — so we just
     // CALL it inside try/catch instead of gating on `.shareFile`.
     if (blob && window.SalesPalShare) {
       try {
@@ -1782,33 +1782,33 @@ async function _shareFile(url, filename, mime, title, text) {
   } catch (e) {
     if (e && e.name === "AbortError") return; // user dismissed the share sheet
     toast("Couldn't share — try again");
-  }
+ }
 }
 
 async function shareImageFile(url, filename, title, text) {
-  const mime = filename.endsWith(".jpg") ? "image/jpeg" : "image/png";
-  await _shareFile(url, filename, mime, title, text);
+ const mime = filename.endsWith(".jpg") ? "image/jpeg" : "image/png";
+ await _shareFile(url, filename, mime, title, text);
 }
 
 async function shareInvoiceImage(id, fmt) {
-  const inv = await api.get(`/api/invoices/${id}`);
-  const biz = state.settings.business_name || "SalesPal";
-  await shareImageFile(`/api/invoices/${id}/image?fmt=${fmt}`,
-    `${inv.invoice_no}.${fmt}`, `Invoice ${inv.invoice_no}`,
-    `${biz} — Invoice ${inv.invoice_no} · Total ${money(inv.total)}`);
+ const inv = await api.get(`/api/invoices/${id}`);
+ const biz = state.settings.business_name || "SalesPal";
+ await shareImageFile(`/api/invoices/${id}/image?fmt=${fmt}`,
+ `${inv.invoice_no}.${fmt}`, `Invoice ${inv.invoice_no}`,
+ `${biz} — Invoice ${inv.invoice_no} · Total ${money(inv.total)}`);
 }
 
 async function shareReceipt(id, fmt) {
-  const inv = await api.get(`/api/invoices/${id}`);
-  const biz = state.settings.business_name || "SalesPal";
-  // On a part-payment, the caption urges settling the balance; else a thank-you.
-  const due = inv.balance > 0.01
-    ? `${biz} — payment received for invoice ${inv.invoice_no}. `
-      + `Balance outstanding: ${money(inv.balance)}${inv.due_date ? ` (due ${fmtDate(inv.due_date)})` : ""}. `
-      + `Kindly settle it when you can — thank you!`
-    : `${biz} — payment received in full for invoice ${inv.invoice_no}. Thank you for your business!`;
-  await shareImageFile(`/api/invoices/${id}/receipt?fmt=${fmt}`,
-    `Receipt-${inv.invoice_no}.${fmt}`, `Receipt — ${inv.invoice_no}`, due);
+ const inv = await api.get(`/api/invoices/${id}`);
+ const biz = state.settings.business_name || "SalesPal";
+ // On a part-payment, the caption urges settling the balance; else a thank-you.
+ const due = inv.balance > 0.01
+ ? `${biz} — payment received for invoice ${inv.invoice_no}. `
+ + `Balance outstanding: ${money(inv.balance)}${inv.due_date ? ` (due ${fmtDate(inv.due_date)})` : ""}. `
+ + `Kindly settle it when you can — thank you!`
+ : `${biz} — payment received in full for invoice ${inv.invoice_no}. Thank you for your business!`;
+ await shareImageFile(`/api/invoices/${id}/receipt?fmt=${fmt}`,
+ `Receipt-${inv.invoice_no}.${fmt}`, `Receipt — ${inv.invoice_no}`, due);
 }
 
 // After a payment is recorded (or from the invoice), show the receipt itself —
@@ -1829,7 +1829,7 @@ async function receiptOffer(id, heading) {
     <p style="color:var(--muted);font-size:14px;margin:0 0 12px">${sub}</p>
     <img src="/api/invoices/${id}/receipt?fmt=png&t=${Date.now()}" alt="Receipt"
       style="width:100%;border:1px solid var(--line);border-radius:12px;margin-bottom:12px" />
-    <button class="btn" onclick="shareReceipt(${id},'png')">📤 Send receipt</button>
+    <button class="btn" onclick="shareReceipt(${id},'png')"><svg class="ic"><use href="#i-send"/></svg> Send receipt</button>
     <button class="btn secondary" style="margin-top:10px" onclick="shareReceipt(${id},'jpg')">Download JPG</button>
     <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Done</button>`);
 }
@@ -1848,7 +1848,7 @@ async function newSaleModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <h2 style="margin:0">New sale</h2>
-      ${canVoice ? `<button type="button" class="mic-btn" id="micBtn" onclick="voiceSale()">🎤 Speak it</button>` : ""}
+      ${canVoice ? `<button type="button" class="mic-btn" id="micBtn" onclick="voiceSale()"><svg class="ic"><use href="#i-mic"/></svg> Speak it</button>` : ""}
     </div>
     <div class="field" style="position:relative">
       <label>Customer name</label>
@@ -1925,47 +1925,47 @@ function updItem(i, k, v) {
 // can swallow the on-screen keyboard, trapping the user into an existing
 // name. This is a plain suggestion dropdown: it never blocks free typing.
 function filterCustomerSuggest() {
-  const inp = document.getElementById("saleCustomer");
-  const box = document.getElementById("custSuggest");
-  if (!inp || !box) return;
-  const q = inp.value.trim().toLowerCase();
-  const matches = (window._customers || [])
-    .filter(c => !q || c.name.toLowerCase().includes(q)).slice(0, 6);
-  if (!matches.length) { box.classList.remove("show"); box.innerHTML = ""; return; }
-  box.innerHTML = matches.map(c =>
-    `<button type="button" onmousedown="event.preventDefault()" onclick='pickCustomerSuggest(${attrJson(c.name)})'>${esc(c.name)}</button>`
-  ).join("");
-  box.classList.add("show");
+ const inp = document.getElementById("saleCustomer");
+ const box = document.getElementById("custSuggest");
+ if (!inp || !box) return;
+ const q = inp.value.trim().toLowerCase();
+ const matches = (window._customers || [])
+ .filter(c => !q || c.name.toLowerCase().includes(q)).slice(0, 6);
+ if (!matches.length) { box.classList.remove("show"); box.innerHTML = ""; return; }
+ box.innerHTML = matches.map(c =>
+ `<button type="button" onmousedown="event.preventDefault()" onclick='pickCustomerSuggest(${attrJson(c.name)})'>${esc(c.name)}</button>`
+ ).join("");
+ box.classList.add("show");
 }
 function pickCustomerSuggest(name) {
-  const inp = document.getElementById("saleCustomer");
-  if (inp) inp.value = name;
-  hideCustomerSuggest();
+ const inp = document.getElementById("saleCustomer");
+ if (inp) inp.value = name;
+ hideCustomerSuggest();
 }
 function hideCustomerSuggest() {
-  const box = document.getElementById("custSuggest");
-  if (box) { box.classList.remove("show"); box.innerHTML = ""; }
+ const box = document.getElementById("custSuggest");
+ if (box) { box.classList.remove("show"); box.innerHTML = ""; }
 }
 function removeItem(i) { saleItems.splice(i, 1); renderSaleItems(); }
 
 async function saveSale() {
-  const items = saleItems.filter(it => it.description && it.qty > 0);
-  if (!items.length) return toast("Add at least one item");
-  const customer_name = document.getElementById("saleCustomer").value.trim();
-  let res;
-  try {
-    res = await api.send("/api/invoices", "POST", {
-      customer_name: customer_name || null,
-      due_date: document.getElementById("saleDue").value || null,
-      notes: document.getElementById("saleNotes").value,
-      items: items.map(it => ({ product_id: it.product_id, description: it.description,
-        qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost })),
-    });
-  } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save sale"); return; }
+ const items = saleItems.filter(it => it.description && it.qty > 0);
+ if (!items.length) return toast("Add at least one item");
+ const customer_name = document.getElementById("saleCustomer").value.trim();
+ let res;
+ try {
+ res = await api.send("/api/invoices", "POST", {
+ customer_name: customer_name || null,
+ due_date: document.getElementById("saleDue").value || null,
+ notes: document.getElementById("saleNotes").value,
+ items: items.map(it => ({ product_id: it.product_id, description: it.description,
+ qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost })),
+ });
+ } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save sale"); return; }
   closeModal();
   toast(res.invoice_no === "Pending" ? "Sale saved offline — syncs when you're online" : `Sale saved · ${res.invoice_no}`);
-  setView("sales");
-  maybePaywallAfterSale();
+ setView("sales");
+ maybePaywallAfterSale();
 }
 
 // ---------- VOICE SALE ENTRY ----------
@@ -1980,7 +1980,7 @@ async function voiceSale() {
   const btn = document.getElementById("micBtn");
   if (_rec && _rec.state === "recording") { _rec.stop(); return; }   // tap again = stop early
   if (!navigator.onLine) return toast("Voice needs a connection — type it for now");
-  const reset = () => { if (btn.isConnected) { btn.textContent = "🎤 Speak it"; btn.classList.remove("live"); } };
+  const reset = () => { if (btn.isConnected) { btn.textContent = "Speak it"; btn.classList.remove("live"); } };
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1988,17 +1988,17 @@ async function voiceSale() {
     // Mic failed to open. Show a diagnostic card with the exact error, the
     // Permissions-API state, and the real browser engine (a TWA can silently run
     // in Samsung Internet etc. if Chrome isn't the default) so a remote fix is
-    // possible instead of guessing. perm "prompt" + instant NotAllowedError =
-    // the browser app itself lacks the OS mic permission; "denied" = site-level.
-    let perm = "unknown";
-    try { perm = (await navigator.permissions.query({ name: "microphone" })).state; } catch (e2) {}
-    const mode = document.referrer.startsWith("android-app://") ? "installed app"
-      : matchMedia("(display-mode: standalone)").matches ? "home-screen app" : "browser tab";
-    openModal(`
-      <h2>Mic check 🎤</h2>
-      <p>${perm === "denied" ? "The browser has the mic <b>blocked for this site</b>."
-        : e.name === "NotAllowedError" ? "The browser app itself was <b>refused mic access by the phone</b>."
-        : "The mic couldn't start."}</p>
+ // possible instead of guessing. perm "prompt" + instant NotAllowedError =
+ // the browser app itself lacks the OS mic permission; "denied" = site-level.
+ let perm = "unknown";
+ try { perm = (await navigator.permissions.query({ name: "microphone" })).state; } catch (e2) {}
+ const mode = document.referrer.startsWith("android-app://") ? "installed app"
+ : matchMedia("(display-mode: standalone)").matches ? "home-screen app" : "browser tab";
+ openModal(`
+ <h2>Mic check</h2>
+ <p>${perm === "denied" ? "The browser has the mic <b>blocked for this site</b>."
+ : e.name === "NotAllowedError" ? "The browser app itself was <b>refused mic access by the phone</b>."
+ : "The mic couldn't start."}</p>
       <div class="card" style="font-family:monospace;font-size:12px;word-break:break-all">
         error: ${esc(e.name || "?")} — ${esc(e.message || "")}<br>
         site permission: ${esc(perm)}<br>
@@ -2020,15 +2020,15 @@ async function voiceSale() {
     const type = rec.mimeType || "audio/webm";
     const blob = new Blob(_recChunks, { type });
     if (!blob.size) { reset(); return toast("Didn't catch that — try again"); }
-    if (btn.isConnected) btn.textContent = "🧠 Working…";
-    const fd = new FormData();
-    fd.append("audio", blob, "sale." + (type.includes("mp4") || type.includes("m4a") ? "mp4" : "webm"));
-    let r;
-    try {
-      r = await api.sendForm("/api/voice/transcribe-sale", fd);
-    } catch (err) {
-      reset();
-      if (err.message !== "__upgrade__" && err.message !== "__auth__") toast(err.message || "Couldn't understand that");
+ if (btn.isConnected) btn.textContent = "Working…";
+ const fd = new FormData();
+ fd.append("audio", blob, "sale." + (type.includes("mp4") || type.includes("m4a") ? "mp4" : "webm"));
+ let r;
+ try {
+ r = await api.sendForm("/api/voice/transcribe-sale", fd);
+ } catch (err) {
+ reset();
+ if (err.message !== "__upgrade__" && err.message !== "__auth__") toast(err.message || "Couldn't understand that");
       return;
     }
     reset();
@@ -2037,28 +2037,28 @@ async function voiceSale() {
       ? `Heard: “${r.transcript}” · ${r.free_uses_left} free voice sale${r.free_uses_left === 1 ? "" : "s"} left`
       : `Heard: “${r.transcript}” — check & save`);
   };
-  btn.textContent = "🔴 Recording… tap to stop";
+  btn.textContent = "Recording… tap to stop";
   btn.classList.add("live");
   rec.start();
   // Auto-stop after 15s so a forgotten recording doesn't run (and upload) forever.
-  _recTimer = setTimeout(() => { if (_rec && _rec.state === "recording") _rec.stop(); }, 15000);
+ _recTimer = setTimeout(() => { if (_rec && _rec.state === "recording") _rec.stop(); }, 15000);
 }
 
 function applyVoiceSale(sale) {
-  if (!sale || !document.getElementById("saleItems")) return;
-  const items = (sale.items || []).filter(it => it.description);
-  if (items.length) {
-    saleItems = items.map(it => {
-      const p = (window._products || []).find(x => x.id === it.product_id);
-      return p
-        ? { product_id: p.id, description: p.name, qty: it.qty || 1, unit_price: it.unit_price || p.unit_price, unit_cost: p.unit_cost, custom: false }
-        : { product_id: null, description: it.description, qty: it.qty || 1, unit_price: it.unit_price || 0, unit_cost: 0, custom: true };
-    });
-    renderSaleItems();
-  }
-  if (sale.customer_name) document.getElementById("saleCustomer").value = sale.customer_name;
-  // The owner form has no payment control; keep what was said in the notes so
-  // it isn't lost — they can mark the invoice paid right after saving.
+ if (!sale || !document.getElementById("saleItems")) return;
+ const items = (sale.items || []).filter(it => it.description);
+ if (items.length) {
+ saleItems = items.map(it => {
+ const p = (window._products || []).find(x => x.id === it.product_id);
+ return p
+ ? { product_id: p.id, description: p.name, qty: it.qty || 1, unit_price: it.unit_price || p.unit_price, unit_cost: p.unit_cost, custom: false }
+ : { product_id: null, description: it.description, qty: it.qty || 1, unit_price: it.unit_price || 0, unit_cost: 0, custom: true };
+ });
+ renderSaleItems();
+ }
+ if (sale.customer_name) document.getElementById("saleCustomer").value = sale.customer_name;
+ // The owner form has no payment control; keep what was said in the notes so
+ // it isn't lost — they can mark the invoice paid right after saving.
   if (sale.payment && sale.payment !== "unknown") {
     const n = document.getElementById("saleNotes");
     if (n && !n.value) n.value = sale.payment === "owing" ? "Customer owing" : `Paid by ${sale.payment}`;
@@ -2089,7 +2089,7 @@ async function renderExpenses() {
             <div class="meta">${esc(e.category)} · ${fmtDate(e.date)}</div></div>
           <div style="text-align:right"><div class="amount neg">${money(e.amount)}</div>
             <button class="li-remove" onclick="delExpense(${e.id})">Delete</button></div>
-        </div>`).join("") : `<div class="empty"><div class="big">💸</div>No expenses logged yet</div>`}
+        </div>`).join("") : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-expenses"/></svg></div>No expenses logged yet</div>`}
     </div>`;
 }
 function expenseModal() {
@@ -2126,10 +2126,10 @@ async function renderOwed() {
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
             <div class="amount neg">${money(i.balance)}</div>
             <button class="wa-mini" onclick='event.stopPropagation(); whatsappReminder(${attrJson({
-              id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
-              customer: { id: i.customer_id, name: i.customer_name, phone: i.customer_phone } })})'>💬 Remind</button>
+ id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
+ customer: { id: i.customer_id, name: i.customer_name, phone: i.customer_phone } })})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>
           </div>
-        </div>`).join("") : `<div class="empty"><div class="big">✅</div>Everyone has paid up!</div>`}
+        </div>`).join("") : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-check-circle"/></svg></div>Everyone has paid up!</div>`}
     </div>`;
 }
 
@@ -2139,24 +2139,24 @@ async function viewInsights() {
   const proTag = pro ? "" : ` <span class="pill pro">PRO</span>`;
   app.innerHTML = `
     <div class="card">
-      <div class="section-title">💡 Grow my business${proTag}</div>
+      <div class="section-title"><svg class="ic"><use href="#i-insights"/></svg> Grow my business${proTag}</div>
       <p style="font-size:14px;color:var(--muted);margin:0 0 12px">
         Get specific advice from Claude on increasing your sales and profit, based on your real numbers.</p>
       ${pro
         ? `<button class="btn" onclick="loadAdvice()">Get advice (${state.period})</button>`
-        : `<button class="btn" onclick="showUpgrade('AI advice is a Pro feature.')">🔒 Unlock with Pro</button>`}
+        : `<button class="btn" onclick="showUpgrade('AI advice is a Pro feature.')"><svg class="ic"><use href="#i-lock"/></svg> Unlock with Pro</button>`}
     </div>
     <div class="card">
-      <div class="section-title">📅 Weekly report${proTag}</div>
+      <div class="section-title"><svg class="ic"><use href="#i-calendar"/></svg> Weekly report${proTag}</div>
       <p style="font-size:14px;color:var(--muted);margin:0 0 12px">
         A summary of this week vs last week — sales, profit, expenses and what to focus on.</p>
       ${pro
         ? `<button class="btn secondary" onclick="loadWeekly()">Generate weekly report</button>
            <p style="font-size:12px;color:var(--muted);margin:10px 0 0">Auto-generated every Sunday and saved below.</p>`
-        : `<button class="btn secondary" onclick="showUpgrade('Weekly AI reports are a Pro feature.')">🔒 Unlock with Pro</button>`}
+        : `<button class="btn secondary" onclick="showUpgrade('Weekly AI reports are a Pro feature.')"><svg class="ic"><use href="#i-lock"/></svg> Unlock with Pro</button>`}
     </div>
     <div id="insightOut"></div>
-    <div class="card"><div class="section-title">📁 Saved weekly reports</div>
+    <div class="card"><div class="section-title"><svg class="ic"><use href="#i-file"/></svg> Saved weekly reports</div>
       <div id="savedReports"><div class="empty">Loading…</div></div></div>`;
   loadSavedReports();
 }
@@ -2174,79 +2174,79 @@ async function loadSavedReports() {
   } catch (e) { host.innerHTML = `<div class="empty">Couldn't load reports</div>`; }
 }
 function openReport(id) {
-  const r = (window._reports || []).find(x => x.id === id);
-  if (!r) return;
-  openModal(`<h2>${esc(r.title || "Weekly report")}</h2>
-    <div class="meta" style="color:var(--muted);margin-bottom:10px">${fmtDate(r.created_at)}</div>
-    <div class="card"><div class="md">${md(r.content || "")}</div></div>`);
+ const r = (window._reports || []).find(x => x.id === id);
+ if (!r) return;
+ openModal(`<h2>${esc(r.title || "Weekly report")}</h2>
+ <div class="meta" style="color:var(--muted);margin-bottom:10px">${fmtDate(r.created_at)}</div>
+ <div class="card"><div class="md">${md(r.content || "")}</div></div>`);
 }
 async function loadAdvice() {
-  const out = document.getElementById("insightOut");
-  out.innerHTML = `<div class="card"><div class="loading">Claude is analysing your numbers…</div></div>`;
-  const r = await api.get(`/api/insights/advice?period=${state.period}`);
-  out.innerHTML = `<div class="card"><div class="md">${md(r.text)}</div></div>`;
+ const out = document.getElementById("insightOut");
+ out.innerHTML = `<div class="card"><div class="loading">Claude is analysing your numbers…</div></div>`;
+ const r = await api.get(`/api/insights/advice?period=${state.period}`);
+ out.innerHTML = `<div class="card"><div class="md">${md(r.text)}</div></div>`;
 }
 async function loadWeekly() {
-  const out = document.getElementById("insightOut");
-  out.innerHTML = `<div class="card"><div class="loading">Building your weekly report…</div></div>`;
-  const r = await api.get(`/api/insights/weekly`);
-  const m = r.metrics ? r.metrics.this_week : null;
-  const head = m ? `<div class="kpi-grid">
-    <div class="kpi"><div class="label">Sales this week</div><div class="value">${money(m.revenue)}</div></div>
-    <div class="kpi"><div class="label">Profit this week</div><div class="value ${m.net_profit>=0?'pos':'neg'}">${money(m.net_profit)}</div></div>
-  </div>` : "";
-  out.innerHTML = head + `<div class="card"><div class="md">${md(r.text)}</div></div>`;
-  loadSavedReports();
+ const out = document.getElementById("insightOut");
+ out.innerHTML = `<div class="card"><div class="loading">Building your weekly report…</div></div>`;
+ const r = await api.get(`/api/insights/weekly`);
+ const m = r.metrics ? r.metrics.this_week : null;
+ const head = m ? `<div class="kpi-grid">
+ <div class="kpi"><div class="label">Sales this week</div><div class="value">${money(m.revenue)}</div></div>
+ <div class="kpi"><div class="label">Profit this week</div><div class="value ${m.net_profit>=0?'pos':'neg'}">${money(m.net_profit)}</div></div>
+ </div>` : "";
+ out.innerHTML = head + `<div class="card"><div class="md">${md(r.text)}</div></div>`;
+ loadSavedReports();
 }
 
 // ---------- PRODUCTS ----------
 async function viewProducts() {
-  const products = await api.get("/api/products");
-  app.innerHTML = `
-    <button class="btn" onclick="productModal()" style="margin-bottom:14px">＋ Add product</button>
-    <div class="card"><div class="section-title">Products</div>
-      ${products.length ? products.map(p => {
-        const margin = p.unit_price ? Math.round((p.unit_price - p.unit_cost) / p.unit_price * 100) : 0;
-        const low = p.low_stock_at > 0 && p.stock_qty <= p.low_stock_at;
-        return `<div class="list-row" onclick='productModal(${attrJson(p)})'>
-          <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low stock</span>' : ''}</div>
-            <div class="meta">Cost ${money(p.unit_cost)} · ${margin}% margin · <span class="${low ? 'neg' : ''}">${p.stock_qty} in stock</span></div></div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-            ${(low && p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'>📞 Supplier</button>` : ""}
-            <div class="amount">${money(p.unit_price)}</div></div></div>`;
-      }).join("") : `<div class="empty"><div class="big">📦</div>No products yet</div>`}
-    </div>`;
+ const products = await api.get("/api/products");
+ app.innerHTML = `
+ <button class="btn" onclick="productModal()" style="margin-bottom:14px">＋ Add product</button>
+ <div class="card"><div class="section-title">Products</div>
+ ${products.length ? products.map(p => {
+ const margin = p.unit_price ? Math.round((p.unit_price - p.unit_cost) / p.unit_price * 100) : 0;
+ const low = p.low_stock_at > 0 && p.stock_qty <= p.low_stock_at;
+ return `<div class="list-row" onclick='productModal(${attrJson(p)})'>
+ <div style="flex:1;min-width:0"><div class="main">${esc(p.name)} ${low ? '<span class="badge unpaid">low stock</span>' : ''}</div>
+ <div class="meta">Cost ${money(p.unit_cost)} · ${margin}% margin · <span class="${low ? 'neg' : ''}">${p.stock_qty} in stock</span></div></div>
+ <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+ ${(low && p.suppliers && p.suppliers.length) ? `<button class="wa-mini call" onclick='event.stopPropagation(); callSupplier(${attrJson(p)})'>Supplier</button>` : ""}
+ <div class="amount">${money(p.unit_price)}</div></div></div>`;
+ }).join("") : `<div class="empty"><div class="big"></div>No products yet</div>`}
+ </div>`;
 }
 function productModal(p) {
-  p = p || {};
-  if (!p.id && !requireShop()) return;  // new products need a specific shop
-  openModal(`<h2>${p.id ? "Edit" : "Add"} product</h2>
-    <div class="field"><label>Name</label><input id="pName" value="${esc(p.name || "")}"></div>
-    <div class="field-row">
-      <div class="field"><label>Selling price</label><input id="pPrice" type="number" inputmode="decimal" value="${p.unit_price || 0}"></div>
-      <div class="field"><label>Unit cost</label><input id="pCost" type="number" inputmode="decimal" value="${p.unit_cost || 0}"></div>
-    </div>
-    ${p.id ? `<div class="field"><label>Photo \u2014 shown on your promo flyer</label>
-      <div style="display:flex;align-items:center;gap:12px">
-        <img id="pPhotoPrev" src="/api/products/${p.id}/photo?t=${Date.now()}"
-          onerror="this.style.display='none'"
-          style="width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">
-        <input id="pPhotoFile" type="file" accept="image/*" style="font-size:13px"
-          onchange="uploadProductPhoto(${p.id})">
-      </div></div>` : ""}
-    ${p.id ? `<button type="button" class="btn secondary btn-sm" style="margin:-4px 0 14px" onclick='priceCheckModal(${attrJson(p)})'>📈 Price check — should I charge more or less?</button>` : ""}
-    <div class="field-row">
-      <div class="field"><label>Current stock</label><input id="pStock" type="number" inputmode="decimal" value="${p.stock_qty || 0}"></div>
-      <div class="field"><label>Alert at / below</label><input id="pLow" type="number" inputmode="decimal" value="${p.low_stock_at || 0}"></div>
-    </div>
-    <p style="font-size:12px;color:var(--muted);margin:-4px 0 14px">Stock drops automatically as you record sales. Set "alert at" above 0 to get a low-stock warning (0 = off).</p>
-    <div class="field"><label>Suppliers — who you reorder from</label>
-      <div id="supList">${((p.suppliers && p.suppliers.length) ? p.suppliers : []).map(supplierRowHtml).join("")}</div>
-      <button class="btn secondary btn-sm" type="button" onclick="addSupplierRow()">＋ Add supplier</button>
-      <p style="font-size:12px;color:var(--muted);margin:8px 0 0">Add one or more. When stock runs low you can call them to restock in one tap.</p>
-    </div>
-    <button class="btn" style="margin-top:14px" onclick="saveProduct(${p.id || 0})">Save</button>
-    ${p.id ? `<button class="btn danger" style="margin-top:10px" onclick="delProduct(${p.id})">Delete</button>` : ""}`);
+ p = p || {};
+ if (!p.id && !requireShop()) return; // new products need a specific shop
+ openModal(`<h2>${p.id ? "Edit" : "Add"} product</h2>
+ <div class="field"><label>Name</label><input id="pName" value="${esc(p.name || "")}"></div>
+ <div class="field-row">
+ <div class="field"><label>Selling price</label><input id="pPrice" type="number" inputmode="decimal" value="${p.unit_price || 0}"></div>
+ <div class="field"><label>Unit cost</label><input id="pCost" type="number" inputmode="decimal" value="${p.unit_cost || 0}"></div>
+ </div>
+ ${p.id ? `<div class="field"><label>Photo \u2014 shown on your promo flyer</label>
+ <div style="display:flex;align-items:center;gap:12px">
+ <img id="pPhotoPrev" src="/api/products/${p.id}/photo?t=${Date.now()}"
+ onerror="this.style.display='none'"
+ style="width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">
+ <input id="pPhotoFile" type="file" accept="image/*" style="font-size:13px"
+ onchange="uploadProductPhoto(${p.id})">
+ </div></div>` : ""}
+ ${p.id ? `<button type="button" class="btn secondary btn-sm" style="margin:-4px 0 14px" onclick='priceCheckModal(${attrJson(p)})'>Price check — should I charge more or less?</button>` : ""}
+ <div class="field-row">
+ <div class="field"><label>Current stock</label><input id="pStock" type="number" inputmode="decimal" value="${p.stock_qty || 0}"></div>
+ <div class="field"><label>Alert at / below</label><input id="pLow" type="number" inputmode="decimal" value="${p.low_stock_at || 0}"></div>
+ </div>
+ <p style="font-size:12px;color:var(--muted);margin:-4px 0 14px">Stock drops automatically as you record sales. Set "alert at" above 0 to get a low-stock warning (0 = off).</p>
+ <div class="field"><label>Suppliers — who you reorder from</label>
+ <div id="supList">${((p.suppliers && p.suppliers.length) ? p.suppliers : []).map(supplierRowHtml).join("")}</div>
+ <button class="btn secondary btn-sm" type="button" onclick="addSupplierRow()">＋ Add supplier</button>
+ <p style="font-size:12px;color:var(--muted);margin:8px 0 0">Add one or more. When stock runs low you can call them to restock in one tap.</p>
+ </div>
+ <button class="btn" style="margin-top:14px" onclick="saveProduct(${p.id || 0})">Save</button>
+ ${p.id ? `<button class="btn danger" style="margin-top:10px" onclick="delProduct(${p.id})">Delete</button>` : ""}`);
 }
 // "What if I change the price?" — deterministic break-even math from the server
 // plus Claude's advice on customer reaction (Pro; 402 opens the paywall).
@@ -2257,14 +2257,14 @@ async function uploadProductPhoto(id) {
   fd.append("file", inp.files[0]);
   try { await api.sendForm(`/api/products/${id}/photo`, fd); }
   catch (e) { toast(e.message || "Couldn't upload photo"); return; }
-  const prev = document.getElementById("pPhotoPrev");
-  if (prev) { prev.style.display = ""; prev.src = `/api/products/${id}/photo?t=${Date.now()}`; }
-  toast("Photo added \u2014 it'll show on your promo flyer");
+ const prev = document.getElementById("pPhotoPrev");
+ if (prev) { prev.style.display = ""; prev.src = `/api/products/${id}/photo?t=${Date.now()}`; }
+ toast("Photo added \u2014 it'll show on your promo flyer");
 }
 
 function priceCheckModal(p) {
   const margin = p.unit_price ? Math.round((p.unit_price - p.unit_cost) / p.unit_price * 100) : 0;
-  openModal(`<h2>📈 Price check</h2>
+  openModal(`<h2><svg class="ic"><use href="#i-trend-up"/></svg> Price check</h2>
     <p style="font-size:14px;color:var(--muted);margin:0 0 14px">${esc(p.name)} — selling at <b>${money(p.unit_price)}</b>, cost ${money(p.unit_cost)} (${margin}% margin).</p>
     <div class="field"><label>New price to test</label><input id="pcPrice" type="number" inputmode="decimal" value="${p.unit_price || 0}"></div>
     <div style="display:flex;gap:8px;margin:-4px 0 14px">
@@ -2289,15 +2289,15 @@ async function runPriceCheck(id) {
   } catch (e) {
     out.innerHTML = "";
     if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't get advice");
-    return;
-  }
-  const m = r.math;
-  const be = m.below_cost
-    ? `⚠️ <b>Below cost</b> — at this price you lose money on every sale.`
-    : m.can_lose_sales_pct != null
-      ? `You could lose up to <b>${m.can_lose_sales_pct}% of sales</b> and still make the same profit.`
-      : m.need_more_sales_pct != null
-        ? `You'd need <b>${m.need_more_sales_pct}% more sales</b> just to make the same profit.` : "";
+ return;
+ }
+ const m = r.math;
+ const be = m.below_cost
+ ? ` <b>Below cost</b> — at this price you lose money on every sale.`
+ : m.can_lose_sales_pct != null
+ ? `You could lose up to <b>${m.can_lose_sales_pct}% of sales</b> and still make the same profit.`
+ : m.need_more_sales_pct != null
+ ? `You'd need <b>${m.need_more_sales_pct}% more sales</b> just to make the same profit.` : "";
   const hist = m.units_90d
     ? `<div class="meta" style="margin-top:6px">Last 90 days: ${m.units_90d} sold across ${m.sales_90d} sale${m.sales_90d === 1 ? "" : "s"}${m.breakeven_units_90d ? ` · break-even at this price: ${m.breakeven_units_90d}` : ""}</div>`
     : `<div class="meta" style="margin-top:6px">No sales recorded for this product in the last 90 days.</div>`;
@@ -2316,7 +2316,7 @@ function supplierRowHtml(s) {
   return `<div class="sup-row">
     <input class="sup-name" placeholder="Supplier name" value="${esc(s.name || "")}">
     <input class="sup-phone" placeholder="Phone" inputmode="tel" value="${esc(s.phone || "")}">
-    <button type="button" class="sup-del" onclick="this.closest('.sup-row').remove()" aria-label="Remove supplier">✕</button>
+    <button type="button" class="sup-del" onclick="this.closest('.sup-row').remove()" aria-label="Remove supplier"><svg class="ic"><use href="#i-close"/></svg></button>
   </div>`;
 }
 function addSupplierRow() {
@@ -2343,14 +2343,14 @@ async function saveProduct(id) {
 function callSupplier(product) {
   const sups = (product && product.suppliers) || [];
   if (!sups.length) { toast("No supplier saved for this product yet"); return; }
-  openModal(`<h2>📞 Call supplier</h2>
+  openModal(`<h2><svg class="ic"><use href="#i-phone"/></svg> Call supplier</h2>
     <p style="font-size:13px;color:var(--muted);margin:-6px 0 14px">Reorder ${esc(product.name || "this product")}</p>
     ${sups.map(s => `<div class="list-row">
       <div style="flex:1;min-width:0"><div class="main">${esc(s.name || "Supplier")}</div>
         <div class="meta">${esc(s.phone || "No number")}</div></div>
       <div style="display:flex;gap:6px;flex-shrink:0">
-        ${telNumber(s.phone) ? `<button class="wa-mini call" onclick='phoneCall(${attrJson({ phone: s.phone })})'>📞 Call</button>` : ""}
-        ${waNumber(s.phone) ? `<button class="wa-mini" onclick='whatsappCall(${attrJson({ name: s.name, phone: s.phone })})'>💬 WhatsApp</button>` : ""}
+        ${telNumber(s.phone) ? `<button class="wa-mini call" onclick='phoneCall(${attrJson({ phone: s.phone })})'><svg class="ic"><use href="#i-phone"/></svg> Call</button>` : ""}
+        ${waNumber(s.phone) ? `<button class="wa-mini" onclick='whatsappCall(${attrJson({ name: s.name, phone: s.phone })})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp</button>` : ""}
       </div></div>`).join("")}
     <button class="btn secondary" style="margin-top:14px" onclick="closeModal()">Close</button>`);
 }
@@ -2379,7 +2379,7 @@ async function viewSuppliers() {
   }
   const suppliers = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
   if (!suppliers.length) {
-    app.innerHTML = `<div class="card"><div class="empty"><div class="big">🚚</div>
+    app.innerHTML = `<div class="card"><div class="empty"><div class="big"><svg class="ic"><use href="#i-suppliers"/></svg></div>
       No suppliers yet.<br>Add a supplier to a product, then come back to build restock orders.</div>
       <button class="btn secondary" onclick="setView('products')">Go to Products</button></div>`;
     return;
@@ -2391,7 +2391,7 @@ async function viewSuppliers() {
       return `<div class="card list-row" style="cursor:pointer" onclick='supplierOrder(${attrJson(g)})'>
         <div style="flex:1;min-width:0"><div class="main">${esc(g.name)}</div>
           <div class="meta">${g.products.length} product${g.products.length > 1 ? "s" : ""}${low ? ` · <span class="neg">${low} low</span>` : ""}${g.phone ? ` · ${esc(g.phone)}` : " · no number"}</div></div>
-        <div class="amount">🧾</div></div>`;
+        <div class="amount"><svg class="ic"><use href="#i-sales"/></svg></div></div>`;
     }).join("")}`;
 }
 function supplierOrder(g) {
@@ -2399,47 +2399,47 @@ function supplierOrder(g) {
   const rows = [...(g.products || [])].sort((a, b) =>
     (_supLow(b) ? 1 : 0) - (_supLow(a) ? 1 : 0) || a.name.localeCompare(b.name));
   const num = waNumber(g.phone);
-  openModal(`<h2>🚚 Order from ${esc(g.name)}</h2>
+  openModal(`<h2><svg class="ic"><use href="#i-suppliers"/></svg> Order from ${esc(g.name)}</h2>
     <p style="font-size:13px;color:var(--muted);margin:-6px 0 12px">Set how many to reorder. Price is your cost — edit it if the supplier's price changed.</p>
-    <div class="po-head"><span>Product</span><span>Qty</span><span>Price</span></div>
-    <div id="poRows">
-      ${rows.map(p => `<div class="po-row" data-name="${esc(p.name)}">
-        <div class="po-name">${esc(p.name)} ${_supLow(p) ? '<span class="badge unpaid">low</span>' : ""}<div class="po-sub">${(+p.stock_qty).toLocaleString()} in stock</div></div>
-        <input class="po-qty" type="number" inputmode="numeric" min="0" placeholder="0" oninput="supplierOrderTotal()">
-        <input class="po-price" type="number" inputmode="decimal" min="0" value="${p.unit_cost || 0}" oninput="supplierOrderTotal()">
-      </div>`).join("")}
-    </div>
-    <div class="goal-meta" style="margin-top:12px"><strong>Order total</strong><strong id="poTotal">${money(0)}</strong></div>
-    ${num
-      ? `<button class="btn whatsapp" style="margin-top:14px" onclick='sendSupplierOrder(${attrJson(g)})'>📤 Send order on WhatsApp</button>`
-      : `<button class="btn" style="margin-top:14px" onclick='copySupplierOrder(${attrJson(g)})'>📋 Copy order</button>`}
-    <button class="btn secondary" style="margin-top:10px" onclick="closeModal()">Close</button>`);
+ <div class="po-head"><span>Product</span><span>Qty</span><span>Price</span></div>
+ <div id="poRows">
+ ${rows.map(p => `<div class="po-row" data-name="${esc(p.name)}">
+ <div class="po-name">${esc(p.name)} ${_supLow(p) ? '<span class="badge unpaid">low</span>' : ""}<div class="po-sub">${(+p.stock_qty).toLocaleString()} in stock</div></div>
+ <input class="po-qty" type="number" inputmode="numeric" min="0" placeholder="0" oninput="supplierOrderTotal()">
+ <input class="po-price" type="number" inputmode="decimal" min="0" value="${p.unit_cost || 0}" oninput="supplierOrderTotal()">
+ </div>`).join("")}
+ </div>
+ <div class="goal-meta" style="margin-top:12px"><strong>Order total</strong><strong id="poTotal">${money(0)}</strong></div>
+ ${num
+ ? `<button class="btn whatsapp" style="margin-top:14px" onclick='sendSupplierOrder(${attrJson(g)})'>Send order on WhatsApp</button>`
+ : `<button class="btn" style="margin-top:14px" onclick='copySupplierOrder(${attrJson(g)})'>Copy order</button>`}
+ <button class="btn secondary" style="margin-top:10px" onclick="closeModal()">Close</button>`);
 }
 function supplierOrderTotal() {
-  let total = 0;
-  document.querySelectorAll("#poRows .po-row").forEach(r => {
-    const q = parseFloat(r.querySelector(".po-qty").value) || 0;
-    const pr = parseFloat(r.querySelector(".po-price").value) || 0;
-    if (q > 0) total += q * pr;
-  });
-  const el = document.getElementById("poTotal");
-  if (el) el.textContent = money(total);
+ let total = 0;
+ document.querySelectorAll("#poRows .po-row").forEach(r => {
+ const q = parseFloat(r.querySelector(".po-qty").value) || 0;
+ const pr = parseFloat(r.querySelector(".po-price").value) || 0;
+ if (q > 0) total += q * pr;
+ });
+ const el = document.getElementById("poTotal");
+ if (el) el.textContent = money(total);
 }
 // Build the WhatsApp order text from the current inputs (null if nothing set).
 function _supplierOrderMsg(g) {
-  const lines = [];
-  let total = 0;
-  document.querySelectorAll("#poRows .po-row").forEach(r => {
-    const q = parseFloat(r.querySelector(".po-qty").value) || 0;
-    if (q <= 0) return;
-    const pr = parseFloat(r.querySelector(".po-price").value) || 0;
-    total += q * pr;
-    lines.push(`• ${r.dataset.name} — ${(+q).toLocaleString()} × ${money(pr)} = ${money(q * pr)}`);
-  });
-  if (!lines.length) { toast("Set a quantity for at least one item"); return null; }
-  const biz = (state.settings && state.settings.business_name) || "us";
-  const who = g.name && g.name !== "Supplier" ? g.name : "there";
-  return `Hello ${who}, I'd like to place a restock order for ${biz}:\n\n`
+ const lines = [];
+ let total = 0;
+ document.querySelectorAll("#poRows .po-row").forEach(r => {
+ const q = parseFloat(r.querySelector(".po-qty").value) || 0;
+ if (q <= 0) return;
+ const pr = parseFloat(r.querySelector(".po-price").value) || 0;
+ total += q * pr;
+ lines.push(`• ${r.dataset.name} — ${(+q).toLocaleString()} × ${money(pr)} = ${money(q * pr)}`);
+ });
+ if (!lines.length) { toast("Set a quantity for at least one item"); return null; }
+ const biz = (state.settings && state.settings.business_name) || "us";
+ const who = g.name && g.name !== "Supplier" ? g.name : "there";
+ return `Hello ${who}, I'd like to place a restock order for ${biz}:\n\n`
     + lines.join("\n") + `\n\nTotal: ${money(total)}\n\nPlease confirm availability and delivery. Thank you!`;
 }
 function sendSupplierOrder(g) {
@@ -2468,19 +2468,19 @@ async function viewCustomers() {
           <div style="flex:1;min-width:0"><div class="main">${esc(c.name)}</div>
             <div class="meta">${esc(c.phone || c.email || "")}</div></div>
           ${waNumber(c.phone) ? `<div style="display:flex;gap:6px;flex-shrink:0">
-            <button class="wa-mini call" onclick='event.stopPropagation(); phoneCall(${attrJson({ phone: c.phone })})'>📞 Call</button>
-            <button class="wa-mini" onclick='event.stopPropagation(); whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'>💬 WhatsApp</button>
+            <button class="wa-mini call" onclick='event.stopPropagation(); phoneCall(${attrJson({ phone: c.phone })})'><svg class="ic"><use href="#i-phone"/></svg> Call</button>
+            <button class="wa-mini" onclick='event.stopPropagation(); whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp</button>
           </div>` : ""}
         </div>`).join("")
-        : `<div class="empty"><div class="big">👥</div>No customers yet</div>`}
+        : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-customers"/></svg></div>No customers yet</div>`}
     </div>`;
 }
 function customerModal(c) {
   c = c || {};
   openModal(`<h2>${c.id ? "Edit" : "Add"} customer</h2>
     ${c.id && waNumber(c.phone) ? `<div style="display:flex;gap:10px;margin-bottom:14px">
-      <button class="btn" style="flex:1" onclick='phoneCall(${attrJson({ phone: c.phone })})'>📞 Call</button>
-      <button class="btn" style="flex:1;background:#25d366" onclick='whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'>💬 WhatsApp</button>
+      <button class="btn" style="flex:1" onclick='phoneCall(${attrJson({ phone: c.phone })})'><svg class="ic"><use href="#i-phone"/></svg> Call</button>
+      <button class="btn" style="flex:1;background:#25d366" onclick='whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp</button>
     </div>` : ""}
     <div class="field"><label>Name</label><input id="cName" value="${esc(c.name || "")}"></div>
     <div class="field"><label>Phone</label><input id="cPhone" value="${esc(c.phone || "")}"></div>
@@ -2508,29 +2508,29 @@ async function viewOrders() {
   let linkCard;
   if (!pro) {
     linkCard = `<div class="card">
-      <div class="section-title">🛒 Take orders online <span class="pill">PRO</span></div>
+      <div class="section-title"><svg class="ic"><use href="#i-orders"/></svg> Take orders online <span class="pill">PRO</span></div>
       <p style="font-size:14px;color:var(--muted);margin:0 0 12px">Share one link with customers and WhatsApp groups. They order from what's in stock and it lands here for you to fulfil.</p>
-      <button class="btn" onclick="showUpgrade('Take orders online — share a live shop link with your customers.')">⭐ Upgrade to Pro</button>
-    </div>`;
-  } else if (!state.activeShop) {
-    linkCard = `<div class="card"><div class="section-title">🛒 Order link</div>
-      <p style="font-size:14px;color:var(--muted);margin:0">Open a specific shop (tap the name at the top) to share its order link — each shop has its own.</p></div>`;
-  } else if (st.enabled && st.url) {
-    linkCard = `<div class="card">
-      <div class="section-title">🛒 Your order link is live</div>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Customers at <strong>${esc(activeShopName())}</strong> order from your in-stock items.</p>
-      <div class="orderlink">${esc(st.url)}</div>
-      <div class="btn-row" style="margin-top:12px">
-        <button class="btn whatsapp" onclick="shareOrderLink('whatsapp')">💬 Share on WhatsApp</button>
-        <button class="btn secondary" onclick="shareOrderLink('copy')">🔗 Copy link</button>
-      </div>
-      ${alertsRowHtml()}
-      <button class="btn ghost" style="margin-top:10px" onclick="disableOrders()">Turn off orders</button>
-    </div>`;
-  } else {
-    linkCard = `<div class="card">
-      <div class="section-title">🛒 Take orders online</div>
-      <p style="font-size:14px;color:var(--muted);margin:0 0 12px">Turn on a shareable link for <strong>${esc(activeShopName())}</strong>. Customers order from what's in stock and it arrives here to fulfil.</p>
+ <button class="btn" onclick="showUpgrade('Take orders online — share a live shop link with your customers.')">Upgrade to Pro</button>
+ </div>`;
+ } else if (!state.activeShop) {
+ linkCard = `<div class="card"><div class="section-title">Order link</div>
+ <p style="font-size:14px;color:var(--muted);margin:0">Open a specific shop (tap the name at the top) to share its order link — each shop has its own.</p></div>`;
+ } else if (st.enabled && st.url) {
+ linkCard = `<div class="card">
+ <div class="section-title">Your order link is live</div>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Customers at <strong>${esc(activeShopName())}</strong> order from your in-stock items.</p>
+ <div class="orderlink">${esc(st.url)}</div>
+ <div class="btn-row" style="margin-top:12px">
+ <button class="btn whatsapp" onclick="shareOrderLink('whatsapp')">Share on WhatsApp</button>
+ <button class="btn secondary" onclick="shareOrderLink('copy')">Copy link</button>
+ </div>
+ ${alertsRowHtml()}
+ <button class="btn ghost" style="margin-top:10px" onclick="disableOrders()">Turn off orders</button>
+ </div>`;
+ } else {
+ linkCard = `<div class="card">
+ <div class="section-title">Take orders online</div>
+ <p style="font-size:14px;color:var(--muted);margin:0 0 12px">Turn on a shareable link for <strong>${esc(activeShopName())}</strong>. Customers order from what's in stock and it arrives here to fulfil.</p>
       <button class="btn" onclick="enableOrders()">Create my order link</button>
     </div>`;
   }
@@ -2555,91 +2555,91 @@ async function viewOrders() {
   } catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") return;
     document.getElementById("ordersList").innerHTML = `<div class="card"><div class="empty">Couldn't load orders</div></div>`;
-  }
+ }
 }
 function orderBadge(status) {
-  if (status === "fulfilled") return '<span class="badge paid">fulfilled</span>';
-  if (status === "declined") return '<span class="badge unpaid">declined</span>';
-  return '<span class="badge partial">new</span>';
+ if (status === "fulfilled") return '<span class="badge paid">fulfilled</span>';
+ if (status === "declined") return '<span class="badge unpaid">declined</span>';
+ return '<span class="badge partial">new</span>';
 }
 function orderDetail(o) {
-  const cust = { name: o.customer_name, phone: o.customer_phone };
-  const canReach = waNumber(o.customer_phone) || telNumber(o.customer_phone);
-  openModal(`<h2>🛒 Order from ${esc(o.customer_name || "Customer")}</h2>
-    <div class="meta" style="color:var(--muted);margin:-6px 0 12px">${fmtDate(o.created_at)} ${orderBadge(o.status)}</div>
-    ${canReach ? `<div class="btn-row" style="margin-bottom:14px">
-      ${telNumber(o.customer_phone) ? `<button class="btn secondary" onclick='phoneCall(${attrJson({ phone: o.customer_phone })})'>📞 Call</button>` : ""}
-      ${waNumber(o.customer_phone) ? `<button class="btn" style="background:#25d366" onclick='whatsappCall(${attrJson(cust)})'>💬 WhatsApp</button>` : ""}
-    </div>` : (o.customer_phone ? `<p class="meta" style="color:var(--muted);margin:0 0 12px">📞 ${esc(o.customer_phone)}</p>` : "")}
-    <div class="card" style="background:var(--bg)">
-      ${o.items.map(it => `<div class="list-row"><div style="flex:1;min-width:0"><div class="main">${esc(it.description)}</div>
-        <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
-        <div class="amount">${money(it.qty * it.unit_price)}</div></div>`).join("")}
-      <div class="list-row" style="border-top:2px solid var(--line)"><div class="main">Total</div>
-        <div class="amount">${money(o.total)}</div></div>
-    </div>
-    ${o.note ? `<p style="font-size:13px;margin:12px 2px 0"><strong>Note:</strong> ${esc(o.note)}</p>` : ""}
-    ${o.status === "pending" ? `<button class="btn success" style="margin-top:16px" onclick="fulfillOrder(${o.id})">✓ Fulfil — create invoice &amp; reduce stock</button>
-      <button class="btn danger" style="margin-top:10px" onclick="declineOrder(${o.id})">Decline order</button>`
-      : (o.status === "fulfilled" ? `<p class="meta" style="color:var(--muted);margin-top:14px">✅ Fulfilled — an invoice was created and stock reduced.</p>`
-        : `<p class="meta" style="color:var(--muted);margin-top:14px">This order was declined.</p>`)}`);
+ const cust = { name: o.customer_name, phone: o.customer_phone };
+ const canReach = waNumber(o.customer_phone) || telNumber(o.customer_phone);
+ openModal(`<h2>Order from ${esc(o.customer_name || "Customer")}</h2>
+ <div class="meta" style="color:var(--muted);margin:-6px 0 12px">${fmtDate(o.created_at)} ${orderBadge(o.status)}</div>
+ ${canReach ? `<div class="btn-row" style="margin-bottom:14px">
+ ${telNumber(o.customer_phone) ? `<button class="btn secondary" onclick='phoneCall(${attrJson({ phone: o.customer_phone })})'>Call</button>` : ""}
+ ${waNumber(o.customer_phone) ? `<button class="btn" style="background:#25d366" onclick='whatsappCall(${attrJson(cust)})'>WhatsApp</button>` : ""}
+ </div>` : (o.customer_phone ? `<p class="meta" style="color:var(--muted);margin:0 0 12px">${esc(o.customer_phone)}</p>` : "")}
+ <div class="card" style="background:var(--bg)">
+ ${o.items.map(it => `<div class="list-row"><div style="flex:1;min-width:0"><div class="main">${esc(it.description)}</div>
+ <div class="meta">${it.qty} × ${money(it.unit_price)}</div></div>
+ <div class="amount">${money(it.qty * it.unit_price)}</div></div>`).join("")}
+ <div class="list-row" style="border-top:2px solid var(--line)"><div class="main">Total</div>
+ <div class="amount">${money(o.total)}</div></div>
+ </div>
+ ${o.note ? `<p style="font-size:13px;margin:12px 2px 0"><strong>Note:</strong> ${esc(o.note)}</p>` : ""}
+ ${o.status === "pending" ? `<button class="btn success" style="margin-top:16px" onclick="fulfillOrder(${o.id})">✓ Fulfil — create invoice &amp; reduce stock</button>
+ <button class="btn danger" style="margin-top:10px" onclick="declineOrder(${o.id})">Decline order</button>`
+ : (o.status === "fulfilled" ? `<p class="meta" style="color:var(--muted);margin-top:14px">Fulfilled — an invoice was created and stock reduced.</p>`
+ : `<p class="meta" style="color:var(--muted);margin-top:14px">This order was declined.</p>`)}`);
 }
 async function fulfillOrder(id) {
-  try {
-    const r = await api.send(`/api/orders/${id}/fulfill`, "POST");
-    closeModal(); toast(`Invoice ${r.invoice_no} created ✓`); render();
-  } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't fulfil"); }
+ try {
+ const r = await api.send(`/api/orders/${id}/fulfill`, "POST");
+ closeModal(); toast(`Invoice ${r.invoice_no} created ✓`); render();
+ } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't fulfil"); }
 }
 async function declineOrder(id) {
   try { await api.send(`/api/orders/${id}/decline`, "POST"); closeModal(); toast("Order declined"); render(); }
   catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't decline"); }
 }
 async function enableOrders() {
-  try {
-    state.orders = await api.send("/api/orders/enable", "POST");
-    toast("Order link is live 🛒"); render();
-    pushSubscribe(false); // ask to allow new-order alerts (user just tapped → gesture ok)
-  } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't turn on orders"); }
+ try {
+ state.orders = await api.send("/api/orders/enable", "POST");
+ toast("Order link is live"); render();
+ pushSubscribe(false); // ask to allow new-order alerts (user just tapped → gesture ok)
+ } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't turn on orders"); }
 }
 // Alert status row for the Orders card — covers every permission state so the
 // merchant always knows whether alerts will arrive and how to fix it if not.
 function alertsRowHtml() {
   if (!("Notification" in window) || !("PushManager" in window))
-    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0">🔔 To get order alerts, install SalesPal to your home screen first (menu → Install app).</p>`;
+    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0"><svg class="ic"><use href="#i-bell"/></svg> To get order alerts, install SalesPal to your home screen first (menu → Install app).</p>`;
   const p = Notification.permission;
   if (p === "granted")
     return `<div class="btn-row" style="margin-top:10px;align-items:center">
-      <span style="font-size:13px;color:var(--muted)">🔔 Alerts on for this device</span>
+      <span style="font-size:13px;color:var(--muted)"><svg class="ic"><use href="#i-bell"/></svg> Alerts on for this device</span>
       <button class="btn outline" onclick="pushTest()">Send test alert</button></div>`;
   if (p === "denied")
-    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0">🔕 Alerts are blocked — allow notifications for SalesPal in your phone settings, then reopen the app.</p>`;
-  return `<button class="btn outline" style="margin-top:10px" onclick="pushSubscribe(false).then(()=>viewOrders())">🔔 Alert me when orders come in</button>`;
+    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0"><svg class="ic"><use href="#i-bell-off"/></svg> Alerts are blocked — allow notifications for SalesPal in your phone settings, then reopen the app.</p>`;
+  return `<button class="btn outline" style="margin-top:10px" onclick="pushSubscribe(false).then(()=>viewOrders())"><svg class="ic"><use href="#i-bell"/></svg> Alert me when orders come in</button>`;
 }
 async function pushTest() {
   try {
     await pushSubscribe(true); // make sure this device's subscription is registered
-    const r = await api.send("/api/push/test", "POST");
-    toast(`Test sent to ${r.devices} device${r.devices > 1 ? "s" : ""} — check your notifications`);
-  } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't send test"); }
+ const r = await api.send("/api/push/test", "POST");
+ toast(`Test sent to ${r.devices} device${r.devices > 1 ? "s" : ""} — check your notifications`);
+ } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't send test"); }
 }
 // Subscribe this device to new-order alerts. silent=true (app open) only
 // refreshes an already-granted subscription; silent=false may show the
 // browser's permission prompt. Never throws — alerts are best-effort.
 async function pushSubscribe(silent) {
-  try {
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
-    if (Notification.permission === "denied") return;
-    if (silent && Notification.permission !== "granted") return;
-    if (!silent && Notification.permission !== "granted") {
-      if ((await Notification.requestPermission()) !== "granted") return;
-    }
-    const reg = await navigator.serviceWorker.ready;
-    const { key } = await api.get("/api/push/key");
-    const b = atob(key.replace(/-/g, "+").replace(/_/g, "/").padEnd(key.length + (4 - key.length % 4) % 4, "="));
-    const appKey = Uint8Array.from(b, c => c.charCodeAt(0));
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
-    await api.send("/api/push/subscribe", "POST", sub.toJSON());
-    if (!silent) toast("🔔 You'll get an alert for every new order");
+ try {
+ if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
+ if (Notification.permission === "denied") return;
+ if (silent && Notification.permission !== "granted") return;
+ if (!silent && Notification.permission !== "granted") {
+ if ((await Notification.requestPermission()) !== "granted") return;
+ }
+ const reg = await navigator.serviceWorker.ready;
+ const { key } = await api.get("/api/push/key");
+ const b = atob(key.replace(/-/g, "+").replace(/_/g, "/").padEnd(key.length + (4 - key.length % 4) % 4, "="));
+ const appKey = Uint8Array.from(b, c => c.charCodeAt(0));
+ const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+ await api.send("/api/push/subscribe", "POST", sub.toJSON());
+ if (!silent) toast("You'll get an alert for every new order");
   } catch (e) { /* no support / dismissed prompt — orders still work */ }
 }
 async function disableOrders() {
@@ -2649,9 +2649,9 @@ async function disableOrders() {
 // Share the storefront link. WhatsApp opens a chat (they pick a contact/group);
 // copy/native-share suits any channel. Synchronous → deep-links reliably.
 function shareOrderLink(how) {
-  const url = state.orders && state.orders.url;
-  if (!url) return;
-  const msg = `🛒 Order from ${activeShopName()}! Browse what's in stock and place your order here:\n${url}`;
+ const url = state.orders && state.orders.url;
+ if (!url) return;
+ const msg = `Order from ${activeShopName()}! Browse what's in stock and place your order here:\n${url}`;
   if (how === "whatsapp") { openExternal(`https://wa.me/?text=${encodeURIComponent(msg)}`); return; }
   if (navigator.share) { navigator.share({ title: activeShopName(), text: msg, url }).catch(() => {}); return; }
   if (navigator.clipboard) navigator.clipboard.writeText(url);
@@ -2664,26 +2664,26 @@ async function referralModal() {
   let r;
   try { r = await api.get("/api/referral", { fresh: true }); }
   catch (e) { toast(e.message || "Couldn't load your invite link"); return; }
-  window._refLink = r.link;
-  const earned = r.months_earned;
-  openModal(`<h3>🎁 Refer &amp; earn</h3>
-    <p style="font-size:14px;color:var(--muted);margin:6px 0 14px">Invite another shop owner.
-    They get <strong>1 month of Pro free</strong> when they join with your link — and when they
-    record their first sale, <strong>you get a free month too</strong>.</p>
-    <div class="field"><label>Your invite link</label><input readonly value="${r.link}" onclick="this.select()"></div>
-    <button class="btn whatsapp" onclick="shareReferral('whatsapp')">💬 Share on WhatsApp</button>
-    <button class="btn outline" style="margin-top:10px" onclick="shareReferral('copy')">🔗 Copy link</button>
-    <p style="font-size:13px;color:var(--muted);text-align:center;margin:14px 0 0">
-      ${r.joined} friend${r.joined === 1 ? "" : "s"} joined · ${earned} free month${earned === 1 ? "" : "s"} earned</p>`);
+ window._refLink = r.link;
+ const earned = r.months_earned;
+ openModal(`<h3>Refer &amp; earn</h3>
+ <p style="font-size:14px;color:var(--muted);margin:6px 0 14px">Invite another shop owner.
+ They get <strong>1 month of Pro free</strong> when they join with your link — and when they
+ record their first sale, <strong>you get a free month too</strong>.</p>
+ <div class="field"><label>Your invite link</label><input readonly value="${r.link}" onclick="this.select()"></div>
+ <button class="btn whatsapp" onclick="shareReferral('whatsapp')">Share on WhatsApp</button>
+ <button class="btn outline" style="margin-top:10px" onclick="shareReferral('copy')">Copy link</button>
+ <p style="font-size:13px;color:var(--muted);text-align:center;margin:14px 0 0">
+ ${r.joined} friend${r.joined === 1 ? "" : "s"} joined · ${earned} free month${earned === 1 ? "" : "s"} earned</p>`);
 }
 
 function shareReferral(how) {
-  const url = window._refLink;
-  if (!url) return;
-  const msg = `I use SalesPal to track my sales, see who owes me money, and send invoices on WhatsApp. Join with my link and we BOTH get 1 month of Pro free:\n${url}`;
-  if (how === "whatsapp") { openExternal(`https://wa.me/?text=${encodeURIComponent(msg)}`); return; }
-  if (navigator.clipboard) navigator.clipboard.writeText(url);
-  toast("Invite link copied — paste it anywhere");
+ const url = window._refLink;
+ if (!url) return;
+ const msg = `I use SalesPal to track my sales, see who owes me money, and send invoices on WhatsApp. Join with my link and we BOTH get 1 month of Pro free:\n${url}`;
+ if (how === "whatsapp") { openExternal(`https://wa.me/?text=${encodeURIComponent(msg)}`); return; }
+ if (navigator.clipboard) navigator.clipboard.writeText(url);
+ toast("Invite link copied — paste it anywhere");
 }
 
 // ---------- PROMO FLYER ----------
@@ -2716,79 +2716,79 @@ function sharePromo(fmt) {
 // ---------- SETTINGS ----------
 function transferCardHtml(pay) {
   // Instant bank transfer to the merchant's own account (no processor, no fee).
-  const t = `<div class="section-title">Bank transfer · instant ⚡</div>`;
-  if (pay.transfer_enabled) {
-    return `<div class="card">${t}
-      <p style="font-size:14px;margin:0 0 6px">✅ On — customers can pay by direct transfer to your account. Money lands <strong>instantly</strong>, no fees.</p>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">${esc(pay.transfer_number)} · ${esc(pay.transfer_bank)} · ${esc(pay.transfer_name)}</p>
-      <div class="btn-row">
-        <button class="btn outline" onclick="transferModal()">Edit account</button>
-        <button class="btn danger" onclick="disableTransfer()">Turn off</button>
-      </div></div>`;
-  }
-  return `<div class="card">${t}
-    <p style="font-size:14px;margin:0 0 10px">Let customers pay by <strong>direct bank transfer</strong> to your own account — the money lands <strong>instantly</strong> and there are <strong>no fees</strong>. You confirm each transfer when your bank alert arrives.</p>
-    <button class="btn" onclick="transferModal()">⚡ Set up instant transfer</button></div>`;
+ const t = `<div class="section-title">Bank transfer · instant</div>`;
+ if (pay.transfer_enabled) {
+ return `<div class="card">${t}
+ <p style="font-size:14px;margin:0 0 6px">On — customers can pay by direct transfer to your account. Money lands <strong>instantly</strong>, no fees.</p>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 12px">${esc(pay.transfer_number)} · ${esc(pay.transfer_bank)} · ${esc(pay.transfer_name)}</p>
+ <div class="btn-row">
+ <button class="btn outline" onclick="transferModal()">Edit account</button>
+ <button class="btn danger" onclick="disableTransfer()">Turn off</button>
+ </div></div>`;
+ }
+ return `<div class="card">${t}
+ <p style="font-size:14px;margin:0 0 10px">Let customers pay by <strong>direct bank transfer</strong> to your own account — the money lands <strong>instantly</strong> and there are <strong>no fees</strong>. You confirm each transfer when your bank alert arrives.</p>
+ <button class="btn" onclick="transferModal()">Set up instant transfer</button></div>`;
 }
 
 function payCardHtml(pay, pro) {
-  const title = `<div class="section-title">Card payments</div>`;
-  if (!pay || !pay.billing_enabled) {
-    return `<div class="card">${title}
-      <p style="font-size:13px;color:var(--muted);margin:0">Let customers pay your invoices online — coming soon.</p></div>`;
-  }
-  if (!pro) {
-    return `<div class="card"><div class="section-title">Online payments</div>
-      <p style="font-size:14px;margin:0 0 10px">Get paid faster — add <strong>Pay Now</strong> options to your invoices: instant bank transfer (no fees) or card / USSD.</p>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">⭐ A Pro feature. SalesPal takes 0% — you keep every naira.</p>
-      <button class="btn" onclick="showUpgrade()">⭐ Upgrade to Pro</button></div>`;
-  }
-  if (pay.connected) {
-    return `<div class="card">${title}
-      <p style="font-size:14px;margin:0 0 6px">✅ On — customers can also pay by card, transfer or USSD via Paystack.</p>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 6px">Payouts to <strong>${esc(pay.account_name)}</strong> · ${esc(pay.bank_name)} ${esc(pay.account_masked)}</p>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">⏱️ Paystack settles card payments to your bank the <strong>next business day</strong>.</p>
-      <div class="btn-row">
-        <button class="btn outline" onclick="connectPayoutModal()">Change bank</button>
-        <button class="btn danger" onclick="disconnectPayout()">Turn off</button>
-      </div></div>`;
-  }
-  return `<div class="card">${title}
-    <p style="font-size:14px;margin:0 0 10px">Also accept <strong>card &amp; USSD</strong> via Paystack (settles to your bank next business day, SalesPal takes 0%).</p>
-    <button class="btn outline" onclick="connectPayoutModal()">💳 Set up card payments</button></div>`;
+ const title = `<div class="section-title">Card payments</div>`;
+ if (!pay || !pay.billing_enabled) {
+ return `<div class="card">${title}
+ <p style="font-size:13px;color:var(--muted);margin:0">Let customers pay your invoices online — coming soon.</p></div>`;
+ }
+ if (!pro) {
+ return `<div class="card"><div class="section-title">Online payments</div>
+ <p style="font-size:14px;margin:0 0 10px">Get paid faster — add <strong>Pay Now</strong> options to your invoices: instant bank transfer (no fees) or card / USSD.</p>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 12px">A Pro feature. SalesPal takes 0% — you keep every naira.</p>
+ <button class="btn" onclick="showUpgrade()">Upgrade to Pro</button></div>`;
+ }
+ if (pay.connected) {
+ return `<div class="card">${title}
+ <p style="font-size:14px;margin:0 0 6px">On — customers can also pay by card, transfer or USSD via Paystack.</p>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 6px">Payouts to <strong>${esc(pay.account_name)}</strong> · ${esc(pay.bank_name)} ${esc(pay.account_masked)}</p>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 12px"> Paystack settles card payments to your bank the <strong>next business day</strong>.</p>
+ <div class="btn-row">
+ <button class="btn outline" onclick="connectPayoutModal()">Change bank</button>
+ <button class="btn danger" onclick="disconnectPayout()">Turn off</button>
+ </div></div>`;
+ }
+ return `<div class="card">${title}
+ <p style="font-size:14px;margin:0 0 10px">Also accept <strong>card &amp; USSD</strong> via Paystack (settles to your bank next business day, SalesPal takes 0%).</p>
+ <button class="btn outline" onclick="connectPayoutModal()">Set up card payments</button></div>`;
 }
 
 async function viewSettings() {
-  const s = await api.get("/api/settings");
-  const h = await api.get("/api/health");
-  const pay = await api.get("/api/pay/status").catch(() => ({}));
-  const pro = isPro();
-  const pl = state.plan || {}, usage = pl.usage || {}, lim = pl.limits || {};
-  app.innerHTML = `
-    <div class="card"><div class="section-title">Business details</div>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">These appear on your invoices.</p>
-      <div class="field"><label>Business name</label><input id="sName" value="${esc(s.business_name)}"></div>
-      <div class="field"><label>Currency symbol</label><input id="sCur" value="${esc(s.currency)}" maxlength="4"></div>
-      <div class="field"><label>Phone</label><input id="sPhone" value="${esc(s.phone)}"></div>
-      <div class="field"><label>Email</label><input id="sEmail" value="${esc(s.email)}"></div>
-      <div class="field"><label>Address</label><input id="sAddr" value="${esc(s.address)}"></div>
-      <button class="btn" onclick="saveSettings()">Save</button>
-    </div>
-    ${pro ? transferCardHtml(pay) : ""}
-    ${payCardHtml(pay, pro)}
-    <div class="card"><div class="section-title">AI insights</div>
-      <p style="font-size:14px;margin:0">${h.ai_enabled
-        ? "✅ Claude AI is connected. Advice & weekly reports are live."
-        : "⚠️ Not connected. Add ANTHROPIC_API_KEY in backend/.env to enable advice."}</p>
-    </div>
-    <div class="card"><div class="section-title">Your plan</div>
-      <p style="font-size:15px;margin:0 0 10px">You're on the <span class="pill ${pro ? 'pro' : ''}">${pro ? 'PRO' : 'FREE'}</span> plan.</p>
+ const s = await api.get("/api/settings");
+ const h = await api.get("/api/health");
+ const pay = await api.get("/api/pay/status").catch(() => ({}));
+ const pro = isPro();
+ const pl = state.plan || {}, usage = pl.usage || {}, lim = pl.limits || {};
+ app.innerHTML = `
+ <div class="card"><div class="section-title">Business details</div>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 12px">These appear on your invoices.</p>
+ <div class="field"><label>Business name</label><input id="sName" value="${esc(s.business_name)}"></div>
+ <div class="field"><label>Currency symbol</label><input id="sCur" value="${esc(s.currency)}" maxlength="4"></div>
+ <div class="field"><label>Phone</label><input id="sPhone" value="${esc(s.phone)}"></div>
+ <div class="field"><label>Email</label><input id="sEmail" value="${esc(s.email)}"></div>
+ <div class="field"><label>Address</label><input id="sAddr" value="${esc(s.address)}"></div>
+ <button class="btn" onclick="saveSettings()">Save</button>
+ </div>
+ ${pro ? transferCardHtml(pay) : ""}
+ ${payCardHtml(pay, pro)}
+ <div class="card"><div class="section-title">AI insights</div>
+ <p style="font-size:14px;margin:0">${h.ai_enabled
+ ? "Claude AI is connected. Advice & weekly reports are live."
+ : " Not connected. Add ANTHROPIC_API_KEY in backend/.env to enable advice."}</p>
+ </div>
+ <div class="card"><div class="section-title">Your plan</div>
+ <p style="font-size:15px;margin:0 0 10px">You're on the <span class="pill ${pro ? 'pro' : ''}">${pro ? 'PRO' : 'FREE'}</span> plan.</p>
       ${pro
         ? `<p style="font-size:13px;color:var(--muted);margin:0">Unlimited invoices &amp; products, plus AI insights.${pl.plan_expires_at ? ` Active until <strong>${fmtDate(pl.plan_expires_at)}</strong>.` : ""}</p>`
         : `<p style="font-size:13px;color:var(--muted);margin:0 0 12px">${usage.invoices_this_month || 0}/${lim.invoices_per_month} invoices this month · ${usage.products || 0}/${lim.products} products used. AI insights are locked.</p>
-           <button class="btn" onclick="showUpgrade()">⭐ Upgrade to Pro</button>`}
+           <button class="btn" onclick="showUpgrade()"><svg class="ic"><use href="#i-star"/></svg> Upgrade to Pro</button>`}
     </div>
-    <div class="card"><div class="section-title">👥 Shop attendants</div>
+    <div class="card"><div class="section-title"><svg class="ic"><use href="#i-customers"/></svg> Shop attendants</div>
       <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Give staff their own login to record sales & payments and see stock — they never see profit, costs, or settings.</p>
       <button class="btn secondary" onclick="staffModal()">Manage attendants</button>
     </div>
@@ -2817,7 +2817,7 @@ async function changePassword() {
 }
 // ---------- Shop attendants (owner-managed staff logins) ----------
 async function staffModal() {
-  openModal(`<h2>👥 Shop attendants</h2><div class="loading">Loading…</div>`);
+  openModal(`<h2><svg class="ic"><use href="#i-customers"/></svg> Shop attendants</h2><div class="loading">Loading…</div>`);
   let staff = [], shops = [];
   try {
     [staff, shops] = await Promise.all([
@@ -2825,85 +2825,85 @@ async function staffModal() {
       api.get("/api/shops").then(r => r.shops || []),
     ]);
   } catch (e) { closeModal(); toast(e.message || "Couldn't load"); return; }
-  const shopOpts = (sel) => shops.map(s =>
-    `<option value="${s.id}" ${s.id === sel ? "selected" : ""}>${esc(s.name)}</option>`).join("");
-  const multi = shops.length > 1;
-  const rows = staff.length ? staff.map(s => `
-    <div class="list-row">
-      <div style="flex:1;min-width:0"><div class="main">${esc(s.name || s.username)}</div>
-        <div class="meta">@${esc(s.username)}${multi ? "" : ` · ${esc(s.shop_name || "shop")}`}</div>
-        ${multi ? `<select class="staff-shop" onchange="reassignStaff(${s.id}, this.value)">${shopOpts(s.shop_id)}</select>` : ""}</div>
-      <button class="wa-mini" style="background:var(--red-bg);color:var(--red)" onclick="delStaff(${s.id})">Remove</button>
-    </div>`).join("") : `<div class="empty">No attendants yet</div>`;
-  updateModal(`<h2>👥 Shop attendants</h2>
-    <div style="margin-bottom:14px">${rows}</div>
-    <div class="section-title">Add an attendant</div>
-    <div class="field"><label>Name</label><input id="stName" placeholder="e.g. Amaka"></div>
-    <div class="field"><label>Shop</label><select id="stShop">${shopOpts()}</select></div>
-    <div class="field"><label>Username (they log in with this)</label>
-      <input id="stUser" autocapitalize="none" autocomplete="off" placeholder="e.g. amaka"></div>
-    <div class="field"><label>Password / PIN</label><input id="stPass" placeholder="At least 6 characters"></div>
-    <button class="btn" onclick="saveStaff()">Create attendant</button>
-    <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Done</button>`);
+ const shopOpts = (sel) => shops.map(s =>
+ `<option value="${s.id}" ${s.id === sel ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+ const multi = shops.length > 1;
+ const rows = staff.length ? staff.map(s => `
+ <div class="list-row">
+ <div style="flex:1;min-width:0"><div class="main">${esc(s.name || s.username)}</div>
+ <div class="meta">@${esc(s.username)}${multi ? "" : ` · ${esc(s.shop_name || "shop")}`}</div>
+ ${multi ? `<select class="staff-shop" onchange="reassignStaff(${s.id}, this.value)">${shopOpts(s.shop_id)}</select>` : ""}</div>
+ <button class="wa-mini" style="background:var(--red-bg);color:var(--red)" onclick="delStaff(${s.id})">Remove</button>
+ </div>`).join("") : `<div class="empty">No attendants yet</div>`;
+ updateModal(`<h2>Shop attendants</h2>
+ <div style="margin-bottom:14px">${rows}</div>
+ <div class="section-title">Add an attendant</div>
+ <div class="field"><label>Name</label><input id="stName" placeholder="e.g. Amaka"></div>
+ <div class="field"><label>Shop</label><select id="stShop">${shopOpts()}</select></div>
+ <div class="field"><label>Username (they log in with this)</label>
+ <input id="stUser" autocapitalize="none" autocomplete="off" placeholder="e.g. amaka"></div>
+ <div class="field"><label>Password / PIN</label><input id="stPass" placeholder="At least 6 characters"></div>
+ <button class="btn" onclick="saveStaff()">Create attendant</button>
+ <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Done</button>`);
 }
 async function saveStaff() {
-  const name = document.getElementById("stName").value.trim();
-  const username = document.getElementById("stUser").value.trim().toLowerCase();
-  const password = document.getElementById("stPass").value;
-  const shop_id = parseInt(document.getElementById("stShop").value, 10) || null;
-  if (username.length < 3) return toast("Username needs 3+ characters");
-  if ((password || "").length < 6) return toast("Password needs 6+ characters");
-  try { await api.send("/api/staff", "POST", { name, username, password, shop_id }); }
-  catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't add"); return; }
+ const name = document.getElementById("stName").value.trim();
+ const username = document.getElementById("stUser").value.trim().toLowerCase();
+ const password = document.getElementById("stPass").value;
+ const shop_id = parseInt(document.getElementById("stShop").value, 10) || null;
+ if (username.length < 3) return toast("Username needs 3+ characters");
+ if ((password || "").length < 6) return toast("Password needs 6+ characters");
+ try { await api.send("/api/staff", "POST", { name, username, password, shop_id }); }
+ catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't add"); return; }
   toast(`Attendant @${username} created ✓`);
   staffModal();
 }
 async function reassignStaff(id, shopId) {
   try { await api.send(`/api/staff/${id}`, "PUT", { shop_id: parseInt(shopId, 10) }); }
   catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't reassign"); return; }
-  toast("Shop reassigned ✓");
+ toast("Shop reassigned ✓");
 }
 async function delStaff(id) {
-  if (!confirm("Remove this attendant? They won't be able to log in anymore.")) return;
+ if (!confirm("Remove this attendant? They won't be able to log in anymore.")) return;
   try { await api.send(`/api/staff/${id}`, "DELETE"); } catch (e) { toast(e.message || "Couldn't remove"); return; }
-  toast("Attendant removed");
-  staffModal();
+ toast("Attendant removed");
+ staffModal();
 }
 
 async function saveSettings() {
-  await api.send("/api/settings", "PUT", {
-    business_name: document.getElementById("sName").value,
-    currency: document.getElementById("sCur").value || "₦",
-    phone: document.getElementById("sPhone").value,
-    email: document.getElementById("sEmail").value,
-    address: document.getElementById("sAddr").value });
-  state.settings = await api.get("/api/settings");
-  updateShopBar();  // appbar shows the active shop, not the business name
-  toast("Settings saved");
+ await api.send("/api/settings", "PUT", {
+ business_name: document.getElementById("sName").value,
+ currency: document.getElementById("sCur").value || "₦",
+ phone: document.getElementById("sPhone").value,
+ email: document.getElementById("sEmail").value,
+ address: document.getElementById("sAddr").value });
+ state.settings = await api.get("/api/settings");
+ updateShopBar(); // appbar shows the active shop, not the business name
+ toast("Settings saved");
 }
 
 // ---------- Online payments (payout setup + pay links) ----------
 let _payBanks = null;
 async function connectPayoutModal() {
-  openModal(`<h2>Online payments</h2>
-    <p style="color:var(--muted);font-size:14px;margin:0 0 6px">Add the bank account where customer payments should land. SalesPal takes 0% — you keep every naira.</p>
-    <p style="color:var(--muted);font-size:13px;margin:0 0 14px">⏱️ Paystack settles payments into your bank the <strong>next business day</strong>.</p>
-    <div class="field"><label>Bank</label><select id="payBank"><option value="">Loading banks…</option></select></div>
-    <div class="field"><label>Account number</label><input id="payAcct" inputmode="numeric" maxlength="10" placeholder="10-digit account number"></div>
-    <div id="payResolved" style="font-size:14px;min-height:20px;margin:-4px 0 12px;color:var(--muted)"></div>
-    <button class="btn" id="payConnectBtn" disabled onclick="savePayout()">Connect</button>
-    <button class="btn ghost" onclick="closeModal()">Cancel</button>`);
-  try {
-    if (!_payBanks) _payBanks = (await api.get("/api/pay/banks")).banks || [];
-    const sel = document.getElementById("payBank");
-    sel.innerHTML = `<option value="">Select your bank</option>` +
-      _payBanks.map(b => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join("");
-    sel.onchange = payMaybeResolve;
-    const acct = document.getElementById("payAcct");
-    acct.oninput = () => { acct.value = acct.value.replace(/\D/g, ""); payMaybeResolve(); };
-  } catch (e) {
-    const out = document.getElementById("payResolved");
-    if (out) out.textContent = "Couldn't load the bank list — try again.";
+ openModal(`<h2>Online payments</h2>
+ <p style="color:var(--muted);font-size:14px;margin:0 0 6px">Add the bank account where customer payments should land. SalesPal takes 0% — you keep every naira.</p>
+ <p style="color:var(--muted);font-size:13px;margin:0 0 14px"> Paystack settles payments into your bank the <strong>next business day</strong>.</p>
+ <div class="field"><label>Bank</label><select id="payBank"><option value="">Loading banks…</option></select></div>
+ <div class="field"><label>Account number</label><input id="payAcct" inputmode="numeric" maxlength="10" placeholder="10-digit account number"></div>
+ <div id="payResolved" style="font-size:14px;min-height:20px;margin:-4px 0 12px;color:var(--muted)"></div>
+ <button class="btn" id="payConnectBtn" disabled onclick="savePayout()">Connect</button>
+ <button class="btn ghost" onclick="closeModal()">Cancel</button>`);
+ try {
+ if (!_payBanks) _payBanks = (await api.get("/api/pay/banks")).banks || [];
+ const sel = document.getElementById("payBank");
+ sel.innerHTML = `<option value="">Select your bank</option>` +
+ _payBanks.map(b => `<option value="${esc(b.code)}">${esc(b.name)}</option>`).join("");
+ sel.onchange = payMaybeResolve;
+ const acct = document.getElementById("payAcct");
+ acct.oninput = () => { acct.value = acct.value.replace(/\D/g, ""); payMaybeResolve(); };
+ } catch (e) {
+ const out = document.getElementById("payResolved");
+ if (out) out.textContent = "Couldn't load the bank list — try again.";
   }
 }
 
@@ -2924,20 +2924,20 @@ async function payMaybeResolve() {
   } catch (e) {
     out.style.color = "var(--neg, #dc2626)";
     out.textContent = e.message || "Couldn't verify that account";
-  }
+ }
 }
 
 async function savePayout() {
-  const code = document.getElementById("payBank").value;
-  const acct = document.getElementById("payAcct").value;
-  const btn = document.getElementById("payConnectBtn");
-  btn.disabled = true; btn.textContent = "Connecting…";
-  try {
-    state.pay = await api.send("/api/pay/connect", "POST", { account_number: acct, bank_code: code });
-    closeModal(); toast("Online payments connected ✓"); render();
-  } catch (e) {
-    btn.disabled = false; btn.textContent = "Connect";
-    if (e.message !== "__upgrade__") toast(e.message || "Couldn't connect");
+ const code = document.getElementById("payBank").value;
+ const acct = document.getElementById("payAcct").value;
+ const btn = document.getElementById("payConnectBtn");
+ btn.disabled = true; btn.textContent = "Connecting…";
+ try {
+ state.pay = await api.send("/api/pay/connect", "POST", { account_number: acct, bank_code: code });
+ closeModal(); toast("Online payments connected ✓"); render();
+ } catch (e) {
+ btn.disabled = false; btn.textContent = "Connect";
+ if (e.message !== "__upgrade__") toast(e.message || "Couldn't connect");
   }
 }
 
@@ -2952,12 +2952,12 @@ function transferModal() {
   const name = p.transfer_name || p.account_name || "";
   const number = p.transfer_number || "";
   const bank = p.transfer_bank || p.bank_name || "";
-  openModal(`<h2>Instant bank transfer ⚡</h2>
+  openModal(`<h2>Instant bank transfer <svg class="ic"><use href="#i-zap"/></svg></h2>
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">Customers transfer straight to this account — money lands <strong>instantly</strong> with no fees. You confirm each payment when your bank alert arrives.</p>
     <div class="field"><label>Account name</label><input id="trName" value="${esc(name)}" placeholder="e.g. Ada Beauty Store"></div>
     <div class="field"><label>Account number</label><input id="trNum" inputmode="numeric" value="${esc(number)}" placeholder="Your account number"></div>
     <div class="field"><label>Bank / wallet</label><input id="trBank" value="${esc(bank)}" placeholder="e.g. OPay, Moniepoint, GTBank"></div>
-    <button class="btn" onclick="saveTransfer()">⚡ Turn on instant transfer</button>
+    <button class="btn" onclick="saveTransfer()"><svg class="ic"><use href="#i-zap"/></svg> Turn on instant transfer</button>
     <button class="btn ghost" onclick="closeModal()">Cancel</button>`);
 }
 
@@ -2973,8 +2973,8 @@ async function saveTransfer() {
 }
 
 async function disableTransfer() {
-  const p = state.pay || {};
-  if (!confirm("Turn off bank transfer payments? Customers won't see your account on new pay links.")) return;
+ const p = state.pay || {};
+ if (!confirm("Turn off bank transfer payments? Customers won't see your account on new pay links.")) return;
   try {
     state.pay = await api.send("/api/pay/transfer", "POST", { enabled: false,
       account_name: p.transfer_name, account_number: p.transfer_number, bank: p.transfer_bank });
@@ -2990,10 +2990,10 @@ async function confirmClaim(iid, cid) {
 }
 
 async function dismissClaim(iid, cid) {
-  try {
-    await api.send(`/api/invoices/${iid}/claims/${cid}/dismiss`, "POST");
-    toast("Marked as not received"); invoiceDetail(iid);
-  } catch (e) { toast(e.message); }
+ try {
+ await api.send(`/api/invoices/${iid}/claims/${cid}/dismiss`, "POST");
+ toast("Marked as not received"); invoiceDetail(iid);
+ } catch (e) { toast(e.message); }
 }
 
 // Send the pay link straight to the customer on WhatsApp (like the payment
@@ -3002,14 +3002,14 @@ async function dismissClaim(iid, cid) {
 // deep-links into the chat. Falls back to the share sheet / clipboard when no
 // number is provided, or fetches the link on demand if it wasn't pre-loaded.
 function sharePaymentLink(inv) {
-  const url = inv && inv.pay_url;
-  if (!url) { _sharePayLinkFallback(inv && inv.id); return; } // link not ready → async path
-  const cust = inv.customer;
-  const num = _waResolveNumber(cust);
-  if (!num) { _sharePayLinkShare(inv, url); return; } // no number → share/copy
-  const biz = state.settings.business_name || "SalesPal";
-  const who = cust && cust.name ? cust.name : "there";
-  const msg = `Hi ${who}, here's your payment link from ${biz} for invoice ${inv.invoice_no || ""}`
+ const url = inv && inv.pay_url;
+ if (!url) { _sharePayLinkFallback(inv && inv.id); return; } // link not ready → async path
+ const cust = inv.customer;
+ const num = _waResolveNumber(cust);
+ if (!num) { _sharePayLinkShare(inv, url); return; } // no number → share/copy
+ const biz = state.settings.business_name || "SalesPal";
+ const who = cust && cust.name ? cust.name : "there";
+ const msg = `Hi ${who}, here's your payment link from ${biz} for invoice ${inv.invoice_no || ""}`
     + `${inv.balance ? " — " + money(inv.balance) + " due" : ""}:\n${url}\n`
     + `Tap to pay securely. Thank you!`;
   _openWhatsApp(num, msg);
@@ -3037,11 +3037,11 @@ async function _sharePayLinkShare(inv, url) {
 // then share via the sheet/clipboard (can't deep-link after an await).
 async function _sharePayLinkFallback(id) {
   if (!id) { toast("Couldn't create link"); return; }
-  try {
-    const res = await api.send(`/api/invoices/${id}/payment-link`, "POST");
-    const inv = await api.get(`/api/invoices/${id}`).catch(() => ({ id }));
-    _sharePayLinkShare(inv, res.url);
-  } catch (e) { if (e.message !== "__upgrade__") toast(e.message || "Couldn't create link"); }
+ try {
+ const res = await api.send(`/api/invoices/${id}/payment-link`, "POST");
+ const inv = await api.get(`/api/invoices/${id}`).catch(() => ({ id }));
+ _sharePayLinkShare(inv, res.url);
+ } catch (e) { if (e.message !== "__upgrade__") toast(e.message || "Couldn't create link"); }
 }
 
 // ---------- boot ----------

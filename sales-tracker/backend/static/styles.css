@@ -84,7 +84,9 @@ body {
 .icon-btn {
   background: rgba(255,255,255,.18); border: 0; color: #fff;
   width: 38px; height: 38px; border-radius: 10px; font-size: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
 }
+.icon-btn .ic { width: 20px; height: 20px; }
 .period-tabs { display: flex; gap: 6px; margin-top: 12px; }
 .period-tabs button {
   flex: 1; background: rgba(255,255,255,.16); color: #fff; border: 0;
@@ -101,8 +103,16 @@ body {
 }
 .menu-sheet.open { display: flex; }
 .menu-sheet button {
+  display: flex; align-items: center; gap: 12px;
   text-align: left; background: none; border: 0; padding: 14px 18px;
   font-size: 15px; border-bottom: 1px solid var(--line);
+}
+.menu-sheet button .ic { width: 20px; height: 20px; color: var(--muted); flex: 0 0 auto; }
+
+/* Inline SVG icons: inherit text colour, sit on the text baseline. */
+.ic {
+  width: 18px; height: 18px; display: inline-block; vertical-align: -0.15em;
+  fill: none; stroke: currentColor; flex: 0 0 auto;
 }
 
 main { padding: 14px; }
@@ -269,14 +279,14 @@ main { padding: 14px; }
   background: none; border: 0; color: var(--muted); font-size: 11px;
   display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1;
 }
-.bottom-nav button span { font-size: 20px; }
+.bottom-nav button .ic { width: 22px; height: 22px; }
 .bottom-nav button.active { color: var(--indigo); font-weight: 700; }
 .bottom-nav .fab {
   background: #12b981; color: #fff; width: 54px; height: 54px;
   border-radius: 50%; margin-top: -22px; box-shadow: 0 4px 12px rgba(18,185,129,.45);
   flex: 0 0 auto;
 }
-.bottom-nav .fab span { font-size: 28px; }
+.bottom-nav .fab .ic { width: 26px; height: 26px; stroke-width: 2.5; }
 
 /* ---- Mobile bottom nav ----
    The nav stays a position:fixed element (base rule) and JS pins it to the
