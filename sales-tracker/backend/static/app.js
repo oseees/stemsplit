@@ -366,8 +366,8 @@ async function renderLanding() {
         <div class="land-top">
           <div class="land-logo">SalesPal</div>
           <div class="land-top-right">
-            <a class="land-view" onclick="salespalToggleTheme()">${document.documentElement.classList.contains("dark") ? " Light" : "Dark"}</a>
-            <a class="land-view" onclick="salespalToggleView()">${document.body.classList.contains("desktop") ? "Mobile" : " Desktop"}</a>
+            <a class="land-view" onclick="salespalToggleTheme()">${document.documentElement.classList.contains("dark") ? icon("sun") + " Light" : icon("moon") + " Dark"}</a>
+            <a class="land-view" onclick="salespalToggleView()">${document.body.classList.contains("desktop") ? icon("mobile") + " Mobile" : icon("desktop") + " Desktop"}</a>
             <a class="land-login" onclick="setAuthMode('login')">Log in</a>
           </div>
         </div>
