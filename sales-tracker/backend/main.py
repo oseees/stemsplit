@@ -29,6 +29,7 @@ import db
 import ai
 import auth
 import billing
+import backup
 import push
 from auth import current_user
 from pdf import build_invoice_pdf
@@ -2765,10 +2766,70 @@ async def _reminder_scheduler():
         await asyncio.sleep(3600)
 
 
+def _run_offbox_backup():
+    """Take a consistent snapshot and ship it off-box. Returns (ok, detail).
+    Stamps last_backup_at on success so the admin 'no backup taken' nudge
+    reflects automated backups, not just manual downloads."""
+    data = db.backup_bytes()
+    name = f"salespal-{date.today().isoformat()}.db"
+    ok, detail = backup.send(
+        data, name, caption=f"SalesPal auto-backup {date.today().isoformat()} "
+                            f"({len(data) // 1024}KB)")
+    if ok:
+        with db.get_conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('last_backup_at',?)",
+                         (db.now_iso(),))
+    return ok, detail
+
+
+def _offbox_backup_tick():
+    """Once a day, ship the off-box copy. Deduped via the settings KV (same
+    once-a-day pattern as the overdue nudge) so the hourly loop only fires once.
+    The date is stamped BEFORE sending, so a persistently failing send retries
+    tomorrow rather than hammering Telegram every hour."""
+    key = "last_offbox_backup"
+    with db.get_conn() as conn:
+        last = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if last and last["value"] == today():
+            return
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, today()))
+    ok, detail = _run_offbox_backup()
+    # never raise — but SAY SO in the server logs (same rule as push.py)
+    print(f"[backup] off-box {'ok' if ok else 'FAILED'}: {detail}", flush=True)
+
+
+async def _backup_scheduler():
+    """Hourly loop; ships one off-box backup a day after 02:00 server time
+    (quiet hours). No-op entirely when the Telegram bot isn't configured."""
+    while True:
+        try:
+            if backup.configured() and datetime.now().hour >= 2:
+                await asyncio.to_thread(_offbox_backup_tick)
+        except Exception as e:
+            print(f"[backup] scheduler error: {e!r}", flush=True)
+        await asyncio.sleep(3600)
+
+
+@app.post("/api/admin/backup/test")
+def admin_backup_test(user=Depends(current_user)):
+    """Owner-only: ship a backup right now — verifies the whole off-box path
+    without waiting for the nightly run (mirrors /api/push/test)."""
+    if not _is_owner(user):
+        raise HTTPException(403, "Not allowed")
+    if not backup.configured():
+        raise HTTPException(400, "Off-box backup isn't configured — set "
+                                 "SALESPAL_BACKUP_TG_TOKEN and SALESPAL_BACKUP_TG_CHAT")
+    ok, detail = _run_offbox_backup()
+    if not ok:
+        raise HTTPException(502, f"Backup send failed: {detail}")
+    return {"ok": True, "detail": detail}
+
+
 @app.on_event("startup")
 async def _start_scheduler():
     asyncio.create_task(_weekly_scheduler())
     asyncio.create_task(_reminder_scheduler())
+    asyncio.create_task(_backup_scheduler())
 
 
 @app.get("/api/health")
