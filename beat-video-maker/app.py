@@ -15,7 +15,14 @@ from starlette.background import BackgroundTask
 
 app = FastAPI(title="BeatVideo")
 
-W, H, FPS = 1920, 1080, 30
+FPS = 30
+# frame size per platform. "fill" centre-crops to cover (what Reels/TikTok expect);
+# "fit" letterboxes so nothing is cropped (kept for YouTube landscape).
+FORMATS = {
+    "landscape": (1920, 1080, "fit"),   # YouTube
+    "vertical": (1080, 1920, "fill"),   # Reels / TikTok / YouTube Shorts
+    "square": (1080, 1080, "fill"),     # Instagram feed
+}
 IMAGE_SECONDS = 4  # ponytail: fixed per-image duration, make it a form field if requested
 MAX_CLIP_SECONDS = 5.0  # keep clips short to reduce copyright-strike risk
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
@@ -46,8 +53,18 @@ def duration(path: Path) -> float:
     return float(out)
 
 
-VF = (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
-      f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps={FPS},format=yuv420p")
+def base_vf(fmt: str = "landscape") -> str:
+    """ffmpeg filter that fits the source into the chosen frame size."""
+    w, h, mode = FORMATS[fmt]
+    if mode == "fill":  # cover the frame, crop the overflow — no black bars
+        sizing = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+    else:               # letterbox so nothing gets cut off
+        sizing = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                  f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2")
+    return f"{sizing},fps={FPS},format=yuv420p"
+
+
+VF = base_vf("landscape")  # default; build()/normalize() take an explicit one
 
 
 def scene_starts(src: Path) -> list[float]:
@@ -79,32 +96,34 @@ def auto_clips(src: Path, beat_dur: float, head_skip: float = 5.0,
 
 
 def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] = None,
-              length: Optional[float] = None) -> None:
-    """Re-encode an image, video, or video slice into a uniform silent 1080p segment."""
+              length: Optional[float] = None, vf_base: str = VF) -> None:
+    """Re-encode an image, video, or video slice into a uniform silent segment."""
     pre = []
     if src.suffix.lower() in IMAGE_EXTS:
         pre = ["-loop", "1", "-t", str(IMAGE_SECONDS)]
     if start is not None:
         pre += ["-ss", str(start), "-t", str(length)]
-    vf = VF + ("," + vf_extra if vf_extra else "")
+    vf = vf_base + ("," + vf_extra if vf_extra else "")
     # ultrafast/crf23: YouTube re-encodes uploads anyway, so spend nothing on finesse
     run(["ffmpeg", "-y", *pre, "-i", str(src), "-an", "-vf", vf,
          "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", str(dst)])
 
 
 def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
-          source: Optional[Path] = None, clips: Optional[list[tuple[float, float]]] = None) -> None:
+          source: Optional[Path] = None, clips: Optional[list[tuple[float, float]]] = None,
+          fmt: str = "landscape") -> None:
     beat_dur = duration(beat)
     work = beat.parent
+    vf_base = base_vf(fmt)
     segs = []
     if clips:
         for i, (start, end) in enumerate(clips):
             seg = work / f"seg{i}.mp4"
-            normalize(source, seg, vf_extra, start=start, length=end - start)
+            normalize(source, seg, vf_extra, start=start, length=end - start, vf_base=vf_base)
             segs.append((seg, duration(seg)))
     for i, m in enumerate(media):
         seg = work / f"m{i}.mp4"
-        normalize(m, seg, vf_extra)
+        normalize(m, seg, vf_extra, vf_base=vf_base)
         segs.append((seg, duration(seg)))
 
     # cycle through the segments until we cover the beat, then hard-cut at beat end
@@ -131,7 +150,10 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                tags: str = Form(default=""), publish_at: str = Form(default=""),
                thumbnail: Optional[UploadFile] = File(default=None),
                thumb_filter: str = Form(default="none"),
-               head_skip: float = Form(default=5.0), tail_skip: float = Form(default=15.0)):
+               head_skip: float = Form(default=5.0), tail_skip: float = Form(default=15.0),
+               fmt: str = Form(default="landscape")):
+    if fmt not in FORMATS:
+        raise HTTPException(400, f"format must be one of {list(FORMATS)}")
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
@@ -192,7 +214,7 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             thumb_path = work / "thumb.jpg"
             run(["ffmpeg", "-y", "-i", str(raw), "-vf", tvf, "-q:v", "3", str(thumb_path)])
         out = work / "beat_video.mp4"
-        build(beat_path, media_paths, out, vf_extra, source_path, clip_list)
+        build(beat_path, media_paths, out, vf_extra, source_path, clip_list, fmt)
         if youtube != "off":
             import youtube as yt  # local-only; import here so Railway never needs the deps
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
@@ -274,6 +296,14 @@ onto the boxes below.</p>
 </div>
 <div class="card"><label>Extra pictures / clips (optional)
   <input type="file" id="media" accept="image/*,video/*" multiple></label></div>
+<div class="card"><label>Video format</label>
+  <select id="fmt">
+    <option value="landscape">YouTube — landscape 16:9 (1920×1080)</option>
+    <option value="vertical">Reels / TikTok / Shorts — vertical 9:16 (1080×1920)</option>
+    <option value="square">Instagram feed — square 1:1 (1080×1080)</option>
+  </select>
+  <div style="color:#888;font-size:.8rem;margin-top:6px">Vertical &amp; square fill the frame
+    (sides cropped) so there are no black bars.</div></div>
 <div class="card"><label>Filter</label>
   <select id="filter">
     <option value="none">None</option><option value="bw">Black &amp; white</option>
@@ -427,6 +457,7 @@ go.onclick = async () => {
   const fd = new FormData();
   fd.append('beat', beat.files[0]);
   fd.append('filter', filterSel.value);
+  fd.append('fmt', $('fmt').value);
   if (auto) {
     fd.append('source', source.files[0]); fd.append('clips', 'auto');
     fd.append('head_skip', $('headSkip').value); fd.append('tail_skip', $('tailSkip').value);

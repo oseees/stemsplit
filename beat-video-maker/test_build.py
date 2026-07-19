@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from app import MAX_CLIP_SECONDS, auto_clips, build, duration
+from app import FORMATS, MAX_CLIP_SECONDS, auto_clips, build, duration
 
 
 def main():
@@ -48,6 +48,16 @@ def main():
         src_dur = duration(src)
         for s, e in picked:
             assert 0 <= s < e <= src_dur + 0.1 and e - s <= MAX_CLIP_SECONDS, (src, s, e)
+
+    # each format renders at its declared frame size (vertical/square fill, no bars)
+    for fmt, (ew, eh, _) in FORMATS.items():
+        o = work / f"{fmt}.mp4"
+        build(beat, [img], o, fmt=fmt)
+        dims = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(o)],
+            capture_output=True, text=True, check=True).stdout.strip()
+        assert dims == f"{ew}x{eh}", (fmt, dims)
 
     # intro/outro skip: on a 30s video, no clip should start in the first 5s or last 10s
     long_src = work / "long.mp4"
