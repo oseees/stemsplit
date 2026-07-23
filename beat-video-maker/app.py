@@ -67,6 +67,29 @@ def base_vf(fmt: str = "landscape") -> str:
 VF = base_vf("landscape")  # default; build()/normalize() take an explicit one
 
 
+def detect_beats(beat: Path) -> tuple[float, float, float]:
+    """(seconds per cut, first-beat offset, bpm). Cut length is a whole number of
+    beats (~one bar), so video cuts land on the beat grid. Falls back to (4, 0, 0)."""
+    import librosa  # already in the shared venv (track2midi); lazy so startup stays fast
+    wav = beat.parent / "beat_mono.wav"
+    run(["ffmpeg", "-y", "-i", str(beat), "-ac", "1", "-ar", "22050", "-t", "60", str(wav)])
+    y, sr = librosa.load(str(wav), sr=22050, mono=True)
+    tempo, frames = librosa.beat.beat_track(y=y, sr=sr)
+    times = librosa.frames_to_time(frames, sr=sr)
+    if len(times) < 4:
+        return 4.0, 0.0, 0.0
+    # average spacing of tracked beats is more accurate than the quantized tempo scalar
+    beat_sec = (times[-1] - times[0]) / (len(times) - 1)
+    bpm = 60.0 / beat_sec
+    per_cut = 4 * beat_sec  # one 4/4 bar
+    while per_cut > MAX_CLIP_SECONDS:
+        per_cut /= 2
+    while per_cut < 1.5:
+        per_cut *= 2
+    offset = float(times[0])
+    return round(per_cut, 3), round(offset if offset >= 0.3 else 0.0, 3), round(bpm, 1)
+
+
 def scene_starts(src: Path) -> list[float]:
     """Timestamps where ffmpeg detects a scene change (the video's own cuts)."""
     p = subprocess.run(
@@ -76,12 +99,12 @@ def scene_starts(src: Path) -> list[float]:
 
 
 def auto_clips(src: Path, beat_dur: float, head_skip: float = 5.0,
-               tail_skip: float = 15.0) -> list[tuple[float, float]]:
+               tail_skip: float = 15.0, clip_len: float = 4.0) -> list[tuple[float, float]]:
     """Pick short clips spread across the video, preferring its own scene cuts.
     head_skip/tail_skip exclude the intro (producer tags/"Produced by") and the
     outro (end credits, subscribe screens) so that text doesn't land in the video."""
     src_dur = duration(src)
-    length = min(4.0, src_dur)  # ponytail: fixed 4s clips, stays under the 5s cap
+    length = min(clip_len, src_dur)  # one bar when beat-sync is on, stays under the 5s cap
     lo, hi = max(head_skip, 0.0), src_dur - length - max(tail_skip, 0.0)
     if hi <= lo:  # margins would eat the whole clip (short video) — use the full range
         lo, hi = 0.0, max(src_dur - length, 0.0)
@@ -100,9 +123,12 @@ def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] =
     """Re-encode an image, video, or video slice into a uniform silent segment."""
     pre = []
     if src.suffix.lower() in IMAGE_EXTS:
-        pre = ["-loop", "1", "-t", str(IMAGE_SECONDS)]
-    if start is not None:
-        pre += ["-ss", str(start), "-t", str(length)]
+        pre = ["-loop", "1", "-t", str(length or IMAGE_SECONDS)]
+    else:
+        if start is not None:
+            pre += ["-ss", str(start)]
+        if length is not None:
+            pre += ["-t", str(length)]
     vf = vf_base + ("," + vf_extra if vf_extra else "")
     # ultrafast/crf23: YouTube re-encodes uploads anyway, so spend nothing on finesse
     run(["ffmpeg", "-y", *pre, "-i", str(src), "-an", "-vf", vf,
@@ -111,7 +137,8 @@ def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] =
 
 def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
           source: Optional[Path] = None, clips: Optional[list[tuple[float, float]]] = None,
-          fmt: str = "landscape") -> None:
+          fmt: str = "landscape", seg_len: Optional[float] = None,
+          first_extra: float = 0.0) -> None:
     beat_dur = duration(beat)
     work = beat.parent
     vf_base = base_vf(fmt)
@@ -119,16 +146,29 @@ def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
     if clips:
         for i, (start, end) in enumerate(clips):
             seg = work / f"seg{i}.mp4"
-            normalize(source, seg, vf_extra, start=start, length=end - start, vf_base=vf_base)
+            length = min(end - start, seg_len) if seg_len else end - start
+            normalize(source, seg, vf_extra, start=start, length=length, vf_base=vf_base)
             segs.append((seg, duration(seg)))
     for i, m in enumerate(media):
         seg = work / f"m{i}.mp4"
-        normalize(m, seg, vf_extra, vf_base=vf_base)
+        normalize(m, seg, vf_extra, length=seg_len, vf_base=vf_base)
         segs.append((seg, duration(seg)))
 
     # cycle through the segments until we cover the beat, then hard-cut at beat end
     concat = work / "list.txt"
     lines, total, i = [], 0.0, 0
+    if first_extra > 0:  # extend the opening shot so later cuts land on the beat grid
+        first = work / "seg_first.mp4"
+        if clips:
+            s0, e0 = clips[0]
+            length = (min(e0 - s0, seg_len) if seg_len else e0 - s0) + first_extra
+            normalize(source, first, vf_extra, start=s0, length=length, vf_base=vf_base)
+        else:
+            normalize(media[0], first, vf_extra, length=(seg_len or IMAGE_SECONDS) + first_extra,
+                      vf_base=vf_base)
+        lines.append(f"file '{first}'")
+        total += duration(first)
+        i = 1
     while total < beat_dur:
         seg, d = segs[i % len(segs)]
         lines.append(f"file '{seg}'")
@@ -151,7 +191,7 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                thumbnail: Optional[UploadFile] = File(default=None),
                thumb_filter: str = Form(default="none"),
                head_skip: float = Form(default=5.0), tail_skip: float = Form(default=15.0),
-               fmt: str = Form(default="landscape")):
+               fmt: str = Form(default="landscape"), beat_sync: str = Form(default="on")):
     if fmt not in FORMATS:
         raise HTTPException(400, f"format must be one of {list(FORMATS)}")
     vf_extra = FILTERS.get(filter)
@@ -190,6 +230,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
     try:
         beat_path = work / ("beat" + Path(beat.filename).suffix)
         beat_path.write_bytes(await beat.read())
+        seg_len, first_extra, bpm = (detect_beats(beat_path) if beat_sync == "on"
+                                     else (None, 0.0, 0.0))
         media_paths = []
         for i, f in enumerate(media):
             p = work / f"in{i}{Path(f.filename).suffix.lower()}"
@@ -200,7 +242,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             source_path = work / ("src" + Path(source.filename).suffix.lower())
             source_path.write_bytes(await source.read())
         if auto:
-            clip_list = auto_clips(source_path, duration(beat_path), head_skip, tail_skip)
+            clip_list = auto_clips(source_path, duration(beat_path), head_skip, tail_skip,
+                                   clip_len=seg_len or 4.0)
         thumb_path = None
         if thumbnail is not None and youtube != "off":
             raw = work / ("thumb_raw" + Path(thumbnail.filename).suffix.lower())
@@ -214,7 +257,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             thumb_path = work / "thumb.jpg"
             run(["ffmpeg", "-y", "-i", str(raw), "-vf", tvf, "-q:v", "3", str(thumb_path)])
         out = work / "beat_video.mp4"
-        build(beat_path, media_paths, out, vf_extra, source_path, clip_list, fmt)
+        build(beat_path, media_paths, out, vf_extra, source_path, clip_list, fmt,
+              seg_len=seg_len, first_extra=first_extra)
         if youtube != "off":
             import youtube as yt  # local-only; import here so Railway never needs the deps
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
@@ -230,14 +274,15 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                 except RuntimeError as e:
                     thumb_note = str(e)  # keep the video; just report the thumbnail didn't stick
             return {"youtube_url": f"https://youtu.be/{video_id}", "privacy": youtube,
-                    "publish_at": publish_at, "thumbnail_error": thumb_note}
+                    "publish_at": publish_at, "thumbnail_error": thumb_note, "bpm": bpm}
     except Exception:
         shutil.rmtree(work, ignore_errors=True)
         raise
     finally:
         if youtube != "off":
             shutil.rmtree(work, ignore_errors=True)
-    return FileResponse(out, media_type="video/mp4", filename="beat_video.mp4",
+    headers = {"X-Beat": f"{bpm} BPM, cut every {seg_len}s"} if bpm else {}
+    return FileResponse(out, media_type="video/mp4", filename="beat_video.mp4", headers=headers,
                         background=BackgroundTask(shutil.rmtree, work, ignore_errors=True))
 
 
@@ -309,7 +354,9 @@ onto the boxes below.</p>
     <option value="none">None</option><option value="bw">Black &amp; white</option>
     <option value="warm">Warm</option><option value="cool">Cool</option>
     <option value="punch">Punchy (contrast + saturation)</option><option value="vhs">VHS / vintage</option>
-  </select></div>
+  </select>
+  <label style="font-weight:400;margin-top:10px"><input type="checkbox" id="beatSync" checked>
+    🥁 Cut clips on the beat (detects BPM, cuts land on the bar)</label></div>
 <div class="card"><label>Upload to YouTube</label>
   <select id="youtube">
     <option value="off">No — just download the file</option>
@@ -458,6 +505,7 @@ go.onclick = async () => {
   fd.append('beat', beat.files[0]);
   fd.append('filter', filterSel.value);
   fd.append('fmt', $('fmt').value);
+  fd.append('beat_sync', $('beatSync').checked ? 'on' : 'off');
   if (auto) {
     fd.append('source', source.files[0]); fd.append('clips', 'auto');
     fd.append('head_skip', $('headSkip').value); fd.append('tail_skip', $('tailSkip').value);
@@ -490,10 +538,11 @@ go.onclick = async () => {
         : 'Uploaded (' + j.privacy + '): ' + link)
         + (j.thumbnail_error ? '<br><span style="color:#e0a">⚠ ' + j.thumbnail_error + '</span>' : '');
     } else {
+      const beatInfo = r.headers.get('X-Beat');
       const url = URL.createObjectURL(await r.blob());
       const a = Object.assign(document.createElement('a'), {href: url, download: 'beat_video.mp4'});
       a.click();
-      msg.textContent = 'Done — downloaded beat_video.mp4';
+      msg.textContent = 'Done — downloaded beat_video.mp4' + (beatInfo ? ' (' + beatInfo + ')' : '');
     }
   } catch (e) { msg.textContent = 'Failed: ' + e.message; }
   go.disabled = false;
