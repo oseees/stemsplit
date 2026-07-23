@@ -53,10 +53,17 @@ def duration(path: Path) -> float:
     return float(out)
 
 
-FONT = next((f for f in (
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/Library/Fonts/Arial.ttf") if Path(f).exists()), None)
+_FONT_CANDIDATES = {  # label -> macOS font path; filtered to what's actually installed
+    "Clean Sans": "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "Impact": "/System/Library/Fonts/Supplemental/Impact.ttf",
+    "Engraved": "/System/Library/Fonts/Supplemental/Copperplate.ttc",
+    "Modern": "/System/Library/Fonts/Avenir Next.ttc",
+    "Techy Mono": "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+    "Handwritten": "/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf",
+    "Serif": "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+}
+FONTS = {name: p for name, p in _FONT_CANDIDATES.items() if Path(p).exists()}
+FONT = next(iter(FONTS.values()), None)  # default = first available
 
 VISUALIZERS = {  # audio -> thin monochrome line (ffmpeg drawtext isn't in this build)
     "waveform": "showwaves=s={w}x{s}:mode=line:rate={fps}:colors=0xFFFFFF",
@@ -64,13 +71,14 @@ VISUALIZERS = {  # audio -> thin monochrome line (ffmpeg drawtext isn't in this 
 }
 
 
-def make_tag_png(text: str, out: Path, w: int, h: int) -> None:
+def make_tag_png(text: str, out: Path, w: int, h: int, font_path: Optional[str] = None) -> None:
     """Render a producer tag to a transparent PNG (Pillow bundles freetype; our
     ffmpeg has no drawtext). Clean white text with a soft drop shadow — no box,
     stays legible on busy footage without looking tacky."""
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
     fs = max(h // 42, 13)  # small, subtle watermark
-    font = ImageFont.truetype(FONT, fs) if FONT else ImageFont.load_default()
+    fp = font_path or FONT
+    font = ImageFont.truetype(fp, fs) if fp else ImageFont.load_default()
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     l, t, r, b = d.textbbox((0, 0), text, font=font)
@@ -169,7 +177,8 @@ def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] =
 def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
           source: Optional[Path] = None, clips: Optional[list[tuple[float, float]]] = None,
           fmt: str = "landscape", seg_len: Optional[float] = None,
-          first_extra: float = 0.0, overlay_text: str = "", visualizer: str = "none") -> None:
+          first_extra: float = 0.0, overlay_text: str = "", visualizer: str = "none",
+          overlay_font: Optional[str] = None) -> None:
     beat_dur = duration(beat)
     work = beat.parent
     vf_base = base_vf(fmt)
@@ -221,7 +230,7 @@ def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
         last = "vv"
     if overlay_text and FONT:
         tag = work / "tag.png"
-        make_tag_png(overlay_text, tag, fw, fh)
+        make_tag_png(overlay_text, tag, fw, fh, overlay_font)
         cmd += ["-i", str(tag)]
         overlays.append(f"[{last}][2:v]overlay=0:0[vt]")
         last = "vt"
@@ -244,11 +253,14 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                thumb_filter: str = Form(default="none"),
                head_skip: float = Form(default=5.0), tail_skip: float = Form(default=15.0),
                fmt: str = Form(default="landscape"), beat_sync: str = Form(default="on"),
-               overlay_text: str = Form(default=""), visualizer: str = Form(default="none")):
+               overlay_text: str = Form(default=""), visualizer: str = Form(default="none"),
+               overlay_font: str = Form(default="")):
     if fmt not in FORMATS:
         raise HTTPException(400, f"format must be one of {list(FORMATS)}")
     if visualizer not in ("none", *VISUALIZERS):
         raise HTTPException(400, f"visualizer must be none|{'|'.join(VISUALIZERS)}")
+    if overlay_font and overlay_font not in FONTS:
+        raise HTTPException(400, f"font must be one of {list(FONTS)}")
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
@@ -314,7 +326,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
         out = work / "beat_video.mp4"
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list, fmt,
               seg_len=seg_len, first_extra=first_extra,
-              overlay_text=overlay_text.strip()[:60], visualizer=visualizer)
+              overlay_text=overlay_text.strip()[:60], visualizer=visualizer,
+              overlay_font=FONTS.get(overlay_font))
         if youtube != "off":
             import youtube as yt  # local-only; import here so Railway never needs the deps
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
@@ -353,7 +366,11 @@ def youtube_videos():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return """<!doctype html>
+    font_opts = "".join(f'<option value="{n}">{n}</option>' for n in FONTS)
+    return _INDEX.replace("__FONT_OPTIONS__", font_opts)
+
+
+_INDEX = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BeatVideo</title>
 <style>
@@ -416,6 +433,8 @@ onto the boxes below.</p>
 <div class="card"><label>Producer tag / overlay text (optional)</label>
   <input type="text" id="overlayText" placeholder='e.g. PROD. BY OSEABHI'
     style="width:100%;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+  <label style="margin-top:14px">Tag font</label>
+  <select id="overlayFont">__FONT_OPTIONS__</select>
   <label style="margin-top:14px">Audio visualizer</label>
   <select id="visualizer">
     <option value="none">None</option>
@@ -479,6 +498,8 @@ function saveYt() {
 // remember the producer tag (it's usually the same every video)
 $('overlayText').value = localStorage.getItem('beatvideo_tag') || '';
 $('overlayText').addEventListener('input', () => localStorage.setItem('beatvideo_tag', $('overlayText').value));
+if (localStorage.getItem('beatvideo_font')) $('overlayFont').value = localStorage.getItem('beatvideo_font');
+$('overlayFont').addEventListener('change', () => localStorage.setItem('beatvideo_font', $('overlayFont').value));
 
 function syncYt() {
   const show = youtubeSel.value !== 'off';
@@ -578,6 +599,7 @@ go.onclick = async () => {
   fd.append('fmt', $('fmt').value);
   fd.append('beat_sync', $('beatSync').checked ? 'on' : 'off');
   fd.append('overlay_text', $('overlayText').value);
+  fd.append('overlay_font', $('overlayFont').value);
   fd.append('visualizer', $('visualizer').value);
   if (auto) {
     fd.append('source', source.files[0]); fd.append('clips', 'auto');
