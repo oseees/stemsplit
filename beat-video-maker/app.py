@@ -53,6 +53,33 @@ def duration(path: Path) -> float:
     return float(out)
 
 
+FONT = next((f for f in (
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/Library/Fonts/Arial.ttf") if Path(f).exists()), None)
+
+VISUALIZERS = {  # audio -> video-strip generators (ffmpeg drawtext isn't in this build)
+    "waveform": "showwaves=s={w}x{s}:mode=cline:rate={fps}:colors=white",
+    "bars": "showfreqs=s={w}x{s}:mode=bar:ascale=log:colors=white",
+}
+
+
+def make_tag_png(text: str, out: Path, w: int, h: int) -> None:
+    """Render a producer tag to a transparent PNG (Pillow bundles freetype; our
+    ffmpeg has no drawtext). Sized to the frame; drop-shadow for legibility."""
+    from PIL import Image, ImageDraw, ImageFont
+    fs = max(h // 26, 20)
+    font = ImageFont.truetype(FONT, fs) if FONT else ImageFont.load_default()
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    l, t, r, b = d.textbbox((0, 0), text, font=font)
+    tw, th, pad = r - l, b - t, fs // 2
+    x, y = w - tw - pad * 3, h - th - pad * 3
+    d.rectangle([x - pad, y - pad, x + tw + pad, y + th + pad], fill=(0, 0, 0, 115))
+    d.text((x - l, y - t), text, font=font, fill=(255, 255, 255, 235))
+    img.save(out)
+
+
 def base_vf(fmt: str = "landscape") -> str:
     """ffmpeg filter that fits the source into the chosen frame size."""
     w, h, mode = FORMATS[fmt]
@@ -138,10 +165,11 @@ def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] =
 def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
           source: Optional[Path] = None, clips: Optional[list[tuple[float, float]]] = None,
           fmt: str = "landscape", seg_len: Optional[float] = None,
-          first_extra: float = 0.0) -> None:
+          first_extra: float = 0.0, overlay_text: str = "", visualizer: str = "none") -> None:
     beat_dur = duration(beat)
     work = beat.parent
     vf_base = base_vf(fmt)
+    fw, fh, _ = FORMATS[fmt]
     segs = []
     if clips:
         for i, (start, end) in enumerate(clips):
@@ -176,10 +204,28 @@ def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
         i += 1
     concat.write_text("\n".join(lines) + "\n")
 
-    run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
-         "-i", str(beat), "-map", "0:v", "-map", "1:a",
-         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-         "-t", str(beat_dur), "-movflags", "+faststart", str(out)])
+    # Final mux. Stream-copy the video unless a tag or visualizer needs a re-encode.
+    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-i", str(beat)]
+    overlays, last = [], "0:v"
+    if visualizer in VISUALIZERS:
+        strip = fh // 6
+        gen = VISUALIZERS[visualizer].format(w=fw, s=strip, fps=FPS)
+        overlays.append(f"[1:a]{gen},format=yuva420p,colorchannelmixer=aa=0.85[vz]")
+        overlays.append(f"[{last}][vz]overlay=0:{fh - strip}[vv]")
+        last = "vv"
+    if overlay_text and FONT:
+        tag = work / "tag.png"
+        make_tag_png(overlay_text, tag, fw, fh)
+        cmd += ["-i", str(tag)]
+        overlays.append(f"[{last}][2:v]overlay=0:0[vt]")
+        last = "vt"
+    if overlays:
+        cmd += ["-filter_complex", ";".join(overlays), "-map", f"[{last}]", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+    else:
+        cmd += ["-map", "0:v", "-map", "1:a", "-c:v", "copy"]
+    cmd += ["-c:a", "aac", "-b:a", "192k", "-t", str(beat_dur), "-movflags", "+faststart", str(out)]
+    run(cmd)
 
 
 @app.post("/make")
@@ -191,9 +237,12 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                thumbnail: Optional[UploadFile] = File(default=None),
                thumb_filter: str = Form(default="none"),
                head_skip: float = Form(default=5.0), tail_skip: float = Form(default=15.0),
-               fmt: str = Form(default="landscape"), beat_sync: str = Form(default="on")):
+               fmt: str = Form(default="landscape"), beat_sync: str = Form(default="on"),
+               overlay_text: str = Form(default=""), visualizer: str = Form(default="none")):
     if fmt not in FORMATS:
         raise HTTPException(400, f"format must be one of {list(FORMATS)}")
+    if visualizer not in ("none", *VISUALIZERS):
+        raise HTTPException(400, f"visualizer must be none|{'|'.join(VISUALIZERS)}")
     vf_extra = FILTERS.get(filter)
     if vf_extra is None:
         raise HTTPException(400, f"unknown filter, pick one of {list(FILTERS)}")
@@ -258,7 +307,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
             run(["ffmpeg", "-y", "-i", str(raw), "-vf", tvf, "-q:v", "3", str(thumb_path)])
         out = work / "beat_video.mp4"
         build(beat_path, media_paths, out, vf_extra, source_path, clip_list, fmt,
-              seg_len=seg_len, first_extra=first_extra)
+              seg_len=seg_len, first_extra=first_extra,
+              overlay_text=overlay_text.strip()[:60], visualizer=visualizer)
         if youtube != "off":
             import youtube as yt  # local-only; import here so Railway never needs the deps
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
@@ -357,6 +407,17 @@ onto the boxes below.</p>
   </select>
   <label style="font-weight:400;margin-top:10px"><input type="checkbox" id="beatSync" checked>
     🥁 Cut clips on the beat (detects BPM, cuts land on the bar)</label></div>
+<div class="card"><label>Producer tag / overlay text (optional)</label>
+  <input type="text" id="overlayText" placeholder='e.g. PROD. BY OSEABHI'
+    style="width:100%;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+  <label style="margin-top:14px">Audio visualizer</label>
+  <select id="visualizer">
+    <option value="none">None</option>
+    <option value="waveform">Waveform</option>
+    <option value="bars">Frequency bars</option>
+  </select>
+  <div style="color:#888;font-size:.8rem;margin-top:6px">Tag sits bottom-right; visualizer animates
+    along the bottom. Your tag is remembered.</div></div>
 <div class="card"><label>Upload to YouTube</label>
   <select id="youtube">
     <option value="off">No — just download the file</option>
@@ -409,6 +470,10 @@ function saveYt() {
   for (const k in YT_FIELDS) data[k] = YT_FIELDS[k].value;
   localStorage.setItem('beatvideo_yt', JSON.stringify(data));
 }
+// remember the producer tag (it's usually the same every video)
+$('overlayText').value = localStorage.getItem('beatvideo_tag') || '';
+$('overlayText').addEventListener('input', () => localStorage.setItem('beatvideo_tag', $('overlayText').value));
+
 function syncYt() {
   const show = youtubeSel.value !== 'off';
   ytdetails.style.display = show ? 'block' : 'none';
@@ -506,6 +571,8 @@ go.onclick = async () => {
   fd.append('filter', filterSel.value);
   fd.append('fmt', $('fmt').value);
   fd.append('beat_sync', $('beatSync').checked ? 'on' : 'off');
+  fd.append('overlay_text', $('overlayText').value);
+  fd.append('visualizer', $('visualizer').value);
   if (auto) {
     fd.append('source', source.files[0]); fd.append('clips', 'auto');
     fd.append('head_skip', $('headSkip').value); fd.append('tail_skip', $('tailSkip').value);

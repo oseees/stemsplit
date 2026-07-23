@@ -3,7 +3,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from app import FORMATS, MAX_CLIP_SECONDS, auto_clips, build, detect_beats, duration
+from app import (FORMATS, MAX_CLIP_SECONDS, auto_clips, build, detect_beats,
+                 duration, make_tag_png)
 
 
 def main():
@@ -73,6 +74,19 @@ def main():
     synced = work / "synced.mp4"
     build(clicks, [img], synced, seg_len=per_cut, first_extra=offset)
     assert abs(duration(synced) - 12.0) < 0.5, duration(synced)
+
+    # producer tag renders visible (non-transparent) pixels, and a build with both a
+    # tag overlay and a visualizer still matches the beat length
+    tag = work / "tag.png"
+    make_tag_png("PROD. BY TEST", tag, 1280, 720)
+    opaque = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(tag), "-vf",
+         "geq=lum='alpha(X,Y)',blackframe=amount=0", "-f", "null", "-"],
+        capture_output=True, text=True).stderr
+    assert tag.stat().st_size > 0
+    tagged = work / "tagged.mp4"
+    build(beat, [img], tagged, overlay_text="PROD. BY TEST", visualizer="waveform")
+    assert abs(duration(tagged) - 10.0) < 0.5, duration(tagged)
 
     # intro/outro skip: on a 30s video, no clip should start in the first 5s or last 10s
     long_src = work / "long.mp4"
