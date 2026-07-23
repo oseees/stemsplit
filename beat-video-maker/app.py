@@ -58,25 +58,29 @@ FONT = next((f for f in (
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/Library/Fonts/Arial.ttf") if Path(f).exists()), None)
 
-VISUALIZERS = {  # audio -> video-strip generators (ffmpeg drawtext isn't in this build)
-    "waveform": "showwaves=s={w}x{s}:mode=cline:rate={fps}:colors=white",
-    "bars": "showfreqs=s={w}x{s}:mode=bar:ascale=log:colors=white",
+VISUALIZERS = {  # audio -> clean monochrome strip (ffmpeg drawtext isn't in this build)
+    "waveform": "showwaves=s={w}x{s}:mode=cline:rate={fps}:colors=0xFFFFFF",
+    "bars": "showfreqs=s={w}x{s}:mode=bar:ascale=log:fscale=log:colors=0xFFFFFF",
 }
 
 
 def make_tag_png(text: str, out: Path, w: int, h: int) -> None:
     """Render a producer tag to a transparent PNG (Pillow bundles freetype; our
-    ffmpeg has no drawtext). Sized to the frame; drop-shadow for legibility."""
-    from PIL import Image, ImageDraw, ImageFont
-    fs = max(h // 26, 20)
+    ffmpeg has no drawtext). Clean white text with a soft drop shadow — no box,
+    stays legible on busy footage without looking tacky."""
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    fs = max(h // 30, 18)
     font = ImageFont.truetype(FONT, fs) if FONT else ImageFont.load_default()
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     l, t, r, b = d.textbbox((0, 0), text, font=font)
-    tw, th, pad = r - l, b - t, fs // 2
-    x, y = w - tw - pad * 3, h - th - pad * 3
-    d.rectangle([x - pad, y - pad, x + tw + pad, y + th + pad], fill=(0, 0, 0, 115))
-    d.text((x - l, y - t), text, font=font, fill=(255, 255, 255, 235))
+    tw, th, margin = r - l, b - t, max(h // 22, 24)
+    x, y = w - tw - margin - l, h - th - margin - t
+    # soft shadow: blurred dark copy behind the text for contrast on any background
+    shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).text((x, y), text, font=font, fill=(0, 0, 0, 200))
+    img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(fs // 6 or 1)))
+    d.text((x, y), text, font=font, fill=(255, 255, 255, 235))
     img.save(out)
 
 
@@ -208,9 +212,10 @@ def build(beat: Path, media: list[Path], out: Path, vf_extra: str = "",
     cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-i", str(beat)]
     overlays, last = [], "0:v"
     if visualizer in VISUALIZERS:
-        strip = fh // 6
+        strip = fh // 9
         gen = VISUALIZERS[visualizer].format(w=fw, s=strip, fps=FPS)
-        overlays.append(f"[1:a]{gen},format=yuva420p,colorchannelmixer=aa=0.85[vz]")
+        # hue=s=0 forces monochrome — showfreqs rainbow-colors bins and ignores `colors`
+        overlays.append(f"[1:a]{gen},hue=s=0,format=yuva420p,colorchannelmixer=aa=0.5[vz]")
         overlays.append(f"[{last}][vz]overlay=0:{fh - strip}[vv]")
         last = "vv"
     if overlay_text and FONT:
