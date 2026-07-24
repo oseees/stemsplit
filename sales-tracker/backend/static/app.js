@@ -1163,7 +1163,21 @@ async function viewAdmin() {
     <div class="card"><div class="section-title"><svg class="ic"><use href="#i-save"/></svg> Backup</div>
       ${backupNudge(s.last_backup_at)}
       <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Download a full copy of the database (every account, all data). Do this weekly and keep it somewhere safe — it's the only way to recover if the server's disk is lost.</p>
-      <a class="btn secondary" href="/api/admin/backup" download><svg class="ic"><use href="#i-download"/></svg> Download backup</a></div>`;
+      <div class="btn-row">
+        <a class="btn secondary" href="/api/admin/backup" download><svg class="ic"><use href="#i-download"/></svg> Download backup</a>
+        <button class="btn outline" onclick="backupTest(this)"><svg class="ic"><use href="#i-send"/></svg> Send off-box copy</button>
+      </div></div>`;
+}
+// Ship a backup to the Telegram bot right now — proves the nightly path works
+// (or says exactly why it doesn't) without waiting until 02:00.
+async function backupTest(btn) {
+  btn.disabled = true;
+  try {
+    await api.send("/api/admin/backup/test", "POST");
+    toast("Backup sent — check your Telegram");
+    render();
+  } catch (e) { toast(e.message || "Backup send failed"); }
+  finally { btn.disabled = false; }
 }
 // Warning when the last backup is stale (>7 days) or was never taken.
 function backupNudge(at) {
@@ -3202,7 +3216,7 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModa
   addAccountModal, saveNewAccount, makeDefaultAccount, removeAccount,
   bankSwitcherHtml, setInvoiceAccount, bankPickerFieldHtml, saleBankAccountId,
   viewOrders, orderDetail, fulfillOrder, declineOrder, enableOrders, disableOrders, shareOrderLink,
-  pushSubscribe, pushTest,
+  pushSubscribe, pushTest, backupTest,
   supplierOrder, supplierOrderTotal, sendSupplierOrder, copySupplierOrder,
   attendantSaleModal, attendantSaveSale, setPayMode, attendantInvoice, attendantPay,
   viewStock, viewAttendantHome, staffModal, saveStaff, delStaff, reassignStaff });
