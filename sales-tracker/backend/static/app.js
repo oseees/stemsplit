@@ -1510,6 +1510,26 @@ async function invoiceDetail(id) {
     </div>`);
 }
 
+// "Paid to" picker for the New Sale / Edit Sale forms. Same rule as the
+// invoice-detail switcher: only render it when there's an actual choice.
+// selectedId = the account the sale already uses (edit), else the default.
+function bankPickerFieldHtml(selectedId) {
+  const accts = (state.pay && state.pay.accounts) || [];
+  if (accts.length < 2) return "";
+  const sel = selectedId || (accts.find(a => a.is_default) || {}).id;
+  const opts = accts.map(a =>
+    `<option value="${a.id}"${a.id === sel ? " selected" : ""}>${esc(a.bank)} · ${esc(a.number)}</option>`).join("");
+  return `<div class="field"><label>Paid to</label>
+    <select id="saleBankAccount">${opts}</select></div>`;
+}
+
+// The picker's value, or undefined when it isn't on screen — undefined keeps
+// the field out of the payload entirely so the server leaves the account alone.
+function saleBankAccountId() {
+  const el = document.getElementById("saleBankAccount");
+  return el ? Number(el.value) : undefined;
+}
+
 // "Paid to" switcher — only worth showing once there's a choice to make.
 // Changing it updates the pay link, the PDF/image "Pay to" block and what the
 // customer sees, immediately.
@@ -1578,6 +1598,7 @@ async function editSaleModal(id) {
       <button class="btn outline btn-sm" onclick="addCustomItem()">＋ Custom item</button>
     </div>
     <div class="field"><label>Due date (optional)</label><input id="saleDue" type="date" value="${inv.due_date || ""}"></div>
+    ${bankPickerFieldHtml(inv.bank_account && inv.bank_account.id)}
     <div class="field"><label>Notes (optional)</label><textarea id="saleNotes">${esc(inv.notes || "")}</textarea></div>
     <div class="card" style="background:var(--tint)">
       <div class="list-row"><div class="main">Total</div>
@@ -1591,6 +1612,7 @@ async function saveEditedSale(id) {
   if (!items.length) return toast("Add at least one item");
   const customer_name = document.getElementById("saleCustomer").value.trim();
   try {
+    const acctId = saleBankAccountId();
     await api.send(`/api/invoices/${id}`, "PUT", {
       customer_name: customer_name || null,
       due_date: document.getElementById("saleDue").value || null,
@@ -1599,6 +1621,9 @@ async function saveEditedSale(id) {
         product_id: it.product_id, description: it.description,
         qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost,
       })),
+      // omitted entirely when the picker isn't shown, so the server keeps
+      // whatever account the sale was already payable to
+      ...(acctId ? { bank_account_id: acctId } : {}),
     });
   } catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") return;
@@ -1887,6 +1912,7 @@ async function newSaleModal() {
       <button class="btn outline btn-sm" onclick="addCustomItem()">＋ Custom item</button>
     </div>
     <div class="field"><label>Due date (optional)</label><input id="saleDue" type="date"></div>
+    ${bankPickerFieldHtml()}
     <div class="field"><label>Notes (optional)</label><textarea id="saleNotes"></textarea></div>
     <div class="card" style="background:var(--tint)">
       <div class="list-row"><div class="main">Total</div>
@@ -1976,12 +2002,14 @@ async function saveSale() {
  const customer_name = document.getElementById("saleCustomer").value.trim();
  let res;
  try {
+ const acctId = saleBankAccountId();
  res = await api.send("/api/invoices", "POST", {
  customer_name: customer_name || null,
  due_date: document.getElementById("saleDue").value || null,
  notes: document.getElementById("saleNotes").value,
  items: items.map(it => ({ product_id: it.product_id, description: it.description,
  qty: it.qty, unit_price: it.unit_price, unit_cost: it.unit_cost })),
+ ...(acctId ? { bank_account_id: acctId } : {}),
  });
  } catch (e) { if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't save sale"); return; }
   closeModal();
@@ -3157,7 +3185,7 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModa
   connectPayoutModal, payMaybeResolve, savePayout, disconnectPayout, sharePaymentLink,
   transferModal, saveTransfer, disableTransfer, confirmClaim, dismissClaim,
   addAccountModal, saveNewAccount, makeDefaultAccount, removeAccount,
-  bankSwitcherHtml, setInvoiceAccount,
+  bankSwitcherHtml, setInvoiceAccount, bankPickerFieldHtml, saleBankAccountId,
   viewOrders, orderDetail, fulfillOrder, declineOrder, enableOrders, disableOrders, shareOrderLink,
   pushSubscribe, pushTest,
   supplierOrder, supplierOrderTotal, sendSupplierOrder, copySupplierOrder,

@@ -1604,7 +1604,12 @@ def update_invoice(iid: int, inv: InvoiceIn, user=Depends(current_user)):
             "UPDATE invoices SET customer_id=?, date=?, due_date=?, notes=?, total=?, cost_total=?, "
             "bank_account_id=? WHERE id=?",
             (customer_id, inv.date or old["date"], inv.due_date, inv.notes, total, cost_total,
-             _valid_account_id(conn, inv.bank_account_id, uid), iid))
+             # Only touch the account when the client actually sent the field —
+             # an edit that omits it (older cached app.js, offline replay) must
+             # keep the account the sale was already payable to, not reset it.
+             _valid_account_id(conn, inv.bank_account_id, uid)
+             if "bank_account_id" in inv.model_fields_set else old["bank_account_id"],
+             iid))
         conn.execute("DELETE FROM invoice_items WHERE invoice_id=?", (iid,))
         for it, c in zip(inv.items, costs):
             conn.execute(

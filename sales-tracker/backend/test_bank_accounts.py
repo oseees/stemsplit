@@ -73,4 +73,11 @@ with db.get_conn() as conn:
     assert main._pay_to(conn, u, mk(None))["bank"] == "GTBank"
     assert main._pay_to(conn, {"id": 1, "transfer_enabled": 0}, mk(opay)) is None
 
+# --- an edit that OMITS bank_account_id must not reset the sale's account ----
+# (older cached app.js and offline replays send no such field)
+inv_in = main.InvoiceIn(items=[main.InvoiceItemIn(description="x")])
+assert "bank_account_id" not in inv_in.model_fields_set, "absent field must be distinguishable"
+inv_in2 = main.InvoiceIn(items=[main.InvoiceItemIn(description="x")], bank_account_id=None)
+assert "bank_account_id" in inv_in2.model_fields_set, "explicit null must be distinguishable"
+
 print("ok")
