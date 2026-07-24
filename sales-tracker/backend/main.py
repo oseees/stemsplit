@@ -1414,6 +1414,13 @@ def list_invoices(request: Request, user=Depends(current_user)):
             "WHERE i.user_id=?" + sfi + " ORDER BY i.date DESC, i.id DESC",
             [user["id"]] + spi,
         ).fetchall()
+        # Resolve bank accounts ONCE for the whole list (not per row) so the
+        # WhatsApp reminder can quote the account this invoice is payable to.
+        accts, dflt = {}, None
+        if user.get("transfer_enabled"):
+            rows = _accounts(conn, user["id"])
+            accts = {r["id"]: r for r in rows}
+            dflt = rows[0] if rows else None
         result = []
         for inv in invs:
             d = dict(inv)
@@ -1422,6 +1429,8 @@ def list_invoices(request: Request, user=Depends(current_user)):
             d["balance"] = inv["total"] - paid
             d["status"] = status_for(inv["total"], paid)
             d["cash_paid"] = cash_paid_for(conn, inv["id"])
+            if dflt:
+                d["bank_account"] = _acct_dict(accts.get(inv["bank_account_id"]) or dflt)
             if d["balance"] > 0.01:
                 d["pay_url"] = _pay_url_for(conn, user, inv["id"], base)
             if user.get("is_attendant"):  # attendants never see cost/margin

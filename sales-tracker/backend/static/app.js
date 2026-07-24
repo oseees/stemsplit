@@ -1696,9 +1696,16 @@ function whatsappReminder(inv) {
   const biz = (state.settings && state.settings.business_name) || "us";
   const who = inv.customer && inv.customer.name ? inv.customer.name : "there";
   const due = inv.due_date ? ` (due ${fmtDate(inv.due_date)})` : "";
+  // Quote the account THIS invoice is payable to (not just any account), so
+  // the customer can transfer straight from the chat without asking for details.
+  const a = inv.bank_account;
+  const bank = a && a.number
+    ? `\n\nTransfer to:\n${a.number}\n${a.bank}${a.name ? `\n${a.name}` : ""}`
+    : "";
   const msg = `Hi ${who}, a friendly reminder from ${biz}: invoice ${inv.invoice_no} `
     + `has an outstanding balance of ${money(inv.balance)}${due}. `
     + `Kindly arrange payment when you can. Thank you!`
+    + bank
     + (inv.pay_url ? `\n\nPay securely here: ${inv.pay_url}` : "");
   _openWhatsApp(num, msg);
 }
@@ -2177,6 +2184,7 @@ async function renderOwed() {
             <div class="amount neg">${money(i.balance)}</div>
             <button class="wa-mini" onclick='event.stopPropagation(); whatsappReminder(${attrJson({
  id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
+ bank_account: i.bank_account,
  customer: { id: i.customer_id, name: i.customer_name, phone: i.customer_phone } })})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>
           </div>
         </div>`).join("") : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-check-circle"/></svg></div>Everyone has paid up!</div>`}
