@@ -790,8 +790,10 @@ async function bootstrap(user, prefetch) {
  state.orders = (await prefetch.orders) || await api.get("/api/orders/status").catch(() => state.orders);
  const adminNav = document.getElementById("adminNav");
  if (adminNav) adminNav.style.display = (state.plan && state.plan.is_owner) ? "block" : "none";
- // keep this device's new-order alert subscription fresh (no prompt)
-  if (state.orders && state.orders.enabled) pushSubscribe(true);
+ // Keep this device's push subscription fresh (silent → never prompts, it only
+ // re-registers where permission is already granted). Not gated on orders:
+ // overdue nudges go to Pro accounts that never opened a storefront.
+  pushSubscribe(true);
   await loadShops(await prefetch.shops);
   state.view = "home";
   document.querySelectorAll(".bottom-nav button").forEach(b =>
@@ -2661,9 +2663,11 @@ async function enableOrders() {
 }
 // Alert status row for the Orders card — covers every permission state so the
 // merchant always knows whether alerts will arrive and how to fix it if not.
-function alertsRowHtml() {
+// `what` names what the alerts are for — the Orders card and Settings share
+// this row, and Settings covers overdue nudges too.
+function alertsRowHtml(what = "orders come in") {
   if (!("Notification" in window) || !("PushManager" in window))
-    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0"><svg class="ic"><use href="#i-bell"/></svg> To get order alerts, install SalesPal to your home screen first (menu → Install app).</p>`;
+    return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0"><svg class="ic"><use href="#i-bell"/></svg> To get alerts, install SalesPal to your home screen first (menu → Install app).</p>`;
   const p = Notification.permission;
   if (p === "granted")
     return `<div class="btn-row" style="margin-top:10px;align-items:center">
@@ -2671,7 +2675,7 @@ function alertsRowHtml() {
       <button class="btn outline" onclick="pushTest()">Send test alert</button></div>`;
   if (p === "denied")
     return `<p style="font-size:13px;color:var(--muted);margin:10px 0 0"><svg class="ic"><use href="#i-bell-off"/></svg> Alerts are blocked — allow notifications for SalesPal in your phone settings, then reopen the app.</p>`;
-  return `<button class="btn outline" style="margin-top:10px" onclick="pushSubscribe(false).then(()=>viewOrders())"><svg class="ic"><use href="#i-bell"/></svg> Alert me when orders come in</button>`;
+  return `<button class="btn outline" style="margin-top:10px" onclick="pushSubscribe(false).then(()=>render())"><svg class="ic"><use href="#i-bell"/></svg> Alert me when ${what}</button>`;
 }
 async function pushTest() {
   try {
@@ -2850,6 +2854,9 @@ async function viewSettings() {
  ? "Claude AI is connected. Advice & weekly reports are live."
  : " Not connected. Add ANTHROPIC_API_KEY in backend/.env to enable advice."}</p>
  </div>
+ ${pro ? `<div class="card"><div class="section-title"><svg class="ic"><use href="#i-bell"/></svg> Alerts</div>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 4px">Get a notification each morning when a customer's payment is overdue.</p>
+ ${alertsRowHtml("a payment is overdue")}</div>` : ""}
  <div class="card"><div class="section-title">Your plan</div>
  <p style="font-size:15px;margin:0 0 10px">You're on the <span class="pill ${pro ? 'pro' : ''}">${pro ? 'PRO' : 'FREE'}</span> plan.</p>
       ${pro
