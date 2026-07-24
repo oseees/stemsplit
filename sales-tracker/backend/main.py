@@ -260,6 +260,8 @@ class InvoiceIn(BaseModel):
     # the offline queue never holds a payment pointing at a not-yet-synced id.
     client_uid: Optional[str] = None
     payment: Optional[PaymentIn] = None
+    # which bank account this invoice is payable to (None = the user's default)
+    bank_account_id: Optional[int] = None
 
 
 class ExpenseIn(BaseModel):
@@ -284,6 +286,10 @@ class TransferSetIn(BaseModel):
     account_name: Optional[str] = ""
     account_number: Optional[str] = ""
     bank: Optional[str] = ""
+
+
+class InvoiceAccountIn(BaseModel):
+    bank_account_id: Optional[int] = None
 
 
 class ClaimIn(BaseModel):
@@ -1370,20 +1376,22 @@ def _invoice_payload(conn, inv):
     out["claims"] = db.rows_to_list(conn.execute(
         "SELECT * FROM invoice_claims WHERE invoice_id=? AND status='pending' ORDER BY id",
         (inv["id"],)).fetchall())
+    # which bank account this invoice is payable to (resolved: named or default),
+    # so the detail view can show it and offer a switch
+    out["bank_account"] = _acct_dict(_account_for_invoice(conn, inv))
     return out
 
 
-def _payments_ready(user):
+def _payments_ready(conn, user):
     card = bool(user.get("pay_enabled") and user.get("pay_subaccount"))
-    transfer = bool(user.get("transfer_enabled") and user.get("transfer_number"))
-    return is_pro(user) and (card or transfer)
+    return is_pro(user) and (card or _transfer_ready(conn, user))
 
 
 def _pay_url_for(conn, user, iid, base):
     """The invoice's public pay URL, ready to share. Creates the pay token when
     the owner has payments on so the frontend can open WhatsApp synchronously
     (no extra round-trip at tap time). '' when payments aren't set up."""
-    if not _payments_ready(user):
+    if not _payments_ready(conn, user):
         return ""
     row = conn.execute("SELECT pay_token FROM invoices WHERE id=?", (iid,)).fetchone()
     token = row["pay_token"] if row else None
@@ -1495,9 +1503,11 @@ def create_invoice(inv: InvoiceIn, user=Depends(current_user)):
         no = next_invoice_no(conn, uid)
         cur = conn.execute(
             "INSERT INTO invoices(user_id,shop_id,invoice_no,customer_id,date,due_date,status,notes,"
-            "total,cost_total,client_uid,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "total,cost_total,client_uid,bank_account_id,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (uid, shop_id, no, customer_id, inv.date or today(), inv.due_date, "unpaid",
-             inv.notes, total, cost_total, inv.client_uid, db.now_iso()),
+             inv.notes, total, cost_total, inv.client_uid,
+             _valid_account_id(conn, inv.bank_account_id, uid), db.now_iso()),
         )
         iid = cur.lastrowid
         for it, c in zip(inv.items, costs):
@@ -1591,9 +1601,10 @@ def update_invoice(iid: int, inv: InvoiceIn, user=Depends(current_user)):
         cost_total = sum(it.qty * c for it, c in zip(inv.items, costs))
 
         conn.execute(
-            "UPDATE invoices SET customer_id=?, date=?, due_date=?, notes=?, total=?, cost_total=? "
-            "WHERE id=?",
-            (customer_id, inv.date or old["date"], inv.due_date, inv.notes, total, cost_total, iid))
+            "UPDATE invoices SET customer_id=?, date=?, due_date=?, notes=?, total=?, cost_total=?, "
+            "bank_account_id=? WHERE id=?",
+            (customer_id, inv.date or old["date"], inv.due_date, inv.notes, total, cost_total,
+             _valid_account_id(conn, inv.bank_account_id, uid), iid))
         conn.execute("DELETE FROM invoice_items WHERE invoice_id=?", (iid,))
         for it, c in zip(inv.items, costs):
             conn.execute(
@@ -1632,14 +1643,17 @@ def add_payment(iid: int, p: PaymentIn, user=Depends(current_user)):
         return {"ok": True, "paid": paid, "balance": inv["total"] - paid}
 
 
-def _pay_to(user):
+def _pay_to(conn, user, inv):
     """Merchant's bank details for the 'Pay to' block on invoices (or None when
-    they haven't set up bank transfer). Read from their transfer/payout account."""
-    if user.get("transfer_enabled") and user.get("transfer_number"):
-        return {"name": user.get("transfer_name") or "",
-                "number": user.get("transfer_number") or "",
-                "bank": user.get("transfer_bank") or ""}
-    return None
+    they haven't set up bank transfer). Resolves the account THIS invoice is
+    payable to, so a per-invoice switch shows up on the PDF/image too."""
+    if not user.get("transfer_enabled"):
+        return None
+    row = _account_for_invoice(conn, inv)
+    if not row:
+        return None
+    return {"name": row["name"] or "", "number": row["number"] or "",
+            "bank": row["bank"] or ""}
 
 
 @app.get("/api/invoices/{iid}/pdf")
@@ -1647,8 +1661,9 @@ def invoice_pdf(iid: int, download: int = 0, user=Depends(current_user)):
     with db.get_conn() as conn:
         inv = _owned_invoice(conn, iid, user["id"])
         payload = _invoice_payload(conn, dict(inv))
+        pay_to = _pay_to(conn, user, inv)
     settings = db.get_settings(user["id"])
-    settings["pay_to"] = _pay_to(user)
+    settings["pay_to"] = pay_to
     pdf_bytes = build_invoice_pdf(
         payload, payload["items"], payload["customer"], settings, payload["paid"])
     return RawResponse(
@@ -1704,8 +1719,9 @@ def invoice_image(iid: int, fmt: str = "png", download: int = 0, user=Depends(cu
     with db.get_conn() as conn:
         inv = _owned_invoice(conn, iid, user["id"])
         payload = _invoice_payload(conn, dict(inv))
+        pay_to = _pay_to(conn, user, inv)
     settings = db.get_settings(user["id"])
-    settings["pay_to"] = _pay_to(user)
+    settings["pay_to"] = pay_to
     data = imgdoc.build_invoice_image(
         payload, payload["items"], payload["customer"], settings, payload["paid"], fmt)
     return _img_response(data, f"{inv['invoice_no']}.{fmt}", fmt, download)
@@ -1733,10 +1749,17 @@ def invoice_receipt(iid: int, fmt: str = "png", download: int = 0, user=Depends(
 # A merchant links their bank once; SalesPal creates a Paystack subaccount so
 # customer payments settle straight to that bank (SalesPal never holds funds).
 # Generating pay links is Pro-gated; the platform takes no cut (0% subaccount).
-def _pay_status(user):
+def _pay_status(user, conn=None):
     connected = bool(user.get("pay_enabled") and user.get("pay_subaccount"))
     acct = user.get("pay_account_number") or ""
+    if conn is None:
+        with db.get_conn() as c:
+            return _pay_status(user, c)
+    rows = _accounts(conn, user["id"])
+    dflt = rows[0] if rows else None
     return {
+        # every saved account, so Settings can list/switch/delete them
+        "accounts": [_acct_dict(r) for r in rows],
         "connected": connected,
         "billing_enabled": billing.enabled(),
         "is_pro": is_pro(user),
@@ -1744,10 +1767,10 @@ def _pay_status(user):
         "account_name": user.get("pay_account_name") or "",
         "account_masked": ("••••" + acct[-4:]) if len(acct) >= 4 else acct,
         # Direct bank transfer (instant): the account shown to customers.
-        "transfer_enabled": bool(user.get("transfer_enabled")),
-        "transfer_name": user.get("transfer_name") or "",
-        "transfer_number": user.get("transfer_number") or "",
-        "transfer_bank": user.get("transfer_bank") or "",
+        "transfer_enabled": bool(user.get("transfer_enabled")) and bool(dflt),
+        "transfer_name": (dflt["name"] if dflt else "") or "",
+        "transfer_number": (dflt["number"] if dflt else "") or "",
+        "transfer_bank": (dflt["bank"] if dflt else "") or "",
     }
 
 
@@ -1765,6 +1788,136 @@ def pay_banks(user=Depends(current_user)):
 
 def _clean_acct(s):
     return "".join(ch for ch in (s or "") if ch.isdigit())
+
+
+# -- Bank accounts: several per user, one marked default; each invoice may name
+#    the account it's payable to so the merchant can switch per invoice. -------
+def _accounts(conn, user_id):
+    return conn.execute(
+        "SELECT * FROM bank_accounts WHERE user_id=? ORDER BY is_default DESC, id",
+        (user_id,)).fetchall()
+
+
+def _default_account(conn, user_id):
+    """The account used when an invoice doesn't name one. Falls back to the
+    oldest account so a user who never set a default still gets paid."""
+    rows = _accounts(conn, user_id)
+    return rows[0] if rows else None
+
+
+def _account_for_invoice(conn, inv):
+    """The account THIS invoice is payable to: the one it names (still owned by
+    the user), else the user's default. Returns a row or None."""
+    aid = inv["bank_account_id"] if "bank_account_id" in inv.keys() else None
+    if aid:
+        row = conn.execute(
+            "SELECT * FROM bank_accounts WHERE id=? AND user_id=?",
+            (aid, inv["user_id"])).fetchone()
+        if row:
+            return row
+    return _default_account(conn, inv["user_id"])
+
+
+def _acct_dict(row):
+    if not row:
+        return None
+    return {"id": row["id"], "bank": row["bank"] or "",
+            "number": row["number"] or "", "name": row["name"] or "",
+            "is_default": bool(row["is_default"])}
+
+
+def _transfer_ready(conn, user):
+    """Bank transfer is offered when the master switch is on AND at least one
+    account exists (replaces the old single transfer_number check)."""
+    return bool(user.get("transfer_enabled")) and bool(_accounts(conn, user["id"]))
+
+
+def _valid_account_id(conn, aid, user_id):
+    """Accept a client-supplied account id only if the user owns it, else fall
+    back to the default (None). Never trust the id straight off the wire."""
+    if not aid:
+        return None
+    row = conn.execute("SELECT id FROM bank_accounts WHERE id=? AND user_id=?",
+                       (aid, user_id)).fetchone()
+    return row["id"] if row else None
+
+
+def _owned_account(conn, aid, user_id):
+    row = conn.execute("SELECT * FROM bank_accounts WHERE id=? AND user_id=?",
+                       (aid, user_id)).fetchone()
+    if not row:
+        raise HTTPException(404, "Bank account not found")
+    return row
+
+
+@app.get("/api/bank-accounts")
+def list_bank_accounts(user=Depends(current_user)):
+    with db.get_conn() as conn:
+        return {"accounts": [_acct_dict(r) for r in _accounts(conn, user["id"])]}
+
+
+@app.post("/api/bank-accounts")
+def add_bank_account(data: TransferSetIn, user=Depends(current_user)):
+    """Add another account customers can transfer to. Pro-gated, like the rest
+    of online payments."""
+    if not is_pro(user):
+        raise HTTPException(402, "Accepting payments is a Pro feature. Upgrade to "
+                                 "add a bank-transfer option to your invoices.")
+    name = (data.account_name or "").strip()
+    number = _clean_acct(data.account_number)
+    bank = (data.bank or "").strip()
+    if not (name and number and bank):
+        raise HTTPException(400, "Enter the account name, number and bank")
+    with db.get_conn() as conn:
+        existing = _accounts(conn, user["id"])
+        if any(r["number"] == number and (r["bank"] or "") == bank for r in existing):
+            raise HTTPException(400, "That account is already saved")
+        conn.execute(
+            "INSERT INTO bank_accounts(user_id,bank,number,name,is_default,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (user["id"], bank, number, name, 0 if existing else 1, db.now_iso()))
+        # first account added: turn transfer on so it actually shows up
+        if not existing:
+            conn.execute("UPDATE users SET transfer_enabled=1 WHERE id=?", (user["id"],))
+        return {"accounts": [_acct_dict(r) for r in _accounts(conn, user["id"])]}
+
+
+@app.post("/api/bank-accounts/{aid}/default")
+def set_default_bank_account(aid: int, user=Depends(current_user)):
+    with db.get_conn() as conn:
+        _owned_account(conn, aid, user["id"])
+        conn.execute("UPDATE bank_accounts SET is_default=0 WHERE user_id=?", (user["id"],))
+        conn.execute("UPDATE bank_accounts SET is_default=1 WHERE id=?", (aid,))
+        return {"accounts": [_acct_dict(r) for r in _accounts(conn, user["id"])]}
+
+
+@app.delete("/api/bank-accounts/{aid}")
+def delete_bank_account(aid: int, user=Depends(current_user)):
+    with db.get_conn() as conn:
+        row = _owned_account(conn, aid, user["id"])
+        conn.execute("DELETE FROM bank_accounts WHERE id=?", (aid,))
+        # invoices pointing at it fall back to the default rather than dangling
+        conn.execute("UPDATE invoices SET bank_account_id=NULL WHERE bank_account_id=?", (aid,))
+        rest = _accounts(conn, user["id"])
+        if row["is_default"] and rest:  # promote another so a default always exists
+            conn.execute("UPDATE bank_accounts SET is_default=1 WHERE id=?", (rest[0]["id"],))
+        if not rest:  # last one gone: nothing to transfer to
+            conn.execute("UPDATE users SET transfer_enabled=0 WHERE id=?", (user["id"],))
+        return {"accounts": [_acct_dict(r) for r in _accounts(conn, user["id"])]}
+
+
+@app.post("/api/invoices/{iid}/bank-account")
+def set_invoice_bank_account(iid: int, data: InvoiceAccountIn, user=Depends(current_user)):
+    """Switch which account an invoice is payable to, on the fly. Passing null
+    clears it back to the user's default."""
+    with db.get_conn() as conn:
+        _owned_invoice(conn, iid, user["id"])
+        if data.bank_account_id is not None:
+            _owned_account(conn, data.bank_account_id, user["id"])
+        conn.execute("UPDATE invoices SET bank_account_id=? WHERE id=?",
+                     (data.bank_account_id, iid))
+        inv = _owned_invoice(conn, iid, user["id"])
+        return {"ok": True, "account": _acct_dict(_account_for_invoice(conn, inv))}
 
 
 @app.post("/api/pay/resolve")
@@ -1840,12 +1993,18 @@ def pay_set_transfer(data: TransferSetIn, user=Depends(current_user)):
     if enabled and not (name and number and bank):
         raise HTTPException(400, "Enter the account name, number and bank")
     with db.get_conn() as conn:
-        conn.execute(
-            "UPDATE users SET transfer_enabled=?,transfer_name=?,transfer_number=?,"
-            "transfer_bank=? WHERE id=?",
-            (enabled, name, number, bank, user["id"]))
+        conn.execute("UPDATE users SET transfer_enabled=? WHERE id=?", (enabled, user["id"]))
+        if enabled:
+            cur = _default_account(conn, user["id"])
+            if cur:  # edit the default in place
+                conn.execute("UPDATE bank_accounts SET bank=?,number=?,name=? WHERE id=?",
+                             (bank, number, name, cur["id"]))
+            else:
+                conn.execute(
+                    "INSERT INTO bank_accounts(user_id,bank,number,name,is_default,created_at) "
+                    "VALUES(?,?,?,?,1,?)", (user["id"], bank, number, name, db.now_iso()))
         u = db.get_user(conn, user["id"])
-    return _pay_status(dict(u))
+        return _pay_status(dict(u), conn)
 
 
 @app.post("/api/invoices/{iid}/payment-link")
@@ -1857,7 +2016,8 @@ def invoice_payment_link(iid: int, request: Request, user=Depends(current_user))
             402, "Online payment links are a Pro feature. Upgrade to let "
                  "customers pay you by card, transfer or USSD.")
     card_ready = bool(user.get("pay_enabled") and user.get("pay_subaccount"))
-    transfer_ready = bool(user.get("transfer_enabled") and user.get("transfer_number"))
+    with db.get_conn() as _c:
+        transfer_ready = _transfer_ready(_c, user)
     if not (card_ready or transfer_ready):
         raise HTTPException(400, "Turn on a payment option under Settings first (instant bank transfer or card).")
     import secrets as _secrets
@@ -1890,8 +2050,9 @@ def public_invoice(token: str):
     balance = (inv["total"] or 0) - paid
     card_enabled = bool(owner and owner["pay_enabled"] and owner["pay_subaccount"]
                         and billing.enabled())
-    transfer_enabled = bool(owner and owner["transfer_enabled"]
-                            and owner["transfer_number"])
+    with db.get_conn() as c3:
+        acct = _account_for_invoice(c3, inv) if owner else None
+    transfer_enabled = bool(owner and owner["transfer_enabled"] and acct)
     # has the customer already tapped "I've sent it" (awaiting merchant confirm)?
     with db.get_conn() as c2:
         pending = bool(c2.execute(
@@ -1912,9 +2073,8 @@ def public_invoice(token: str):
     }
     if transfer_enabled:
         out["transfer"] = {
-            "name": owner["transfer_name"] or "",
-            "number": owner["transfer_number"] or "",
-            "bank": owner["transfer_bank"] or "",
+            "name": acct["name"] or "", "number": acct["number"] or "",
+            "bank": acct["bank"] or "",
         }
     return out
 
@@ -1981,7 +2141,7 @@ def public_invoice_claim(token: str, data: ClaimIn):
         if not inv:
             raise HTTPException(404, "Payment link not found")
         owner = db.get_user(conn, inv["user_id"])
-        if not (owner and owner["transfer_enabled"] and owner["transfer_number"]):
+        if not (owner and _transfer_ready(conn, dict(owner))):
             raise HTTPException(400, "Bank transfer isn't available for this invoice")
         paid = paid_for(conn, inv["id"])
         balance = round((inv["total"] or 0) - paid, 2)

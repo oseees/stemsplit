@@ -332,6 +332,34 @@ def init_db():
         _ensure_column(conn, "users", "transfer_bank", "TEXT")
         _ensure_column(conn, "users", "transfer_number", "TEXT")
         _ensure_column(conn, "users", "transfer_name", "TEXT")
+        # Multiple bank accounts: the transfer_* columns above held exactly one.
+        # Accounts now live in their own table and each invoice records which one
+        # it's payable to (NULL = the user's default), so the merchant can switch
+        # accounts per invoice. The legacy columns are left in place but are no
+        # longer read — transfer_enabled stays as the master on/off switch.
+        conn.execute("""CREATE TABLE IF NOT EXISTS bank_accounts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          bank TEXT NOT NULL,
+          number TEXT NOT NULL,
+          name TEXT NOT NULL,
+          is_default INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bank_accounts_user ON bank_accounts(user_id)")
+        _ensure_column(conn, "invoices", "bank_account_id", "INTEGER")
+        # One-time backfill: move each user's existing single account into the
+        # table as their default, so live payment links keep working untouched.
+        for r in conn.execute(
+                "SELECT id, transfer_bank, transfer_number, transfer_name FROM users "
+                "WHERE transfer_number IS NOT NULL AND transfer_number<>'' "
+                "AND id NOT IN (SELECT user_id FROM bank_accounts)").fetchall():
+            conn.execute(
+                "INSERT INTO bank_accounts(user_id,bank,number,name,is_default,created_at) "
+                "VALUES(?,?,?,?,1,?)",
+                (r["id"], r["transfer_bank"] or "", r["transfer_number"],
+                 r["transfer_name"] or "", now_iso()))
         # per-invoice public pay link token + de-dup guard for Paystack-settled payments
         _ensure_column(conn, "invoices", "pay_token", "TEXT")
         _ensure_column(conn, "payments", "paystack_ref", "TEXT")

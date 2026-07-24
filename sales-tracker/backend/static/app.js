@@ -1503,10 +1503,32 @@ async function invoiceDetail(id) {
       ? `<button class="btn whatsapp" style="margin-bottom:10px" onclick='whatsappReminder(${attrJson(inv)})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp reminder</button>`
       : ""}
     ${inv.balance > 0.01 ? `<button class="btn secondary" style="margin-bottom:10px" onclick="paymentModal(${id}, ${inv.balance})">Record part payment</button>` : ""}
+    ${bankSwitcherHtml(inv)}
     <div class="btn-row">
       <button class="btn outline" onclick="editSaleModal(${id})"><svg class="ic"><use href="#i-edit"/></svg> Edit sale</button>
       <button class="btn danger" onclick="if(confirm('Delete this invoice? This also gives the stock back.')){deleteInvoice(${id})}">Delete</button>
     </div>`);
+}
+
+// "Paid to" switcher — only worth showing once there's a choice to make.
+// Changing it updates the pay link, the PDF/image "Pay to" block and what the
+// customer sees, immediately.
+function bankSwitcherHtml(inv) {
+  const accts = (state.pay && state.pay.accounts) || [];
+  if (accts.length < 2 || !inv.bank_account) return "";
+  const opts = accts.map(a =>
+    `<option value="${a.id}"${a.id === inv.bank_account.id ? " selected" : ""}>${esc(a.bank)} · ${esc(a.number)}</option>`).join("");
+  return `<div class="field" style="margin-bottom:10px">
+    <label>Paid to</label>
+    <select onchange="setInvoiceAccount(${inv.id}, this.value)">${opts}</select></div>`;
+}
+
+async function setInvoiceAccount(id, accountId) {
+  try {
+    await api.send(`/api/invoices/${id}/bank-account`, "POST",
+      { bank_account_id: Number(accountId) });
+    toast("Account updated for this sale");
+  } catch (e) { toast(e.message || "Couldn't switch account"); }
 }
 
 async function deleteInvoice(id) {
@@ -2718,11 +2740,22 @@ function transferCardHtml(pay) {
   // Instant bank transfer to the merchant's own account (no processor, no fee).
  const t = `<div class="section-title">Bank transfer · instant</div>`;
  if (pay.transfer_enabled) {
+ const accts = pay.accounts || [];
+ // One row per saved account. The default is the one used when an invoice
+ // doesn't name its own — each sale can still be switched individually.
+ const rows = accts.map(a => `<div class="list-row">
+   <div><div class="lr-title">${esc(a.bank)}${a.is_default ? ` <span class="pill">Default</span>` : ""}</div>
+   <div class="lr-sub">${esc(a.number)} · ${esc(a.name)}</div></div>
+   <div class="btn-row" style="gap:6px">
+   ${a.is_default ? "" : `<button class="wa-mini" onclick="makeDefaultAccount(${a.id})">Make default</button>`}
+   ${accts.length > 1 ? `<button class="wa-mini" onclick="removeAccount(${a.id})" aria-label="Remove account"><svg class="ic"><use href="#i-trash"/></svg></button>` : ""}
+   </div></div>`).join("");
  return `<div class="card">${t}
- <p style="font-size:14px;margin:0 0 6px">On — customers can pay by direct transfer to your account. Money lands <strong>instantly</strong>, no fees.</p>
- <p style="font-size:13px;color:var(--muted);margin:0 0 12px">${esc(pay.transfer_number)} · ${esc(pay.transfer_bank)} · ${esc(pay.transfer_name)}</p>
- <div class="btn-row">
- <button class="btn outline" onclick="transferModal()">Edit account</button>
+ <p style="font-size:14px;margin:0 0 10px">On — customers pay by direct transfer. Money lands <strong>instantly</strong>, no fees.${accts.length > 1 ? " You can pick which account each sale is paid to." : ""}</p>
+ ${rows}
+ <div class="btn-row" style="margin-top:12px">
+ <button class="btn outline" onclick="addAccountModal()"><svg class="ic"><use href="#i-plus"/></svg> Add account</button>
+ <button class="btn outline" onclick="transferModal()">Edit default</button>
  <button class="btn danger" onclick="disableTransfer()">Turn off</button>
  </div></div>`;
  }
@@ -2972,6 +3005,50 @@ async function saveTransfer() {
   } catch (e) { if (e.message !== "__upgrade__") toast(e.message || "Couldn't save"); }
 }
 
+// Add another account customers can transfer to (on top of the default).
+function addAccountModal() {
+  openModal(`<h2>Add bank account</h2>
+    <p style="color:var(--muted);font-size:14px;margin:0 0 14px">Save more than one account, then pick which one each sale is paid to.</p>
+    <div class="field"><label>Account name</label><input id="acName" placeholder="e.g. Ada Beauty Store"></div>
+    <div class="field"><label>Account number</label><input id="acNum" inputmode="numeric" placeholder="Account number"></div>
+    <div class="field"><label>Bank / wallet</label><input id="acBank" placeholder="e.g. OPay, Moniepoint, GTBank"></div>
+    <button class="btn" onclick="saveNewAccount()">Save account</button>
+    <button class="btn ghost" onclick="closeModal()">Cancel</button>`);
+}
+
+async function saveNewAccount() {
+  const account_name = document.getElementById("acName").value.trim();
+  const account_number = document.getElementById("acNum").value.replace(/\D/g, "");
+  const bank = document.getElementById("acBank").value.trim();
+  if (!account_name || !account_number || !bank) { toast("Fill in name, number and bank"); return; }
+  try {
+    const r = await api.send("/api/bank-accounts", "POST", { account_name, account_number, bank });
+    state.pay = Object.assign({}, state.pay, { accounts: r.accounts, transfer_enabled: true });
+    closeModal(); toast("Account added"); render();
+  } catch (e) { if (e.message !== "__upgrade__") toast(e.message || "Couldn't save"); }
+}
+
+async function makeDefaultAccount(id) {
+  try {
+    const r = await api.send(`/api/bank-accounts/${id}/default`, "POST", {});
+    const d = (r.accounts || []).find(a => a.is_default) || {};
+    state.pay = Object.assign({}, state.pay, { accounts: r.accounts,
+      transfer_name: d.name || "", transfer_number: d.number || "", transfer_bank: d.bank || "" });
+    toast("Default account updated"); render();
+  } catch (e) { toast(e.message || "Couldn't update"); }
+}
+
+async function removeAccount(id) {
+  if (!confirm("Remove this account? Sales already set to it will fall back to your default.")) return;
+  try {
+    const r = await api.send(`/api/bank-accounts/${id}`, "DELETE");
+    const d = (r.accounts || []).find(a => a.is_default) || {};
+    state.pay = Object.assign({}, state.pay, { accounts: r.accounts,
+      transfer_name: d.name || "", transfer_number: d.number || "", transfer_bank: d.bank || "" });
+    toast("Account removed"); render();
+  } catch (e) { toast(e.message || "Couldn't remove"); }
+}
+
 async function disableTransfer() {
  const p = state.pay || {};
  if (!confirm("Turn off bank transfer payments? Customers won't see your account on new pay links.")) return;
@@ -3079,6 +3156,8 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModa
   shareInvoiceImage, shareReceipt, receiptOffer,
   connectPayoutModal, payMaybeResolve, savePayout, disconnectPayout, sharePaymentLink,
   transferModal, saveTransfer, disableTransfer, confirmClaim, dismissClaim,
+  addAccountModal, saveNewAccount, makeDefaultAccount, removeAccount,
+  bankSwitcherHtml, setInvoiceAccount,
   viewOrders, orderDetail, fulfillOrder, declineOrder, enableOrders, disableOrders, shareOrderLink,
   pushSubscribe, pushTest,
   supplierOrder, supplierOrderTotal, sendSupplierOrder, copySupplierOrder,
