@@ -90,6 +90,10 @@ assert meta1["pay_to"] is None, meta1["pay_to"]
 # filename is named after them
 hdr = main.debts_pdf(customer_id=chidi, user=USER).headers["content-disposition"]
 assert 'filename="statement-chidi-sons.pdf"' in hdr, hdr
+# download=1 (the WhatsApp share fallback) must attach, not render inline
+dl = main.debts_pdf(customer_id=chidi, download=1, user=USER).headers["content-disposition"]
+assert dl.startswith("attachment;") and 'statement-chidi-sons.pdf' in dl, dl
+assert main.debts_pdf(user=USER).headers["content-disposition"].startswith("inline;")
 
 # another tenant's customer id must not resolve, even with a valid-looking id
 try:

@@ -1823,7 +1823,9 @@ async function _shareFile(url, filename, mime, title, text) {
  const abs = url.startsWith("http") ? url : location.origin + url;
  try {
  let blob = null;
- try { blob = await (await fetch(url)).blob(); } catch (e) {}
+ // r.ok matters: a 401 or offline-503 body would otherwise be shared as a .pdf
+ // full of JSON. Skipping the blob falls through to the plain download link.
+ try { const r = await fetch(url); if (r.ok) blob = await r.blob(); } catch (e) {}
 
  // 1) Native app bridge → real Android share sheet WITH the file.
  // Test only object PRESENCE (reliable); reading a method as a property can
@@ -2545,7 +2547,10 @@ async function viewCustomers() {
       <div class="os-value warn" style="font-size:26px">${money0(total)}</div>
       <div class="meta">${debtors.length} customer${debtors.length > 1 ? "s" : ""} owing${
         debtors[0].name ? ` · most is ${esc(debtors[0].name)} (${money0(debtors[0].owed)})` : ""}</div>
-      <a class="btn secondary" href="/api/debts/pdf" target="_blank" style="margin-top:12px"><svg class="ic"><use href="#i-file"/></svg> Statement PDF</a>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn" onclick="shareStatement()"><svg class="ic"><use href="#i-send"/></svg> Share</button>
+        <a class="btn secondary" href="/api/debts/pdf" target="_blank"><svg class="ic"><use href="#i-file"/></svg> PDF</a>
+      </div>
     </div>` : "";
   app.innerHTML = `
     ${owedCard}
@@ -2586,6 +2591,23 @@ function customerReminder(c) {
     + `you have an outstanding balance of ${money(c.owed)}${across}. `
     + `Kindly arrange payment when you can. Thank you!` + bank);
 }
+// Share the statement as a FILE, so it lands in a WhatsApp chat as an attachment
+// instead of a link only the merchant can open. Same path as invoice sharing:
+// native share sheet → Web Share → download. No arg = the whole debt book.
+async function shareStatement(c) {
+  const biz = (state.settings && state.settings.business_name) || "SalesPal";
+  if (!c) {
+    return _shareFile("/api/debts/pdf", "who-owes-me.pdf", "application/pdf",
+      "Who owes me", `${biz} — outstanding customer balances`);
+  }
+  const slug = (c.name || "customer").toLowerCase().replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "customer";
+  const across = c.unpaid_count > 1 ? ` across ${c.unpaid_count} invoices` : "";
+  await _shareFile(`/api/debts/pdf?customer_id=${c.id}`, `statement-${slug}.pdf`,
+    "application/pdf", `Statement — ${c.name || "customer"}`,
+    `Hi ${c.name || "there"}, here's your statement of account from ${biz}. `
+    + `Outstanding balance: ${money(c.owed)}${across}. Kindly see the attached.`);
+}
 function customerModal(c) {
   c = c || {};
   openModal(`<h2>${c.id ? "Edit" : "Add"} customer</h2>
@@ -2596,7 +2618,10 @@ function customerModal(c) {
     ${Number(c.owed) > 0.01 ? `<div class="card" style="margin-bottom:14px">
       <div class="os-label">Owes</div><div class="os-value warn">${money0(c.owed)}</div>
       <div class="meta">${c.unpaid_count} unpaid invoice${c.unpaid_count > 1 ? "s" : ""}</div>
-      <a class="btn secondary" href="/api/debts/pdf?customer_id=${c.id}" target="_blank" style="margin-top:12px"><svg class="ic"><use href="#i-file"/></svg> Statement PDF</a>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn" onclick='shareStatement(${attrJson({ id: c.id, name: c.name, owed: c.owed, unpaid_count: c.unpaid_count })})'><svg class="ic"><use href="#i-send"/></svg> Send statement</button>
+        <a class="btn secondary" href="/api/debts/pdf?customer_id=${c.id}" target="_blank"><svg class="ic"><use href="#i-file"/></svg> PDF</a>
+      </div>
     </div>` : ""}
     <div class="field"><label>Name</label><input id="cName" value="${esc(c.name || "")}"></div>
     <div class="field"><label>Phone</label><input id="cPhone" value="${esc(c.phone || "")}"></div>
