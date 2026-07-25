@@ -2000,8 +2000,10 @@ function filterCustomerSuggest() {
  const box = document.getElementById("custSuggest");
  if (!inp || !box) return;
  const q = inp.value.trim().toLowerCase();
+ // by name, not the list's debt order — a picker reads alphabetically
  const matches = (window._customers || [])
- .filter(c => !q || c.name.toLowerCase().includes(q)).slice(0, 6);
+ .filter(c => !q || c.name.toLowerCase().includes(q))
+ .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 6);
  if (!matches.length) { box.classList.remove("show"); box.innerHTML = ""; return; }
  box.innerHTML = matches.map(c =>
  `<button type="button" onmousedown="event.preventDefault()" onclick='pickCustomerSuggest(${attrJson(c.name)})'>${esc(c.name)}</button>`
@@ -2534,20 +2536,54 @@ function copySupplierOrder(g) {
 // ---------- CUSTOMERS ----------
 async function viewCustomers() {
   const customers = await api.get("/api/customers");
+  // Debt book: the server already sorts biggest debtor first.
+  const debtors = customers.filter(c => Number(c.owed) > 0.01);
+  const total = debtors.reduce((s, c) => s + Number(c.owed), 0);
+  const owedCard = debtors.length ? `
+    <div class="card">
+      <div class="os-label">You're owed</div>
+      <div class="os-value warn" style="font-size:26px">${money0(total)}</div>
+      <div class="meta">${debtors.length} customer${debtors.length > 1 ? "s" : ""} owing${
+        debtors[0].name ? ` · most is ${esc(debtors[0].name)} (${money0(debtors[0].owed)})` : ""}</div>
+    </div>` : "";
   app.innerHTML = `
+    ${owedCard}
     <button class="btn" onclick="customerModal()" style="margin-bottom:14px">＋ Add customer</button>
     <div class="card"><div class="section-title">Customers</div>
-      ${customers.length ? customers.map(c => `
+      ${customers.length ? customers.map(c => {
+        const owed = Number(c.owed) || 0;
+        return `
         <div class="list-row" onclick='customerModal(${attrJson(c)})'>
           <div style="flex:1;min-width:0"><div class="main">${esc(c.name)}</div>
-            <div class="meta">${esc(c.phone || c.email || "")}</div></div>
-          ${waNumber(c.phone) ? `<div style="display:flex;gap:6px;flex-shrink:0">
-            <button class="wa-mini call" onclick='event.stopPropagation(); phoneCall(${attrJson({ phone: c.phone })})'><svg class="ic"><use href="#i-phone"/></svg> Call</button>
-            <button class="wa-mini" onclick='event.stopPropagation(); whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp</button>
-          </div>` : ""}
-        </div>`).join("")
+            <div class="meta">${owed > 0.01
+              ? `<span class="neg">owes ${money0(owed)}</span> · ${c.unpaid_count} unpaid`
+              : esc(c.phone || c.email || "")}</div></div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            ${owed > 0.01 ? `<button class="wa-mini" onclick='event.stopPropagation(); customerReminder(${attrJson(c)})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>` : ""}
+            ${waNumber(c.phone) ? `
+              <button class="wa-mini call" onclick='event.stopPropagation(); phoneCall(${attrJson({ phone: c.phone })})'><svg class="ic"><use href="#i-phone"/></svg> Call</button>
+              ${owed > 0.01 ? "" : `<button class="wa-mini" onclick='event.stopPropagation(); whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp</button>`}` : ""}
+          </div>
+        </div>`; }).join("")
         : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-customers"/></svg></div>No customers yet</div>`}
     </div>`;
+}
+
+// Chase a customer for EVERYTHING they owe in one message, rather than one
+// reminder per invoice. Called straight from the tap (see _openWhatsApp).
+function customerReminder(c) {
+  const num = _waResolveNumber(c);
+  if (!num) return;
+  const biz = (state.settings && state.settings.business_name) || "us";
+  const accts = (state.pay && state.pay.accounts) || [];
+  const a = (state.pay && state.pay.transfer_enabled)
+    ? (accts.find(x => x.is_default) || accts[0]) : null;
+  const bank = a && a.number
+    ? `\n\nTransfer to:\n${a.number}\n${a.bank}${a.name ? `\n${a.name}` : ""}` : "";
+  const across = c.unpaid_count > 1 ? ` across ${c.unpaid_count} invoices` : "";
+  _openWhatsApp(num, `Hi ${c.name || "there"}, a friendly reminder from ${biz}: `
+    + `you have an outstanding balance of ${money(c.owed)}${across}. `
+    + `Kindly arrange payment when you can. Thank you!` + bank);
 }
 function customerModal(c) {
   c = c || {};

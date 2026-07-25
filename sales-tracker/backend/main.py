@@ -1322,11 +1322,26 @@ def price_advice(pid: int, body: PriceCheckIn, user=Depends(current_user)):
 # ----------------------------- Customers ------------------------------------
 @app.get("/api/customers")
 def list_customers(user=Depends(current_user)):
-    sf, sp = _shop_and(_active_shop(user))
+    """Customers with what each one still owes, biggest debtor first — the debt
+    book. `owed` clamps each invoice at 0 so an overpaid sale can't cancel out a
+    real debt elsewhere. ponytail: correlated subqueries, fine at small-business
+    row counts; roll into a GROUP BY join if a customer list ever feels slow."""
+    shop = _active_shop(user)
+    sf, sp = _shop_and(shop, "c")
+    sfi, spi = _shop_and(shop, "i")
+    bal = ("i.total - COALESCE("
+           "(SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id=i.id), 0)")
     with db.get_conn() as conn:
         return db.rows_to_list(conn.execute(
-            "SELECT * FROM customers WHERE user_id=?" + sf + " ORDER BY name",
-            [user["id"]] + sp).fetchall())
+            "SELECT c.*, "
+            f" COALESCE((SELECT SUM(MAX({bal}, 0)) FROM invoices i"
+            f"           WHERE i.customer_id=c.id AND i.user_id=c.user_id{sfi}), 0) AS owed,"
+            f" (SELECT COUNT(*) FROM invoices i"
+            f"  WHERE i.customer_id=c.id AND i.user_id=c.user_id{sfi} AND {bal} > 0.01"
+            "  ) AS unpaid_count "
+            "FROM customers c WHERE c.user_id=?" + sf +
+            " ORDER BY owed DESC, c.name",
+            spi + spi + [user["id"]] + sp).fetchall())
 
 
 @app.post("/api/customers")
