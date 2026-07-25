@@ -1216,7 +1216,7 @@ async function viewHome() {
     <div class="overlap-stats">
       <div><div class="os-label">Revenue</div><div class="os-value">${moneyShort(d.revenue)}</div></div>
       <div><div class="os-label">Collected</div><div class="os-value">${moneyShort(d.collected)}</div></div>
-      <div><div class="os-label">Owed</div><div class="os-value ${d.outstanding > 0 ? "warn" : ""}">${moneyShort(d.outstanding)}</div></div>
+      <div onclick="setView('customers')" style="cursor:pointer"><div class="os-label">Owed</div><div class="os-value ${d.outstanding > 0 ? "warn" : ""}">${moneyShort(d.outstanding)}</div></div>
     </div>
     <div class="quick-acts">
       <button class="qa" onclick="newSaleModal()"><span class="qa-i">＋</span>New sale</button>
