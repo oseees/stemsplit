@@ -5,6 +5,7 @@ Uses an embedded DejaVuSans font so non-Latin currency symbols (₦ Naira, ₵, 
 """
 import io
 import os
+from xml.sax.saxutils import escape as xml_escape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
@@ -54,6 +55,130 @@ def _wm_page(canv, doc, text):
     canv.rotate(30)
     canv.drawCentredString(0, 0, text)
     canv.restoreState()
+
+
+def build_debts_pdf(debtors: list, settings: dict, as_of: str,
+                    title: str = "WHO OWES ME") -> bytes:
+    """Debtors statement: every customer who owes, broken down invoice by invoice.
+
+    debtors = [{name, phone, owed, invoices: [{invoice_no, date, due_date,
+                total, paid, balance, days_late}]}], biggest debtor first.
+    settings["pay_to"] adds a bank-transfer box (single-customer statements, which
+    get sent to the customer).
+    """
+    cur = settings.get("currency", "$")
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+                            topMargin=18 * mm, bottomMargin=18 * mm)
+    styles = getSampleStyleSheet()
+    small = ParagraphStyle("small", parent=styles["Normal"], fontName=FONT, fontSize=9,
+                           textColor=MUTED, leading=12)
+    normal = ParagraphStyle("n", parent=styles["Normal"], fontName=FONT, fontSize=10, leading=13)
+
+    total_owed = sum(d["owed"] for d in debtors)
+    n_inv = sum(len(d["invoices"]) for d in debtors)
+    late = sum(1 for d in debtors for i in d["invoices"] if i.get("days_late", 0) > 0)
+
+    head = [[
+        [Paragraph(settings.get("business_name", "My Business"),
+                   ParagraphStyle("biz", parent=styles["Title"], fontName=FONT_BOLD, fontSize=20,
+                                  textColor=ACCENT, spaceAfter=2, alignment=0)),
+         Paragraph(f"As at {as_of}", small)],
+        [Paragraph(title, ParagraphStyle("t", parent=styles["Title"], fontName=FONT_BOLD,
+                                        fontSize=18, textColor=colors.HexColor("#111827"),
+                                        alignment=2)),
+         Paragraph(_money(cur, total_owed), ParagraphStyle("tot", parent=normal, alignment=2,
+                                                           fontName=FONT_BOLD, fontSize=14,
+                                                           textColor=ACCENT)),
+         Paragraph((f"{len(debtors)} customers · " if len(debtors) > 1 else "")
+                   + f"{n_inv} unpaid invoice{'s' if n_inv != 1 else ''}"
+                   + (f" · {late} overdue" if late else ""),
+                   ParagraphStyle("c", parent=small, alignment=2))],
+    ]]
+    header = Table(head, colWidths=[87 * mm, 87 * mm])
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+
+    data = [["Invoice", "Date", "Due", "Total", "Paid", "Balance"]]
+    st = [
+        ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
+        ("FONTNAME", (0, 1), (-1, -1), FONT),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("ALIGN", (3, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
+    ]
+    for d in debtors:
+        # escaped: reportlab Paragraphs are mini-XML, and a customer named "A & B"
+        # would otherwise blow up the whole statement.
+        who = xml_escape(d["name"] or "Walk-in customer")
+        if d.get("phone"):
+            who += f'  <font color="#6b7280">{xml_escape(d["phone"])}</font>'
+        r = len(data)
+        data.append([Paragraph(f"<b>{who}</b>", ParagraphStyle(
+            "who", parent=normal, fontName=FONT_BOLD, fontSize=10)), "", "", "", "",
+            Paragraph(f"<b>{_money(cur, d['owed'])}</b>", ParagraphStyle(
+                "w2", parent=normal, fontName=FONT_BOLD, fontSize=10, alignment=2,
+                textColor=ACCENT))])
+        st += [("SPAN", (0, r), (4, r)), ("BACKGROUND", (0, r), (-1, r), LIGHT),
+               ("LINEABOVE", (0, r), (-1, r), 0.6, ACCENT)]
+        for inv in d["invoices"]:
+            due = inv.get("due_date") or "—"
+            days = inv.get("days_late", 0)
+            if days > 0:
+                due += f" ({days}d late)"
+            row = len(data)
+            data.append([inv["invoice_no"], inv["date"], due, _money(cur, inv["total"]),
+                         _money(cur, inv["paid"]), _money(cur, inv["balance"])])
+            if days > 0:
+                st.append(("TEXTCOLOR", (2, row), (2, row), colors.HexColor("#b91c1c")))
+
+    table = Table(data, colWidths=[30 * mm, 22 * mm, 34 * mm, 29 * mm, 29 * mm, 30 * mm],
+                  repeatRows=1)
+    table.setStyle(TableStyle(st))
+
+    grand = Table([["Total owed", _money(cur, total_owed)]], colWidths=[44 * mm, 30 * mm],
+                  hAlign="RIGHT")
+    grand.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "RIGHT"), ("FONTNAME", (0, 0), (-1, -1), FONT_BOLD),
+        ("FONTSIZE", (0, 0), (-1, -1), 11), ("TEXTCOLOR", (0, 0), (-1, -1), ACCENT),
+        ("LINEABOVE", (0, 0), (-1, -1), 0.6, MUTED),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+    ]))
+
+    elems = [header, Spacer(1, 10 * mm), table, Spacer(1, 5 * mm), grand, Spacer(1, 10 * mm)]
+
+    # Where to pay — same box as the invoice, so a statement sent to a customer
+    # is actionable on its own.
+    pay = settings.get("pay_to")
+    if pay and pay.get("number"):
+        lines = [Paragraph("PAYMENT DETAILS — bank transfer",
+                           ParagraphStyle("l", parent=small, fontSize=8))]
+        if pay.get("bank"):
+            lines.append(Paragraph(f"Bank: {xml_escape(pay['bank'])}", normal))
+        lines.append(Paragraph(f"Account number: {xml_escape(pay['number'])}", normal))
+        if pay.get("name"):
+            lines.append(Paragraph(f"Account name: {xml_escape(pay['name'])}", normal))
+        box = Table([[lines]], colWidths=[110 * mm], hAlign="LEFT")
+        box.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e5e7eb")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ("TOPPADDING", (0, 0), (-1, -1), 10), ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ]))
+        elems += [box, Spacer(1, 10 * mm)]
+
+    elems += [
+             Paragraph('Made with <font color="#0a5236"><b>SalesPal</b></font> — track sales &amp; '
+                       'get paid &nbsp;·&nbsp; <link href="https://salespal.online" '
+                       'color="#0a5236">salespal.online</link>',
+                       ParagraphStyle("powered", parent=small, alignment=1, fontSize=8))]
+    wm = lambda c, dd: _wm_page(c, dd, settings.get("business_name"))
+    doc.build(elems, onFirstPage=wm, onLaterPages=wm)
+    return buf.getvalue()
 
 
 def build_invoice_pdf(invoice: dict, items: list, customer: dict, settings: dict,

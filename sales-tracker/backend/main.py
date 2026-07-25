@@ -32,7 +32,7 @@ import billing
 import backup
 import push
 from auth import current_user
-from pdf import build_invoice_pdf
+from pdf import build_invoice_pdf, build_debts_pdf
 import imgdoc
 
 app = FastAPI(title="SalesPal")
@@ -1700,6 +1700,70 @@ def invoice_pdf(iid: int, download: int = 0, user=Depends(current_user)):
         media_type="application/pdf",
         headers=_disposition(f'{inv["invoice_no"]}.pdf', download),
     )
+
+
+@app.get("/api/debts/pdf")
+def debts_pdf(customer_id: int = 0, download: int = 0, user=Depends(current_user)):
+    """The debt book as one printable statement: every customer who owes, with
+    each unpaid invoice, what's been paid on it and how late it is.
+    customer_id narrows it to one customer — a statement you can send them."""
+    sf, sp = _shop_and(_active_shop(user), "i")
+    with db.get_conn() as conn:
+        rows = db.rows_to_list(conn.execute(
+            "SELECT * FROM ("
+            " SELECT i.invoice_no, i.date, i.due_date, i.total, i.customer_id,"
+            "  COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id=i.id),0) paid,"
+            "  c.name, c.phone"
+            " FROM invoices i LEFT JOIN customers c ON c.id=i.customer_id"
+            "  AND c.user_id=i.user_id"
+            " WHERE i.user_id=?" + sf + (" AND i.customer_id=?" if customer_id else "") +
+            ") WHERE total - paid > 0.01 ORDER BY name, date, invoice_no",
+            [user["id"]] + sp + ([customer_id] if customer_id else [])).fetchall())
+        pay_to = _acct_dict(_default_account(conn, user["id"])) if (
+            customer_id and user.get("transfer_enabled")) else None
+    if not rows:
+        raise HTTPException(400, "This customer has no unpaid invoices" if customer_id
+                            else "Nobody owes you anything right now")
+
+    groups = {}
+    for r in rows:
+        r["balance"] = r["total"] - r["paid"]
+        r["days_late"] = _days_late(r["due_date"])
+        # keyed by id, not name: two customers can share a name. All walk-in
+        # sales (no customer) collapse into one group — ponytail: they're
+        # anonymous, there's nobody to chase individually.
+        g = groups.setdefault(r["customer_id"] or 0, {
+            "name": r["name"], "phone": r["phone"], "owed": 0.0, "invoices": []})
+        g["owed"] += r["balance"]
+        g["invoices"].append(r)
+    debtors = sorted(groups.values(), key=lambda g: -g["owed"])
+
+    settings = db.get_settings(user["id"])
+    # One customer => a statement to SEND them (their name on it, bank details to
+    # pay into). All customers => the merchant's own debt book.
+    one = debtors[0] if customer_id else None
+    settings["pay_to"] = pay_to
+    data = build_debts_pdf(debtors, settings, today(),
+                           title="STATEMENT OF ACCOUNT" if one else "WHO OWES ME")
+    name = _slug(one["name"]) if one else "who-owes-me"
+    return RawResponse(content=data, media_type="application/pdf",
+                       headers=_disposition(f"statement-{name}.pdf" if one
+                                            else "who-owes-me.pdf", download))
+
+
+def _slug(s):
+    """Filename-safe customer name, e.g. 'Chidi & Sons' -> 'chidi-sons'."""
+    return re.sub(r"[^a-z0-9]+", "-", (s or "customer").lower()).strip("-") or "customer"
+
+
+def _days_late(due_date):
+    """Days past the due date, 0 when not due yet or no due date was set."""
+    if not due_date:
+        return 0
+    try:
+        return max((date.today() - date.fromisoformat(due_date)).days, 0)
+    except ValueError:
+        return 0
 
 
 def _disposition(filename, download):

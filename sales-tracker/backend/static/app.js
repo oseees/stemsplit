@@ -2545,6 +2545,7 @@ async function viewCustomers() {
       <div class="os-value warn" style="font-size:26px">${money0(total)}</div>
       <div class="meta">${debtors.length} customer${debtors.length > 1 ? "s" : ""} owing${
         debtors[0].name ? ` · most is ${esc(debtors[0].name)} (${money0(debtors[0].owed)})` : ""}</div>
+      <a class="btn secondary" href="/api/debts/pdf" target="_blank" style="margin-top:12px"><svg class="ic"><use href="#i-file"/></svg> Statement PDF</a>
     </div>` : "";
   app.innerHTML = `
     ${owedCard}
@@ -2591,6 +2592,11 @@ function customerModal(c) {
     ${c.id && waNumber(c.phone) ? `<div style="display:flex;gap:10px;margin-bottom:14px">
       <button class="btn" style="flex:1" onclick='phoneCall(${attrJson({ phone: c.phone })})'><svg class="ic"><use href="#i-phone"/></svg> Call</button>
       <button class="btn" style="flex:1;background:#25d366" onclick='whatsappCall(${attrJson({ id: c.id, name: c.name, phone: c.phone })})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp</button>
+    </div>` : ""}
+    ${Number(c.owed) > 0.01 ? `<div class="card" style="margin-bottom:14px">
+      <div class="os-label">Owes</div><div class="os-value warn">${money0(c.owed)}</div>
+      <div class="meta">${c.unpaid_count} unpaid invoice${c.unpaid_count > 1 ? "s" : ""}</div>
+      <a class="btn secondary" href="/api/debts/pdf?customer_id=${c.id}" target="_blank" style="margin-top:12px"><svg class="ic"><use href="#i-file"/></svg> Statement PDF</a>
     </div>` : ""}
     <div class="field"><label>Name</label><input id="cName" value="${esc(c.name || "")}"></div>
     <div class="field"><label>Phone</label><input id="cPhone" value="${esc(c.phone || "")}"></div>

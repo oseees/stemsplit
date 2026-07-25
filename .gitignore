@@ -19,3 +19,17 @@ vocalperfect/
 yt-downloader/
 expense-tracker/
 random/
+
+# Secrets. This repo is PUBLIC — never let these near a commit.
+# .env.example files stay tracked (they hold no real values).
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+keystore.pass
+
+# Local venvs and build spew
+venv/
+.venv/
+__pycache__/
