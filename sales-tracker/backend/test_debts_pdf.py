@@ -108,6 +108,25 @@ try:
 except main.HTTPException as e:
     assert e.status_code == 400
 
+# --- the image twin: same data, PNG/JPG ---
+png = main.debts_image(user=USER)
+assert png.body[:8] == b"\x89PNG\r\n\x1a\n", png.body[:8]
+assert 'filename="who-owes-me.png"' in png.headers["content-disposition"]
+jpg = main.debts_image(customer_id=chidi, fmt="jpg", download=1, user=USER)
+assert jpg.body[:3] == b"\xff\xd8\xff", jpg.body[:3]
+dlj = jpg.headers["content-disposition"]
+assert dlj.startswith("attachment;") and "statement-chidi-sons.jpg" in dlj, dlj
+try:
+    main.debts_image(fmt="gif", user=USER)
+    raise AssertionError("expected 400 for an unsupported format")
+except main.HTTPException as e:
+    assert e.status_code == 400
+try:
+    main.debts_image(customer_id=theirs, user=USER)   # another tenant's customer
+    raise AssertionError("leaked another tenant's customer")
+except main.HTTPException as e:
+    assert e.status_code == 400
+
 # nothing owed -> a 400, not an empty PDF
 try:
     main.debts_pdf(user={"id": 3, "active_shop_id": 0})

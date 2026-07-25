@@ -2551,6 +2551,10 @@ async function viewCustomers() {
         <button class="btn" onclick="shareStatement()"><svg class="ic"><use href="#i-send"/></svg> Share</button>
         <a class="btn secondary" href="/api/debts/pdf" target="_blank"><svg class="ic"><use href="#i-file"/></svg> PDF</a>
       </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn outline" onclick="shareStatement(null,'png')"><svg class="ic"><use href="#i-image"/></svg> PNG</button>
+        <button class="btn outline" onclick="shareStatement(null,'jpg')"><svg class="ic"><use href="#i-image"/></svg> JPG</button>
+      </div>
     </div>` : "";
   app.innerHTML = `
     ${owedCard}
@@ -2594,17 +2598,22 @@ function customerReminder(c) {
 // Share the statement as a FILE, so it lands in a WhatsApp chat as an attachment
 // instead of a link only the merchant can open. Same path as invoice sharing:
 // native share sheet → Web Share → download. No arg = the whole debt book.
-async function shareStatement(c) {
+// fmt "png"/"jpg" sends the image version instead (previews inline in the chat
+// rather than arriving as a document the customer has to open).
+async function shareStatement(c, fmt) {
   const biz = (state.settings && state.settings.business_name) || "SalesPal";
+  const path = fmt ? `/api/debts/image?fmt=${fmt}` : "/api/debts/pdf";
+  const ext = fmt || "pdf";
+  const mime = fmt ? (fmt === "jpg" ? "image/jpeg" : "image/png") : "application/pdf";
   if (!c) {
-    return _shareFile("/api/debts/pdf", "who-owes-me.pdf", "application/pdf",
+    return _shareFile(path, `who-owes-me.${ext}`, mime,
       "Who owes me", `${biz} — outstanding customer balances`);
   }
   const slug = (c.name || "customer").toLowerCase().replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "customer";
   const across = c.unpaid_count > 1 ? ` across ${c.unpaid_count} invoices` : "";
-  await _shareFile(`/api/debts/pdf?customer_id=${c.id}`, `statement-${slug}.pdf`,
-    "application/pdf", `Statement — ${c.name || "customer"}`,
+  await _shareFile(`${path}${fmt ? "&" : "?"}customer_id=${c.id}`,
+    `statement-${slug}.${ext}`, mime, `Statement — ${c.name || "customer"}`,
     `Hi ${c.name || "there"}, here's your statement of account from ${biz}. `
     + `Outstanding balance: ${money(c.owed)}${across}. Kindly see the attached.`);
 }
@@ -2621,6 +2630,10 @@ function customerModal(c) {
       <div class="btn-row" style="margin-top:12px">
         <button class="btn" onclick='shareStatement(${attrJson({ id: c.id, name: c.name, owed: c.owed, unpaid_count: c.unpaid_count })})'><svg class="ic"><use href="#i-send"/></svg> Send statement</button>
         <a class="btn secondary" href="/api/debts/pdf?customer_id=${c.id}" target="_blank"><svg class="ic"><use href="#i-file"/></svg> PDF</a>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn outline" onclick='shareStatement(${attrJson({ id: c.id, name: c.name, owed: c.owed, unpaid_count: c.unpaid_count })},"png")'><svg class="ic"><use href="#i-image"/></svg> PNG</button>
+        <button class="btn outline" onclick='shareStatement(${attrJson({ id: c.id, name: c.name, owed: c.owed, unpaid_count: c.unpaid_count })},"jpg")'><svg class="ic"><use href="#i-image"/></svg> JPG</button>
       </div>
     </div>` : ""}
     <div class="field"><label>Name</label><input id="cName" value="${esc(c.name || "")}"></div>

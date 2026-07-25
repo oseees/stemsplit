@@ -1702,11 +1702,13 @@ def invoice_pdf(iid: int, download: int = 0, user=Depends(current_user)):
     )
 
 
-@app.get("/api/debts/pdf")
-def debts_pdf(customer_id: int = 0, download: int = 0, user=Depends(current_user)):
-    """The debt book as one printable statement: every customer who owes, with
-    each unpaid invoice, what's been paid on it and how late it is.
-    customer_id narrows it to one customer — a statement you can send them."""
+def _debt_statement(user, customer_id):
+    """Data for a debtors statement: (debtors, settings, filename_stem, title).
+
+    debtors = biggest first, each with their unpaid invoices. customer_id
+    narrows it to one customer, which turns the merchant's own debt book into a
+    statement addressed to that customer (their bank details included).
+    """
     sf, sp = _shop_and(_active_shop(user), "i")
     with db.get_conn() as conn:
         rows = db.rows_to_list(conn.execute(
@@ -1743,12 +1745,29 @@ def debts_pdf(customer_id: int = 0, download: int = 0, user=Depends(current_user
     # pay into). All customers => the merchant's own debt book.
     one = debtors[0] if customer_id else None
     settings["pay_to"] = pay_to
-    data = build_debts_pdf(debtors, settings, today(),
-                           title="STATEMENT OF ACCOUNT" if one else "WHO OWES ME")
-    name = _slug(one["name"]) if one else "who-owes-me"
+    return (debtors, settings,
+            f"statement-{_slug(one['name'])}" if one else "who-owes-me",
+            "STATEMENT OF ACCOUNT" if one else "WHO OWES ME")
+
+
+@app.get("/api/debts/pdf")
+def debts_pdf(customer_id: int = 0, download: int = 0, user=Depends(current_user)):
+    """The debt book as a printable PDF (see _debt_statement)."""
+    debtors, settings, stem, title = _debt_statement(user, customer_id)
+    data = build_debts_pdf(debtors, settings, today(), title=title)
     return RawResponse(content=data, media_type="application/pdf",
-                       headers=_disposition(f"statement-{name}.pdf" if one
-                                            else "who-owes-me.pdf", download))
+                       headers=_disposition(f"{stem}.pdf", download))
+
+
+@app.get("/api/debts/image")
+def debts_image(customer_id: int = 0, fmt: str = "png", download: int = 0,
+                user=Depends(current_user)):
+    """The same statement as a shareable image — previews inline in WhatsApp."""
+    if fmt not in ("png", "jpg"):
+        raise HTTPException(400, "fmt must be png or jpg")
+    debtors, settings, stem, title = _debt_statement(user, customer_id)
+    data = imgdoc.build_debts_image(debtors, settings, today(), title, fmt)
+    return _img_response(data, f"{stem}.{fmt}", fmt, download)
 
 
 def _slug(s):

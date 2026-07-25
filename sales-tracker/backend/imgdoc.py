@@ -229,6 +229,114 @@ def build_invoice_image(invoice, items, customer, settings, paid=0.0, fmt="png")
     return _export(img, fmt)
 
 
+def build_debts_image(debtors, settings, as_of, title="WHO OWES ME", fmt="png"):
+    """Debtors statement as an image — the shareable twin of build_debts_pdf.
+    debtors = [{name, phone, owed, invoices:[{invoice_no, due_date, total, paid,
+    balance, days_late}]}], biggest first. Drops the PDF's invoice-date column:
+    on a phone screen, who/how much/how late is what gets read."""
+    W, PAD = 1000, 56
+    cur = settings.get("currency", "$")
+    total_owed = sum(d["owed"] for d in debtors)
+    n_inv = sum(len(d["invoices"]) for d in debtors)
+    late = sum(1 for d in debtors for i in d["invoices"] if i.get("days_late", 0) > 0)
+
+    pay = settings.get("pay_to")
+    bank_lines = []
+    if pay and pay.get("number"):
+        if pay.get("bank"):
+            bank_lines.append(f"Bank: {pay['bank']}")
+        bank_lines.append(f"Account number: {pay['number']}")
+        if pay.get("name"):
+            bank_lines.append(f"Account name: {pay['name']}")
+
+    row_h, grp_h = 56, 62
+    H = (190 + 54 + len(debtors) * grp_h + n_inv * row_h + 80
+         + (66 + len(bank_lines) * 34 + 24 if bank_lines else 0) + 180)
+    img = Image.new("RGB", (W, H + 400), "white")
+    _wm(img, settings.get("business_name"), H * 0.45)
+    d = ImageDraw.Draw(img)
+
+    # Header: business (left) + title/total (right)
+    y = PAD
+    biz_f = _font(True, 38)
+    biz = _fit(d, settings.get("business_name", "My Business"), biz_f, 430)
+    d.text((PAD, y), biz, font=biz_f, fill=BRAND)
+    d.text((PAD, y + 52), f"As at {as_of}", font=_font(False, 22), fill=MUTED)
+    # shrink the title until it clears the business name — "STATEMENT OF ACCOUNT"
+    # is three times the width of the invoice's "INVOICE".
+    avail = W - 2 * PAD - d.textlength(biz, font=biz_f) - 30
+    size = 34
+    while size > 22 and d.textlength(title, font=_font(True, size)) > avail:
+        size -= 2
+    _right(d, W - PAD, y, title, _font(True, size), INK)
+    _right(d, W - PAD, y + 48, _money(cur, total_owed), _font(True, 32), BRAND)
+    _right(d, W - PAD, y + 92,
+           (f"{len(debtors)} customers · " if len(debtors) > 1 else "")
+           + f"{n_inv} unpaid invoice{'s' if n_inv != 1 else ''}"
+           + (f" · {late} overdue" if late else ""), _font(False, 22), MUTED)
+    y += 150
+
+    # Columns: invoice no (left), due (left), paid + balance (right-aligned). No
+    # Total column — at this width it collided with "(54d late)", and paid +
+    # balance already say it. The PDF keeps the full grid.
+    x_no, x_due = PAD + 18, PAD + 234
+    c_paid, c_bal = W - PAD - 230, W - PAD - 18
+    head_f, cell_f = _font(True, 22), _font(False, 23)
+    d.rectangle([PAD, y, W - PAD, y + 54], fill=BRAND)
+    d.text((x_no, y + 14), "Invoice", font=head_f, fill="white")
+    d.text((x_due, y + 14), "Due", font=head_f, fill="white")
+    _right(d, c_paid, y + 14, "Paid", head_f, "white")
+    _right(d, c_bal, y + 14, "Balance", head_f, "white")
+    y += 54
+
+    for grp in debtors:
+        d.rectangle([PAD, y, W - PAD, y + grp_h], fill=LIGHT)
+        name_f, ph_f = _font(True, 26), _font(False, 22)
+        who = _fit(d, grp["name"] or "Walk-in customer", name_f, 430)
+        d.text((x_no, y + 16), who, font=name_f, fill=INK)
+        # phone only if it clears the right-aligned amount
+        x_after = x_no + d.textlength(who, font=name_f) + 16
+        owed = _money(cur, grp["owed"])
+        if grp.get("phone") and x_after + d.textlength(str(grp["phone"]), font=ph_f) < (
+                c_bal - d.textlength(owed, font=_font(True, 26)) - 30):
+            d.text((x_after, y + 22), str(grp["phone"]), font=ph_f, fill=MUTED)
+        _right(d, c_bal, y + 16, owed, _font(True, 26), BRAND)
+        y += grp_h
+        for inv in grp["invoices"]:
+            days = inv.get("days_late", 0)
+            due = inv.get("due_date") or "—"
+            d.text((x_no, y + 14), _fit(d, str(inv["invoice_no"]), cell_f, x_due - x_no - 20),
+                   font=cell_f, fill=INK)
+            d.text((x_due, y + 14),
+                   _fit(d, f"{due} ({days}d late)" if days else due, cell_f,
+                        c_paid - x_due - 150),
+                   font=cell_f, fill=RED if days else MUTED)
+            _right(d, c_paid, y + 14, _money(cur, inv["paid"]), cell_f, INK)
+            _right(d, c_bal, y + 14, _money(cur, inv["balance"]), cell_f, INK)
+            d.line([PAD, y + row_h, W - PAD, y + row_h], fill=LINE, width=1)
+            y += row_h
+    y += 26
+
+    lbl_x = W - PAD - 390
+    d.text((lbl_x, y), "Total owed", font=_font(True, 28), fill=BRAND)
+    _right(d, W - PAD, y, _money(cur, total_owed), _font(True, 28), BRAND)
+    y += 60
+
+    if bank_lines:
+        box_h = 56 + len(bank_lines) * 34 + 16
+        d.rounded_rectangle([PAD, y, W - PAD, y + box_h], radius=14, fill=LIGHT)
+        d.text((PAD + 22, y + 16), "PAYMENT DETAILS — BANK TRANSFER",
+               font=_font(True, 20), fill=MUTED)
+        yy = y + 52
+        for ln in bank_lines:
+            d.text((PAD + 22, yy), ln, font=_font(False, 24), fill=INK)
+            yy += 34
+        y += box_h + 24
+
+    _powered(d, W, y + 40)
+    return _export(img.crop((0, 0, W, int(y + 100))), fmt)
+
+
 def build_promo_image(products, settings, fmt="png"):
     """Ready-to-post promo flyer: what's in stock right now, with prices.
     Merchants share it on WhatsApp Status / groups — free advertising for
