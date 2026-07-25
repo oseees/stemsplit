@@ -17,11 +17,14 @@ def _cust(conn, uid, shop, name, phone=None):
         (uid, shop, name, phone, TODAY)).lastrowid
 
 
-def _sale(conn, uid, shop, cid, no, total, paid=0, due=None):
+def _sale(conn, uid, shop, cid, no, total, paid=0, due=None, items=()):
     iid = conn.execute(
         "INSERT INTO invoices(user_id,shop_id,invoice_no,customer_id,date,due_date,status,total,"
         "created_at) VALUES(?,?,?,?,?,?,'unpaid',?,?)",
         (uid, shop, no, cid, TODAY, due, total, TODAY)).lastrowid
+    for desc, qty, up in items:
+        conn.execute("INSERT INTO invoice_items(invoice_id,description,qty,unit_price,unit_cost) "
+                     "VALUES(?,?,?,?,0)", (iid, desc, qty, up))
     if paid:
         conn.execute("INSERT INTO payments(invoice_id,amount,method,date) VALUES(?,?,?,?)",
                      (iid, paid, "cash", TODAY))
@@ -34,7 +37,8 @@ with db.get_conn() as conn:
     musa = _cust(conn, 1, 2, "Musa")
     theirs = _cust(conn, 2, 1, "Not mine")
 
-    _sale(conn, 1, 1, chidi, "INV-1", 100_000, due=LATE)      # 100k, overdue
+    _sale(conn, 1, 1, chidi, "INV-1", 100_000, due=LATE,     # 100k, overdue
+          items=[("Rice 50kg", 2, 40_000), ("Oil 25L", 1, 20_000)])
     _sale(conn, 1, 1, chidi, "INV-2", 100_000, 40_000)        # 60k left -> 160k
     _sale(conn, 1, 1, ada, "INV-3", 50_000, 70_000)           # OVERPAID by 20k
     _sale(conn, 1, 1, ada, "INV-4", 30_000)                   # 30k owed
@@ -85,6 +89,12 @@ one, ordered1, meta1 = groups(USER, customer_id=chidi)
 assert list(one) == ["Chidi & Sons"], list(one)
 assert abs(one["Chidi & Sons"]["owed"] - 160_000) < 0.01
 assert meta1["title"] == "STATEMENT OF ACCOUNT", meta1["title"]
+# a statement of account itemises what was bought
+inv1 = next(i for i in one["Chidi & Sons"]["invoices"] if i["invoice_no"] == "INV-1")
+assert [(it["description"], it["qty"]) for it in inv1["items"]] == [
+    ("Rice 50kg", 2), ("Oil 25L", 1)], inv1["items"]
+# ...but the whole-book view must NOT carry items (would be huge + is not rendered)
+assert "items" not in by_name["Chidi & Sons"]["invoices"][0]
 # transfer not enabled for this user -> no bank box
 assert meta1["pay_to"] is None, meta1["pay_to"]
 # filename is named after them

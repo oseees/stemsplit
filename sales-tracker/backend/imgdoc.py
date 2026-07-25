@@ -249,8 +249,9 @@ def build_debts_image(debtors, settings, as_of, title="WHO OWES ME", fmt="png"):
         if pay.get("name"):
             bank_lines.append(f"Account name: {pay['name']}")
 
-    row_h, grp_h = 56, 62
-    H = (190 + 54 + len(debtors) * grp_h + n_inv * row_h + 80
+    row_h, grp_h, item_h = 56, 62, 32
+    n_items = sum(len(i.get("items", [])) for d in debtors for i in d["invoices"])
+    H = (190 + 54 + len(debtors) * grp_h + n_inv * row_h + n_items * item_h + 80
          + (66 + len(bank_lines) * 34 + 24 if bank_lines else 0) + 180)
     img = Image.new("RGB", (W, H + 400), "white")
     _wm(img, settings.get("business_name"), H * 0.45)
@@ -313,8 +314,17 @@ def build_debts_image(debtors, settings, as_of, title="WHO OWES ME", fmt="png"):
                    font=cell_f, fill=RED if days else MUTED)
             _right(d, c_paid, y + 14, _money(cur, inv["paid"]), cell_f, INK)
             _right(d, c_bal, y + 14, _money(cur, inv["balance"]), cell_f, INK)
-            d.line([PAD, y + row_h, W - PAD, y + row_h], fill=LINE, width=1)
             y += row_h
+            # What was bought (single-customer statement). Indented, muted, with
+            # the line amount on the right — so the bill says what it's FOR.
+            item_f = _font(False, 20)
+            for it in inv.get("items", []):
+                d.text((x_no + 20, y + 4),
+                       _fit(d, f"{it['qty']:g} × {it['description']}", item_f, c_bal - x_no - 220),
+                       font=item_f, fill=MUTED)
+                _right(d, c_bal, y + 4, _money(cur, it["qty"] * it["unit_price"]), item_f, MUTED)
+                y += item_h
+            d.line([PAD, y, W - PAD, y], fill=LINE, width=1)
     y += 26
 
     lbl_x = W - PAD - 390

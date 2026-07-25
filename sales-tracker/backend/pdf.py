@@ -135,6 +135,18 @@ def build_debts_pdf(debtors: list, settings: dict, as_of: str,
                          _money(cur, inv["paid"]), _money(cur, inv["balance"])])
             if days > 0:
                 st.append(("TEXTCOLOR", (2, row), (2, row), colors.HexColor("#b91c1c")))
+            # What was bought (single-customer statement only). Each item spans the
+            # left columns; its line amount sits under Total.
+            for it in inv.get("items", []):
+                irow = len(data)
+                line = f"{it['qty']:g} × {xml_escape(it['description'])}"
+                data.append([Paragraph(line, ParagraphStyle(
+                    "it", parent=normal, fontName=FONT, fontSize=8, textColor=MUTED,
+                    leftIndent=8)), "", "",
+                    _money(cur, it["qty"] * it["unit_price"]), "", ""])
+                st += [("SPAN", (0, irow), (2, irow)),
+                       ("TEXTCOLOR", (3, irow), (3, irow), MUTED),
+                       ("LINEBELOW", (0, irow), (-1, irow), 0, colors.white)]
 
     table = Table(data, colWidths=[30 * mm, 22 * mm, 34 * mm, 29 * mm, 29 * mm, 30 * mm],
                   repeatRows=1)

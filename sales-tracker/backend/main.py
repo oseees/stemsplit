@@ -1713,7 +1713,7 @@ def _debt_statement(user, customer_id):
     with db.get_conn() as conn:
         rows = db.rows_to_list(conn.execute(
             "SELECT * FROM ("
-            " SELECT i.invoice_no, i.date, i.due_date, i.total, i.customer_id,"
+            " SELECT i.id, i.invoice_no, i.date, i.due_date, i.total, i.customer_id,"
             "  COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id=i.id),0) paid,"
             "  c.name, c.phone"
             " FROM invoices i LEFT JOIN customers c ON c.id=i.customer_id"
@@ -1723,9 +1723,17 @@ def _debt_statement(user, customer_id):
             [user["id"]] + sp + ([customer_id] if customer_id else [])).fetchall())
         pay_to = _acct_dict(_default_account(conn, user["id"])) if (
             customer_id and user.get("transfer_enabled")) else None
-    if not rows:
-        raise HTTPException(400, "This customer has no unpaid invoices" if customer_id
-                            else "Nobody owes you anything right now")
+        if not rows:
+            raise HTTPException(400, "This customer has no unpaid invoices" if customer_id
+                                else "Nobody owes you anything right now")
+        # Line items for a single-customer statement — it's a bill they get sent,
+        # so it has to say what the debt is FOR. Skipped for the whole-book view:
+        # every item of every debtor is noise there, and the query would balloon.
+        if customer_id:
+            for r in rows:
+                r["items"] = db.rows_to_list(conn.execute(
+                    "SELECT description, qty, unit_price FROM invoice_items "
+                    "WHERE invoice_id=? ORDER BY id", (r["id"],)).fetchall())
 
     groups = {}
     for r in rows:
