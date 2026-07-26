@@ -2702,8 +2702,17 @@ async function viewOrders() {
     </div>`;
   }
 
+  // Customers who send their order as a WhatsApp voice note instead of using the
+  // link — share the note here and it lands in the same pending list.
+  const voiceCard = `<div class="card">
+    <div class="section-title">Order from a voice note</div>
+    <p style="font-size:14px;color:var(--muted);margin:0 0 12px">A customer sent their order as a voice note? Share it here and it becomes a pending order you can fulfil.</p>
+    <input id="voFile" type="file" accept="audio/*" style="display:none" onchange="uploadVoiceOrder()">
+    <button class="btn secondary" onclick="document.getElementById('voFile').click()">🎤 Add a voice note</button>
+  </div>`;
+
   let listHtml = `<div class="card"><div class="loading">Loading orders…</div></div>`;
-  app.innerHTML = linkCard + `<div id="ordersList">${listHtml}</div>`;
+  app.innerHTML = linkCard + voiceCard + `<div id="ordersList">${listHtml}</div>`;
 
   try {
     const orders = await api.get("/api/orders");
@@ -2750,6 +2759,24 @@ function orderDetail(o) {
  <button class="btn danger" style="margin-top:10px" onclick="declineOrder(${o.id})">Decline order</button>`
  : (o.status === "fulfilled" ? `<p class="meta" style="color:var(--muted);margin-top:14px">Fulfilled — an invoice was created and stock reduced.</p>`
  : `<p class="meta" style="color:var(--muted);margin-top:14px">This order was declined.</p>`)}`);
+}
+async function uploadVoiceOrder() {
+  const inp = document.getElementById("voFile");
+  if (!inp || !inp.files || !inp.files[0]) return;
+  const f = inp.files[0];
+  const fd = new FormData();
+  fd.append("audio", f, f.name || "note.ogg");
+  toast("Listening to the voice note…");
+  try {
+    const r = await api.sendForm("/api/orders/from-voice", fd);
+    toast(r.free_uses_left != null
+      ? `Heard: “${r.transcript}” · ${r.free_uses_left} free voice use${r.free_uses_left === 1 ? "" : "s"} left`
+      : `Heard: “${r.transcript}” — check the order below`);
+    render();
+  } catch (e) {
+    if (e.message !== "__upgrade__" && e.message !== "__auth__")
+      toast(e.message || "Couldn't read that voice note");
+  } finally { inp.value = ""; }
 }
 async function fulfillOrder(id) {
  try {

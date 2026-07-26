@@ -67,9 +67,16 @@ def transcribe_available() -> bool:
     return bool(os.environ.get("GROQ_API_KEY"))
 
 
-def transcribe_audio(audio_bytes: bytes, filename: str = "sale.webm", content_type: str = None) -> dict:
-    """Spoken audio → text via Groq Whisper. The prompt biases recognition toward
-    short sales entries (product names, quantities, customer, payment method)."""
+SALE_HINT = ("A short spoken sales entry: product names, quantities, "
+             "a customer name, and how they paid (cash, transfer or owing).")
+ORDER_HINT = ("A customer asking a shop for goods: product names, quantities, "
+              "the customer's name, and sometimes a delivery address.")
+
+
+def transcribe_audio(audio_bytes: bytes, filename: str = "sale.webm", content_type: str = None,
+                     hint: str = SALE_HINT) -> dict:
+    """Spoken audio → text via Groq Whisper. `hint` biases recognition toward the
+    kind of speech expected — a merchant logging a sale, or a customer ordering."""
     key = os.environ.get("GROQ_API_KEY")
     if not key:
         return {"ok": False, "error": "Voice isn't set up on the server yet"}
@@ -82,8 +89,7 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "sale.webm", content_ty
             headers={"Authorization": f"Bearer {key}"},
             files={"file": (filename or "sale.webm", audio_bytes, content_type or "audio/webm")},
             data={"model": STT_MODEL, "language": "en", "response_format": "json",
-                  "prompt": "A short spoken sales entry: product names, quantities, "
-                            "a customer name, and how they paid (cash, transfer or owing)."},
+                  "prompt": hint},
             timeout=60.0,
         )
         resp.raise_for_status()

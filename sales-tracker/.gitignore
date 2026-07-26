@@ -1,3 +1,8 @@
 
 # Local DB backups (contain real data)
 backups/
+
+# The dev SQLite DB — real-shaped account data, and this repo is PUBLIC.
+backend/data/
+# Locally built APK: shipped to Railway via the build context, not via git.
+backend/downloads/

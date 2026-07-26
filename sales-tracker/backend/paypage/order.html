@@ -29,6 +29,8 @@
     .sec-title { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin: 18px 0 8px; }
     .prod { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
     .prod:last-child { border-bottom: none; }
+    .prod .thumb { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; background: var(--bg); flex-shrink: 0; }
+    .prod .thumb.blank { display: flex; align-items: center; justify-content: center; font-size: 24px; opacity: .45; }
     .prod .info { flex: 1; min-width: 0; }
     .prod .nm { font-weight: 700; font-size: 15px; }
     .prod .meta { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
@@ -98,6 +100,20 @@
         (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
     function fmtQty(n) { return Number(n) % 1 === 0 ? String(n) : Number(n).toFixed(2); }
+    function thumb(p) {
+      // photo-less items keep the same slot, so every row stays aligned. A photo
+      // that fails to load just leaves the empty .thumb box — same width.
+      return p.photo
+        ? '<img class="thumb" src="/api/shop/' + encodeURIComponent(token) + '/photo/' + p.id +
+          '" alt="" loading="lazy">'
+        : '<div class="thumb blank">🛍️</div>';
+    }
+    // digits only; Nigerian local 0XXXXXXXXXX -> 234XXXXXXXXXX (same rule as the app)
+    function waNumber(phone) {
+      var d = String(phone || "").replace(/\D/g, "");
+      if (d.length === 11 && d.charAt(0) === "0") d = "234" + d.slice(1);
+      return d.length >= 10 ? d : "";
+    }
 
     function messageView(title, body) {
       card.innerHTML = '<div class="center"><div class="biz" style="text-align:center">' +
@@ -147,7 +163,7 @@
       }
       SHOP.products.forEach(function (p) {
         html +=
-          '<div class="prod"><div class="info"><div class="nm">' + esc(p.name) + '</div>' +
+          '<div class="prod">' + thumb(p) + '<div class="info"><div class="nm">' + esc(p.name) + '</div>' +
           '<div class="meta">' + money(p.price) + ' · ' + fmtQty(p.stock) + ' available</div></div>' +
           '<div class="stepper">' +
           '<button class="step-btn" id="minus_' + p.id + '" data-id="' + p.id + '" data-d="-1" disabled>−</button>' +
@@ -179,7 +195,7 @@
       var html = '<h1 class="biz">Your order</h1>' +
         '<p class="sub">From ' + esc(SHOP.business_name) + '</p>';
       lines.forEach(function (p) {
-        html += '<div class="prod"><div class="info"><div class="nm">' + esc(p.name) + '</div>' +
+        html += '<div class="prod">' + thumb(p) + '<div class="info"><div class="nm">' + esc(p.name) + '</div>' +
           '<div class="meta">' + fmtQty(CART[p.id]) + ' × ' + money(p.price) + '</div></div>' +
           '<div style="font-weight:700">' + money(CART[p.id] * p.price) + '</div></div>';
       });
@@ -223,11 +239,24 @@
     }
 
     function successView(name, d) {
-      card.innerHTML = '<div class="center"><div class="ok-badge">✓</div>' +
+      var wa = waNumber(SHOP.phone);
+      var html = '<div class="center"><div class="ok-badge">✓</div>' +
         '<div class="biz" style="text-align:center">Order sent!</div>' +
         '<p class="msg">Thanks ' + esc(name.split(" ")[0]) + '! <strong>' + esc(SHOP.business_name) +
         '</strong> has your order' + (d && d.total ? ' for ' + money(d.total) : '') +
-        ' and will reach out to confirm.</p><p class="msg">You can close this page.</p></div>';
+        ' and will reach out to confirm.</p>';
+      if (wa) {
+        var lines = SHOP.products.filter(function (p) { return (CART[p.id] || 0) > 0; })
+          .map(function (p) { return fmtQty(CART[p.id]) + " × " + p.name; }).join("\n");
+        var text = "Hi " + SHOP.business_name + ", I just placed an order on your shop link.\n\n" +
+          lines + "\n\nTotal: " + money(cartTotal()) + "\nName: " + name;
+        html += '<a class="btn full" style="background:#25d366;text-decoration:none;display:block" ' +
+          'href="https://wa.me/' + wa + '?text=' + encodeURIComponent(text) + '" ' +
+          'target="_blank" rel="noopener">💬 Confirm on WhatsApp</a>';
+      } else {
+        html += '<p class="msg">You can close this page.</p>';
+      }
+      card.innerHTML = html + '</div>';
       var bar = document.getElementById("bar"); if (bar) bar.remove();
     }
 

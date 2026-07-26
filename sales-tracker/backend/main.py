@@ -2482,6 +2482,52 @@ def fulfill_order(oid: int, user=Depends(current_user)):
     return {"ok": True, "invoice_id": iid, "invoice_no": no, "total": total}
 
 
+@app.post("/api/orders/from-voice")
+async def order_from_voice(audio: UploadFile = File(...), user=Depends(current_user)):
+    """A customer's WhatsApp voice note → a pending order, landing in the same
+    inbox the storefront feeds (so fulfil → invoice + stock works unchanged).
+    Reuses the spoken-sale transcribe + catalog-grounded parse."""
+    shop = _active_shop(user)
+    if not shop:
+        raise HTTPException(400, "Open a specific shop to take voice-note orders")
+    data = await audio.read()
+    if not data:
+        raise HTTPException(400, "No audio received — try again")
+    if len(data) > 8_000_000:  # a forwarded voice note is well under this
+        raise HTTPException(413, "That voice note is too long — keep it under a minute")
+    tr = ai.transcribe_audio(data, audio.filename, audio.content_type, hint=ai.ORDER_HINT)
+    if not tr["ok"]:
+        raise HTTPException(503, tr.get("error") or "Couldn't hear that — try again")
+
+    parsed = _voice_sale_from_transcript(user, tr["text"])   # Pro gate + free-use counter
+    lines = [it for it in parsed["sale"].get("items", []) if (it.get("qty") or 0) > 0]
+    if not lines:
+        raise HTTPException(400, "Couldn't hear any items in that voice note — try again")
+
+    with db.get_conn() as conn:
+        rows = []
+        for it in lines:
+            # ponytail: no stock cap here (unlike the storefront) — the merchant is
+            # looking at this order and can decline it; silently shrinking what the
+            # customer asked for would hide the shortfall.
+            p = conn.execute("SELECT unit_cost FROM products WHERE id=? AND user_id=? AND shop_id=?",
+                             (it.get("product_id") or 0, user["id"], shop)).fetchone()
+            rows.append((it.get("product_id") or None, it.get("description") or "Item",
+                         it["qty"], it.get("unit_price") or 0, p["unit_cost"] if p else 0))
+        total = sum(q * up for (_, _, q, up, _) in rows)
+        oid = conn.execute(
+            "INSERT INTO orders(user_id,shop_id,customer_name,customer_phone,note,status,total,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (user["id"], shop, (parsed["sale"].get("customer_name") or "").strip() or None, None,
+             "From a voice note: " + tr["text"], "pending", total, db.now_iso())).lastrowid
+        for (pid, desc, qty, up, uc) in rows:
+            conn.execute(
+                "INSERT INTO order_items(order_id,product_id,description,qty,unit_price,unit_cost) "
+                "VALUES(?,?,?,?,?,?)", (oid, pid, desc, qty, up, uc))
+    return {"ok": True, "order_id": oid, "total": total, "transcript": tr["text"],
+            "free_uses_left": parsed.get("free_uses_left")}
+
+
 @app.post("/api/orders/{oid}/decline")
 def decline_order(oid: int, user=Depends(current_user)):
     with db.get_conn() as conn:
@@ -2539,16 +2585,37 @@ def public_shop(token: str):
             raise HTTPException(404, "Shop not found")
         settings = db.get_settings(shop["user_id"])
         products = conn.execute(
-            "SELECT id, name, unit_price, stock_qty FROM products "
+            "SELECT id, name, unit_price, stock_qty, photo FROM products "
             "WHERE user_id=? AND shop_id=? AND stock_qty > 0 ORDER BY name",
             (shop["user_id"], shop["id"])).fetchall()
     return {
         "business_name": shop["name"] or settings.get("business_name") or "Our shop",
         "currency": settings.get("currency") or "₦",
+        # so a customer can chase their order on WhatsApp instead of just waiting
+        "phone": settings.get("phone") or "",
         "products": [{"id": p["id"], "name": p["name"],
-                      "price": p["unit_price"] or 0, "stock": p["stock_qty"] or 0}
+                      "price": p["unit_price"] or 0, "stock": p["stock_qty"] or 0,
+                      "photo": bool(p["photo"])}
                      for p in products],
     }
+
+
+@app.get("/api/shop/{token}/photo/{pid}")
+def public_product_photo(token: str, pid: int):
+    """Product photo for the storefront. No auth — the link token is the key,
+    and the product must belong to that shop."""
+    with db.get_conn() as conn:
+        shop = _shop_by_order_token(conn, token)
+        if not shop:
+            raise HTTPException(404, "Shop not found")
+        row = conn.execute(
+            "SELECT photo FROM products WHERE id=? AND user_id=? AND shop_id=?",
+            (pid, shop["user_id"], shop["id"])).fetchone()
+    path = os.path.join(PHOTOS_DIR, row["photo"]) if row and row["photo"] else None
+    if not path or not os.path.exists(path):
+        raise HTTPException(404, "No photo")
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.post("/api/shop/{token}/order")
