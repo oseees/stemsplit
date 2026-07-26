@@ -104,22 +104,36 @@ def _summary_text(data: dict) -> str:
     return json.dumps(data, indent=2, default=str)
 
 
-def advice(data: dict) -> dict:
-    """General 'how do I increase sales/profit' advice from current metrics."""
+def advice(data: dict, question: str = "") -> dict:
+    """General 'how do I increase sales/profit' advice from current metrics, or an
+    answer to the owner's own question grounded in those same numbers."""
     client = _client()
     if client is None:
         return {"ok": False, "text": _no_key_message()}
 
-    prompt = (
-        "Here is a snapshot of my business performance:\n\n"
-        f"{_summary_text(data)}\n\n"
-        "Give me advice in this structure (use markdown headers):\n"
-        "## What's going well\n"
-        "## What's hurting my profit\n"
-        "## 3 things to do this week to increase sales\n"
-        "## 2 things to do to increase profit margin\n"
-        "Be specific and reference my actual numbers. Keep it under 350 words."
-    )
+    snapshot = f"Here is a snapshot of my business performance:\n\n{_summary_text(data)}\n\n"
+    if question:
+        prompt = (
+            snapshot +
+            "Answer this question of mine using those numbers:\n\n"
+            # Delimited so a rambling question can't read as instructions to us.
+            f"<question>\n{question}\n</question>\n\n"
+            "Answer it directly in the first sentence, then back it up with my "
+            "actual figures. If the numbers can't answer it, say so plainly and "
+            "tell me what I'd need to record to find out. If it isn't about my "
+            "business, say that's outside what you can help with here. Use "
+            "markdown headers only if the answer needs them. Under 300 words."
+        )
+    else:
+        prompt = (
+            snapshot +
+            "Give me advice in this structure (use markdown headers):\n"
+            "## What's going well\n"
+            "## What's hurting my profit\n"
+            "## 3 things to do this week to increase sales\n"
+            "## 2 things to do to increase profit margin\n"
+            "Be specific and reference my actual numbers. Keep it under 350 words."
+        )
     return _call(client, prompt)
 
 

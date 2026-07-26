@@ -2221,7 +2221,12 @@ async function viewInsights() {
       <p style="font-size:14px;color:var(--muted);margin:0 0 12px">
         Get specific advice from Claude on increasing your sales and profit, based on your real numbers.</p>
       ${pro
-        ? `<button class="btn" onclick="loadAdvice()">Get advice (${state.period})</button>`
+        ? `<div class="field"><input id="advQ" placeholder="Ask anything — e.g. which product should I stop selling?"
+             onkeydown="if(event.key==='Enter')loadAdvice()"></div>
+           <div class="btn-row">
+             <button class="btn" onclick="loadAdvice()"><svg class="ic"><use href="#i-ai"/></svg> Ask</button>
+             <button class="btn secondary" onclick="loadAdvice('')">Get advice (${state.period})</button>
+           </div>`
         : `<button class="btn" onclick="showUpgrade('AI advice is a Pro feature.')"><svg class="ic"><use href="#i-lock"/></svg> Unlock with Pro</button>`}
     </div>
     <div class="card">
@@ -2258,11 +2263,19 @@ function openReport(id) {
  <div class="meta" style="color:var(--muted);margin-bottom:10px">${fmtDate(r.created_at)}</div>
  <div class="card"><div class="md">${md(r.content || "")}</div></div>`);
 }
-async function loadAdvice() {
+// q undefined → whatever is typed in the box; q "" → the standard period advice.
+async function loadAdvice(q) {
+ const box = document.getElementById("advQ");
+ if (q === undefined) q = box ? box.value.trim() : "";
  const out = document.getElementById("insightOut");
- out.innerHTML = `<div class="card"><div class="loading">Claude is analysing your numbers…</div></div>`;
- const r = await api.get(`/api/insights/advice?period=${state.period}`);
- out.innerHTML = `<div class="card"><div class="md">${md(r.text)}</div></div>`;
+ out.innerHTML = `<div class="card"><div class="loading">${q ? "Claude is checking your numbers…" : "Claude is analysing your numbers…"}</div></div>`;
+ try {
+   const r = await api.get(`/api/insights/advice?period=${state.period}&q=${encodeURIComponent(q)}`);
+   out.innerHTML = `<div class="card">${q ? `<div class="section-title">${esc(q)}</div>` : ""}<div class="md">${md(r.text)}</div></div>`;
+ } catch (e) {
+   out.innerHTML = "";
+   if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't get an answer");
+ }
 }
 async function loadWeekly() {
  const out = document.getElementById("insightOut");

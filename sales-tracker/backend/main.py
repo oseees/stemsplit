@@ -2842,9 +2842,12 @@ def set_goal(data: GoalIn, user=Depends(current_user)):
 
 
 @app.get("/api/insights/advice")
-def insights_advice(period: str = "month", user=Depends(current_user)):
+def insights_advice(period: str = "month", q: str = "", user=Depends(current_user)):
+    """No `q` → the standard grow-my-business advice. With `q` → an answer to the
+    owner's own question, grounded in the same numbers."""
     if not is_pro(user):
         raise HTTPException(402, "Upgrade to Pro for AI insights")
+    q = q.strip()[:500]  # cap the prompt an untrusted field can build
     settings = db.get_settings(user["id"])
     with db.get_conn() as conn:
         data = _dashboard_data(conn, user["id"], period, settings["currency"], _active_shop(user))
@@ -2853,7 +2856,7 @@ def insights_advice(period: str = "month", user=Depends(current_user)):
         "outstanding", "num_sales", "avg_sale", "margin_pct", "top_products")}
     payload["currency"] = settings["currency"]
     payload["period"] = period
-    return ai.advice(payload)
+    return ai.advice(payload, q)
 
 
 @app.get("/api/insights/goal-tips")
