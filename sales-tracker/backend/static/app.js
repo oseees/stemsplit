@@ -2233,7 +2233,9 @@ function owedRowHtml(i) {
 function openOwed() { moneyTab = "owed"; setView("money"); }
 
 async function renderOwed() {
-  const invoices = (await api.get("/api/invoices")).filter(i => i.balance > 0.01);
+  // Biggest debts first — the ones worth chasing, same order as the dashboard card.
+  const invoices = (await api.get("/api/invoices")).filter(i => i.balance > 0.01)
+    .sort((a, b) => b.balance - a.balance);
   const total = invoices.reduce((s, i) => s + i.balance, 0);
   document.getElementById("moneyBody").innerHTML = `
     <div class="card">
