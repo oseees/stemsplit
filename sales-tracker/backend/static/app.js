@@ -1207,6 +1207,11 @@ async function viewHome() {
   ]);
   const todayStr = new Date().toISOString().slice(0, 10);
   const todays = (invoices || []).filter(i => (i.date || "").slice(0, 10) === todayStr).slice(0, 5);
+  // Biggest debts first — the ones worth chasing today. Capped so the dashboard
+  // stays a dashboard; the Owed tab has the full list.
+  const owing = (invoices || []).filter(i => i.balance > 0.01)
+    .sort((a, b) => b.balance - a.balance);
+  const owedTotal = owing.reduce((s, i) => s + i.balance, 0);
   app.innerHTML = `
     <div class="hero">
       <div class="hero-label">Net profit · ${PERIOD_LABELS[state.period] || "Last 30 days"}</div>
@@ -1216,7 +1221,7 @@ async function viewHome() {
     <div class="overlap-stats">
       <div><div class="os-label">Revenue</div><div class="os-value">${moneyShort(d.revenue)}</div></div>
       <div><div class="os-label">Collected</div><div class="os-value">${moneyShort(d.collected)}</div></div>
-      <div onclick="setView('customers')" style="cursor:pointer"><div class="os-label">Owed</div><div class="os-value ${d.outstanding > 0 ? "warn" : ""}">${moneyShort(d.outstanding)}</div></div>
+      <div onclick="openOwed()" style="cursor:pointer"><div class="os-label">Owed</div><div class="os-value ${d.outstanding > 0 ? "warn" : ""}">${moneyShort(d.outstanding)}</div></div>
     </div>
     <div class="quick-acts">
       <button class="qa" onclick="newSaleModal()"><span class="qa-i">＋</span>New sale</button>
@@ -1252,6 +1257,13 @@ async function viewHome() {
             <span class="badge ${i.status}">${i.status === "partial" ? "part paid" : i.status === "unpaid" ? "owing" : i.status}</span></div>
         </div>`).join("") : `<div class="empty">No sales yet today. Tap ＋ to record one.</div>`}
     </div>
+    ${owing.length ? `<div class="card">
+      <div class="card-head">
+        <div class="section-title" style="margin:0"><svg class="ic"><use href="#i-customers"/></svg> Owed to you · ${money(owedTotal)}</div>
+        ${owing.length > 5 ? `<a class="see-all" onclick="openOwed()">See all ${owing.length} ›</a>` : ""}
+      </div>
+      ${owing.slice(0, 5).map(owedRowHtml).join("")}
+    </div>` : ""}
     <div class="kpi-grid">
       <div class="kpi"><div class="label">Cost of goods</div><div class="value">${money(d.cogs)}</div></div>
       <div class="kpi"><div class="label">Expenses</div><div class="value">${money(d.expenses)}</div></div>
@@ -2198,27 +2210,36 @@ async function saveExpense() {
 }
 async function delExpense(id) { await api.send(`/api/expenses/${id}`, "DELETE"); toast("Deleted"); render(); }
 
+// One debtor row — used by the Owed tab and the dashboard's Owed card, so the
+// two can't drift apart.
+function owedRowHtml(i) {
+  return `<div class="list-row actions-below" onclick="invoiceDetail(${i.id})">
+    <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
+      <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
+    <div class="amount neg">${money(i.balance)}</div>
+    <div class="row-actions">
+      <button class="wa-mini paid" onclick='event.stopPropagation(); markPaidFromList(${attrJson({
+ id: i.id, balance: i.balance, invoice_no: i.invoice_no, name: i.customer_name || "Walk-in" })})'><svg class="ic"><use href="#i-check-circle"/></svg> Paid</button>
+      ${i.paid > 0.01 ? `<button class="wa-mini receipt" onclick="event.stopPropagation(); receiptOffer(${i.id}, 'Send a receipt')"><svg class="ic"><use href="#i-sales"/></svg> Receipt</button>` : ""}
+      <button class="wa-mini" onclick='event.stopPropagation(); whatsappReminder(${attrJson({
+ id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
+ bank_account: i.bank_account,
+ customer: { id: i.customer_id, name: i.customer_name, phone: i.customer_phone } })})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>
+    </div>
+  </div>`;
+}
+
+// Jump straight to the full debtors list (the Owed tab lives inside Money).
+function openOwed() { moneyTab = "owed"; setView("money"); }
+
 async function renderOwed() {
   const invoices = (await api.get("/api/invoices")).filter(i => i.balance > 0.01);
   const total = invoices.reduce((s, i) => s + i.balance, 0);
   document.getElementById("moneyBody").innerHTML = `
     <div class="card">
       <div class="section-title">Outstanding · ${money(total)} owed to you</div>
-      ${invoices.length ? invoices.map(i => `
-        <div class="list-row actions-below" onclick="invoiceDetail(${i.id})">
-          <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
-            <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
-          <div class="amount neg">${money(i.balance)}</div>
-          <div class="row-actions">
-            <button class="wa-mini paid" onclick='event.stopPropagation(); markPaidFromList(${attrJson({
- id: i.id, balance: i.balance, invoice_no: i.invoice_no, name: i.customer_name || "Walk-in" })})'><svg class="ic"><use href="#i-check-circle"/></svg> Paid</button>
-            ${i.paid > 0.01 ? `<button class="wa-mini receipt" onclick="event.stopPropagation(); receiptOffer(${i.id}, 'Send a receipt')"><svg class="ic"><use href="#i-sales"/></svg> Receipt</button>` : ""}
-            <button class="wa-mini" onclick='event.stopPropagation(); whatsappReminder(${attrJson({
- id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
- bank_account: i.bank_account,
- customer: { id: i.customer_id, name: i.customer_name, phone: i.customer_phone } })})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>
-          </div>
-        </div>`).join("") : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-check-circle"/></svg></div>Everyone has paid up!</div>`}
+      ${invoices.length ? invoices.map(owedRowHtml).join("")
+        : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-check-circle"/></svg></div>Everyone has paid up!</div>`}
     </div>`;
 }
 
@@ -3363,7 +3384,7 @@ async function _sharePayLinkFallback(id) {
 })();
 
 // expose handlers used in inline onclick
-Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, markPaidFromList, paymentModal,
+Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, markPaidFromList, openOwed, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, forceUpdate, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
