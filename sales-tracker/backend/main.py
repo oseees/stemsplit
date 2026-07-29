@@ -107,6 +107,15 @@ async def _security_headers(request: Request, call_next):
     # HSTS only matters over https; Railway terminates TLS in front of us.
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
         resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    # StaticFiles sends no Cache-Control, which does NOT mean "don't cache" — it
+    # means the client invents a freshness window (commonly ~10% of the file's
+    # age). The Android WebView takes that literally, so a deploy could sit
+    # invisible on a phone for a day. no-cache = always revalidate; an unchanged
+    # file still costs only a 304. Cache Storage (offline) is unaffected.
+    ctype = resp.headers.get("content-type", "")
+    if ctype.startswith(("text/html", "text/css", "text/javascript",
+                         "application/javascript", "application/manifest+json")):
+        resp.headers.setdefault("Cache-Control", "no-cache")
     return resp
 
 

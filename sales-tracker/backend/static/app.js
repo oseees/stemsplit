@@ -3022,7 +3022,39 @@ async function viewSettings() {
       </div>
       <button class="btn" onclick="changePassword()">Change password</button>
       <button class="btn danger" onclick="logout()" style="margin-top:10px">Log out</button>
+    </div>
+    <div class="card"><div class="section-title">App version</div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">You're running <strong id="appVer">…</strong>. New features arrive on their own — use this if one seems missing.</p>
+      <button class="btn secondary" onclick="forceUpdate(this)">Get the latest version</button>
     </div>`;
+  showVersion();
+}
+
+// The service-worker cache name IS the deployed version, so there's no separate
+// constant to keep in sync with a release.
+async function showVersion() {
+  const el = document.getElementById("appVer");
+  if (!el) return;
+  try {
+    const k = (await caches.keys()).find(x => x.startsWith("salespal-v"));
+    el.textContent = k ? k.replace("salespal-", "") : "the web version";
+  } catch (e) { el.textContent = "the web version"; }
+}
+
+// Manual escape hatch for a phone stuck on old code. Inside the Android app
+// there's no browser UI to clear a cache with, so do it from here: drop the
+// shell caches and let the service worker refetch (it fetches no-cache, which
+// also defeats the WebView's own HTTP cache).
+async function forceUpdate(btn) {
+  if (btn) btn.disabled = true;
+  toast("Getting the latest version…");
+  try {
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.update();
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k => k.startsWith("salespal-v")).map(k => caches.delete(k)));
+  } catch (e) { /* still worth reloading — the query param alone busts the HTTP cache */ }
+  location.replace("/app/?u=" + Date.now());
 }
 
 async function changePassword() {
@@ -3334,7 +3366,7 @@ async function _sharePayLinkFallback(id) {
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, markPaidFromList, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
-  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
+  delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, forceUpdate, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
   filterCustomerSuggest, pickCustomerSuggest, hideCustomerSuggest,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,
