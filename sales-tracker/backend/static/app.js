@@ -1757,6 +1757,14 @@ function isOverdue(inv) {
  && inv.due_date < new Date().toISOString().slice(0, 10);
 }
 
+// From the Owed list there's no open invoice to check against before recording
+// money, and the button sits next to Remind — so confirm who and how much.
+// markPaid already offers the receipt once it lands.
+async function markPaidFromList(inv) {
+ if (!confirm(`Mark ${inv.invoice_no} as fully paid?\n\n${inv.name} — ${money(inv.balance)}`)) return;
+ await markPaid(inv.id, inv.balance);
+}
+
 async function markPaid(id, balance) {
  await api.send(`/api/invoices/${id}/payments`, "POST",
  { amount: balance, method: "Marked paid" });
@@ -2197,11 +2205,14 @@ async function renderOwed() {
     <div class="card">
       <div class="section-title">Outstanding · ${money(total)} owed to you</div>
       ${invoices.length ? invoices.map(i => `
-        <div class="list-row" onclick="invoiceDetail(${i.id})">
+        <div class="list-row actions-below" onclick="invoiceDetail(${i.id})">
           <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
             <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-            <div class="amount neg">${money(i.balance)}</div>
+          <div class="amount neg">${money(i.balance)}</div>
+          <div class="row-actions">
+            <button class="wa-mini paid" onclick='event.stopPropagation(); markPaidFromList(${attrJson({
+ id: i.id, balance: i.balance, invoice_no: i.invoice_no, name: i.customer_name || "Walk-in" })})'><svg class="ic"><use href="#i-check-circle"/></svg> Paid</button>
+            ${i.paid > 0.01 ? `<button class="wa-mini receipt" onclick="event.stopPropagation(); receiptOffer(${i.id}, 'Send a receipt')"><svg class="ic"><use href="#i-sales"/></svg> Receipt</button>` : ""}
             <button class="wa-mini" onclick='event.stopPropagation(); whatsappReminder(${attrJson({
  id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
  bank_account: i.bank_account,
@@ -3320,7 +3331,7 @@ async function _sharePayLinkFallback(id) {
 })();
 
 // expose handlers used in inline onclick
-Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, paymentModal,
+Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, markPaidFromList, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
