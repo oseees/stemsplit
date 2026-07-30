@@ -2215,7 +2215,7 @@ function owedCustomerRowHtml(c) {
     <div class="amount neg">${money(c.owed)}</div>
     <div class="row-actions">
       <button class="wa-mini paid" onclick='settleCustomer(${attrJson({ id: c.id, name: c.name, owed: c.owed, unpaid_count: c.unpaid_count })})'><svg class="ic"><use href="#i-check-circle"/></svg> Paid</button>
-      <button class="wa-mini receipt" onclick='shareStatement(${attrJson(c)})'><svg class="ic"><use href="#i-file"/></svg> Statement</button>
+      <button class="wa-mini receipt" onclick='shareStatement(${attrJson(c)}, "png")'><svg class="ic"><use href="#i-image"/></svg> Statement</button>
       <button class="wa-mini" onclick='customerReminder(${attrJson(c)})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>
     </div>
   </div>`;
