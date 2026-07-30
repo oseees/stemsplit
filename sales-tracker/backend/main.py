@@ -136,6 +136,7 @@ _ATTENDANT_ALLOW = [
     ("GET", re.compile(r"^/api/invoices/\d+$")),
     ("GET", re.compile(r"^/api/invoices/\d+/(receipt|image|pdf)$")),
     ("POST", re.compile(r"^/api/invoices/\d+/payments$")),
+    ("POST", re.compile(r"^/api/customers/\d+/settle$")),
 ]
 
 
@@ -1679,6 +1680,36 @@ def add_payment(iid: int, p: PaymentIn, user=Depends(current_user)):
         conn.execute("UPDATE invoices SET status=? WHERE id=?",
                      (status_for(inv["total"], paid), iid))
         return {"ok": True, "paid": paid, "balance": inv["total"] - paid}
+
+
+@app.post("/api/customers/{cid}/settle")
+def settle_customer(cid: int, user=Depends(current_user)):
+    """Mark every unpaid invoice for one customer as paid in a single go — the
+    debt book's 'mark all paid'. Records a payment for each invoice's exact
+    balance (method 'Marked paid'), so profit/collected move just like the
+    per-invoice button. An already-paid invoice has zero balance and is skipped,
+    which also makes a double-tap harmless. Scoped to the active shop, so All-
+    shops settles everywhere and a single shop settles only its own."""
+    with db.get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM customers WHERE id=? AND user_id=?",
+                            (cid, user["id"])).fetchone():
+            raise HTTPException(404, "Customer not found")
+        sfi, spi = _shop_and(_active_shop(user), "i")
+        invs = conn.execute(
+            "SELECT id, total FROM invoices i WHERE customer_id=? AND user_id=?" + sfi,
+            [cid, user["id"]] + spi).fetchall()
+        count = 0
+        total = 0.0
+        for inv in invs:
+            bal = inv["total"] - paid_for(conn, inv["id"])
+            if bal > 0.01:
+                conn.execute(
+                    "INSERT INTO payments(invoice_id,amount,date,method,note) VALUES(?,?,?,?,?)",
+                    (inv["id"], round(bal, 2), today(), "Marked paid", None))
+                conn.execute("UPDATE invoices SET status='paid' WHERE id=?", (inv["id"],))
+                count += 1
+                total += bal
+    return {"ok": True, "count": count, "total": round(total, 2)}
 
 
 def _pay_to(conn, user, inv):

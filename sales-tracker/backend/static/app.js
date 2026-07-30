@@ -1198,20 +1198,20 @@ function _initials(name) {
 const PERIOD_LABELS = { week: "Last 7 days", month: "Last 30 days", year: "This year", all: "All time" };
 
 async function viewHome() {
-  const [d, products, invoices, claims, orders] = await Promise.all([
+  const [d, products, invoices, claims, orders, customers] = await Promise.all([
     api.get(`/api/dashboard?period=${state.period}`),
     api.get("/api/products"),
     api.get("/api/invoices").catch(() => []),
     (state.pay && state.pay.transfer_enabled) ? api.get("/api/pay/claims/pending").catch(() => []) : Promise.resolve([]),
     (state.orders && state.orders.enabled) ? api.get("/api/orders/pending").catch(() => []) : Promise.resolve([]),
+    api.get("/api/customers").catch(() => []),
   ]);
   const todayStr = new Date().toISOString().slice(0, 10);
   const todays = (invoices || []).filter(i => (i.date || "").slice(0, 10) === todayStr).slice(0, 5);
-  // Biggest debts first — the ones worth chasing today. Capped so the dashboard
-  // stays a dashboard; the Owed tab has the full list.
-  const owing = (invoices || []).filter(i => i.balance > 0.01)
-    .sort((a, b) => b.balance - a.balance);
-  const owedTotal = owing.reduce((s, i) => s + i.balance, 0);
+  // The debt book: who owes, combined per customer, biggest first (API-sorted).
+  // Capped so the dashboard stays a dashboard; the Owed tab has the full list.
+  const debtors = (customers || []).filter(c => Number(c.owed) > 0.01);
+  const owedTotal = debtors.reduce((s, c) => s + Number(c.owed), 0);
   app.innerHTML = `
     <div class="hero">
       <div class="hero-label">Net profit · ${PERIOD_LABELS[state.period] || "Last 30 days"}</div>
@@ -1257,12 +1257,12 @@ async function viewHome() {
             <span class="badge ${i.status}">${i.status === "partial" ? "part paid" : i.status === "unpaid" ? "owing" : i.status}</span></div>
         </div>`).join("") : `<div class="empty">No sales yet today. Tap ＋ to record one.</div>`}
     </div>
-    ${owing.length ? `<div class="card">
+    ${debtors.length ? `<div class="card">
       <div class="card-head">
         <div class="section-title" style="margin:0"><svg class="ic"><use href="#i-customers"/></svg> Owed to you · ${money(owedTotal)}</div>
-        ${owing.length > 5 ? `<a class="see-all" onclick="openOwed()">See all ${owing.length} ›</a>` : ""}
+        ${debtors.length > 5 ? `<a class="see-all" onclick="openOwed()">See all ${debtors.length} ›</a>` : ""}
       </div>
-      ${owing.slice(0, 5).map(owedRowHtml).join("")}
+      ${debtors.slice(0, 5).map(owedCustomerRowHtml).join("")}
     </div>` : ""}
     <div class="kpi-grid">
       <div class="kpi"><div class="label">Cost of goods</div><div class="value">${money(d.cogs)}</div></div>
@@ -1769,14 +1769,6 @@ function isOverdue(inv) {
  && inv.due_date < new Date().toISOString().slice(0, 10);
 }
 
-// From the Owed list there's no open invoice to check against before recording
-// money, and the button sits next to Remind — so confirm who and how much.
-// markPaid already offers the receipt once it lands.
-async function markPaidFromList(inv) {
- if (!confirm(`Mark ${inv.invoice_no} as fully paid?\n\n${inv.name} — ${money(inv.balance)}`)) return;
- await markPaid(inv.id, inv.balance);
-}
-
 async function markPaid(id, balance) {
  await api.send(`/api/invoices/${id}/payments`, "POST",
  { amount: balance, method: "Marked paid" });
@@ -2210,37 +2202,51 @@ async function saveExpense() {
 }
 async function delExpense(id) { await api.send(`/api/expenses/${id}`, "DELETE"); toast("Deleted"); render(); }
 
-// One debtor row — used by the Owed tab and the dashboard's Owed card, so the
-// two can't drift apart.
-function owedRowHtml(i) {
-  return `<div class="list-row actions-below" onclick="invoiceDetail(${i.id})">
-    <div style="flex:1;min-width:0"><div class="main">${esc(i.customer_name || "Walk-in")}</div>
-      <div class="meta">${i.invoice_no} · ${fmtDate(i.date)}</div></div>
-    <div class="amount neg">${money(i.balance)}</div>
+// One debtor row — a customer and everything they owe across invoices. Shared by
+// the Owed tab and the dashboard's Owed card, so the two can't drift apart.
+// The buttons cover the whole customer: Paid settles all their invoices at once,
+// Statement is the multi-invoice stand-in for a single receipt, Remind chases the
+// combined balance in one message. `/api/customers` already sorts biggest-first.
+function owedCustomerRowHtml(c) {
+  const n = c.unpaid_count || 1;
+  return `<div class="list-row actions-below">
+    <div style="flex:1;min-width:0"><div class="main">${esc(c.name || "Customer")}</div>
+      <div class="meta">${n} unpaid invoice${n > 1 ? "s" : ""}</div></div>
+    <div class="amount neg">${money(c.owed)}</div>
     <div class="row-actions">
-      <button class="wa-mini paid" onclick='event.stopPropagation(); markPaidFromList(${attrJson({
- id: i.id, balance: i.balance, invoice_no: i.invoice_no, name: i.customer_name || "Walk-in" })})'><svg class="ic"><use href="#i-check-circle"/></svg> Paid</button>
-      ${i.paid > 0.01 ? `<button class="wa-mini receipt" onclick="event.stopPropagation(); receiptOffer(${i.id}, 'Send a receipt')"><svg class="ic"><use href="#i-sales"/></svg> Receipt</button>` : ""}
-      <button class="wa-mini" onclick='event.stopPropagation(); whatsappReminder(${attrJson({
- id: i.id, invoice_no: i.invoice_no, balance: i.balance, due_date: i.due_date, pay_url: i.pay_url,
- bank_account: i.bank_account,
- customer: { id: i.customer_id, name: i.customer_name, phone: i.customer_phone } })})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>
+      <button class="wa-mini paid" onclick='settleCustomer(${attrJson({ id: c.id, name: c.name, owed: c.owed, unpaid_count: c.unpaid_count })})'><svg class="ic"><use href="#i-check-circle"/></svg> Paid</button>
+      <button class="wa-mini receipt" onclick='shareStatement(${attrJson(c)})'><svg class="ic"><use href="#i-file"/></svg> Statement</button>
+      <button class="wa-mini" onclick='customerReminder(${attrJson(c)})'><svg class="ic"><use href="#i-chat"/></svg> Remind</button>
     </div>
   </div>`;
+}
+
+// Settle a whole customer — every unpaid invoice marked paid in one call. Records
+// money across possibly several invoices and can't be bulk-undone, so confirm with
+// the name and total first. Online-only, like edit/delete (no offline queue).
+async function settleCustomer(c) {
+  const n = c.unpaid_count || 1;
+  if (!confirm(`Mark all ${n} unpaid invoice${n > 1 ? "s" : ""} for ${c.name || "this customer"} as paid?\n\nTotal ${money(c.owed)}`)) return;
+  try {
+    const r = await api.send(`/api/customers/${c.id}/settle`, "POST");
+    toast(`Marked ${r.count} invoice${r.count === 1 ? "" : "s"} paid ✓`);
+    render();
+  } catch (e) {
+    if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't mark paid");
+  }
 }
 
 // Jump straight to the full debtors list (the Owed tab lives inside Money).
 function openOwed() { moneyTab = "owed"; setView("money"); }
 
 async function renderOwed() {
-  // Biggest debts first — the ones worth chasing, same order as the dashboard card.
-  const invoices = (await api.get("/api/invoices")).filter(i => i.balance > 0.01)
-    .sort((a, b) => b.balance - a.balance);
-  const total = invoices.reduce((s, i) => s + i.balance, 0);
+  // The debt book: one row per customer, their whole balance, biggest first.
+  const debtors = (await api.get("/api/customers")).filter(c => Number(c.owed) > 0.01);
+  const total = debtors.reduce((s, c) => s + Number(c.owed), 0);
   document.getElementById("moneyBody").innerHTML = `
     <div class="card">
       <div class="section-title">Outstanding · ${money(total)} owed to you</div>
-      ${invoices.length ? invoices.map(owedRowHtml).join("")
+      ${debtors.length ? debtors.map(owedCustomerRowHtml).join("")
         : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-check-circle"/></svg></div>Everyone has paid up!</div>`}
     </div>`;
 }
@@ -3386,7 +3392,7 @@ async function _sharePayLinkFallback(id) {
 })();
 
 // expose handlers used in inline onclick
-Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, markPaidFromList, openOwed, paymentModal,
+Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, settleCustomer, openOwed, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, forceUpdate, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
