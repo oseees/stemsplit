@@ -1158,6 +1158,7 @@ async function viewAdmin() {
       ${stat("Total shops", s.total_shops)}
       ${stat("Total invoices", s.total_invoices)}
     </div>
+    ${activationFunnelHtml(s.funnel)}
     <div class="card"><div class="section-title">Where signups come from</div>${srcRows}</div>
     <div class="card"><div class="section-title">Recent signups</div>${rows}</div>
     <div class="card"><div class="section-title"><svg class="ic"><use href="#i-save"/></svg> Backup</div>
@@ -1168,6 +1169,30 @@ async function viewAdmin() {
         <button class="btn outline" onclick="backupTest(this)"><svg class="ic"><use href="#i-send"/></svg> Send off-box copy</button>
       </div></div>`;
 }
+// Activation funnel over real customers (owner excluded server-side). The gap
+// between "signed up" and "made a first invoice" is the number that matters:
+// people who never record a sale never come back.
+function activationFunnelHtml(f) {
+  if (!f) return "";
+  const total = f.accounts || 0;
+  const pct = (v) => total ? Math.round((v / total) * 100) : 0;
+  const bar = (v) => `<div style="height:8px;background:var(--line);border-radius:6px;margin-top:6px;overflow:hidden">
+    <div style="height:100%;width:${pct(v)}%;background:var(--indigo)"></div></div>`;
+  const row = (lbl, v, note) => `<div class="list-row" style="align-items:center">
+    <div style="flex:1;min-width:0"><div class="main">${lbl}${note ? ` <span class="meta" style="font-weight:400">· ${note}</span>` : ""}</div>${bar(v)}</div>
+    <div style="text-align:right;margin-left:14px"><div class="amount">${v}</div><div class="meta">${pct(v)}%</div></div>
+  </div>`;
+  const recentPct = f.signups_30d ? Math.round((f.activated_30d / f.signups_30d) * 100) : 0;
+  return `<div class="card"><div class="section-title"><svg class="ic"><use href="#i-insights"/></svg> Activation funnel</div>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Real customers only (your own account is left out). Every step is a % of everyone who signed up.</p>
+    ${row("Signed up", total)}
+    ${row("Made a first invoice", f.activated, "recorded any sale")}
+    ${row("Sold this week", f.selling_7d, "a sale in the last 7 days")}
+    ${row("Paying (Pro)", f.paying)}
+    <p style="font-size:13px;margin:12px 0 0"><strong>${f.activated_30d}</strong> of <strong>${f.signups_30d}</strong> who joined in the last 30 days recorded a sale${f.signups_30d ? ` (${recentPct}%)` : ""}. ${f.activated < total / 2 && total >= 4 ? "Most signups never record a first sale — that first-invoice step is where to focus." : ""}</p>
+  </div>`;
+}
+
 // Ship a backup to the Telegram bot right now — proves the nightly path works
 // (or says exactly why it doesn't) without waiting until 02:00.
 async function backupTest(btn) {

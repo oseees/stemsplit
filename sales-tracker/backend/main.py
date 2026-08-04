@@ -547,6 +547,20 @@ def admin_stats(user=Depends(current_user)):
         active_7d = one("SELECT COUNT(*) FROM users WHERE last_login_at >= ?", (d7,))
         shops = one("SELECT COUNT(*) FROM shops")
         invoices = one("SELECT COUNT(*) FROM invoices")
+        # Activation funnel over REAL customers — the owner's own account (which
+        # sells daily) would otherwise mask the drop-off. When SALESPAL_OWNER_EMAIL
+        # is unset, owner="" excludes nobody. "Activated" = ever recorded a sale.
+        owner = _owner_email()
+        f_accounts = one("SELECT COUNT(*) FROM users WHERE LOWER(email)<>?", (owner,))
+        f_activated = one("SELECT COUNT(DISTINCT u.id) FROM users u WHERE LOWER(u.email)<>? "
+                          "AND EXISTS(SELECT 1 FROM invoices i WHERE i.user_id=u.id)", (owner,))
+        f_selling_7d = one("SELECT COUNT(DISTINCT u.id) FROM users u WHERE LOWER(u.email)<>? "
+                           "AND EXISTS(SELECT 1 FROM invoices i WHERE i.user_id=u.id AND i.date>=?)", (owner, d7))
+        f_paying = one("SELECT COUNT(*) FROM users WHERE LOWER(email)<>? "
+                       "AND (plan='pro' OR (plan_expires_at IS NOT NULL AND plan_expires_at>=?))", (owner, today()))
+        f_signups_30d = one("SELECT COUNT(*) FROM users WHERE LOWER(email)<>? AND created_at>=?", (owner, d30))
+        f_activated_30d = one("SELECT COUNT(DISTINCT u.id) FROM users u WHERE LOWER(u.email)<>? "
+                              "AND u.created_at>=? AND EXISTS(SELECT 1 FROM invoices i WHERE i.user_id=u.id)", (owner, d30))
         # where signups came from (first-touch); label NULLs from before tracking
         sources = [{"source": (r[0] or "unknown"), "count": r[1]} for r in conn.execute(
             "SELECT signup_source, COUNT(*) c FROM users "
@@ -566,6 +580,11 @@ def admin_stats(user=Depends(current_user)):
         "active_7d": active_7d,
         "total_shops": shops,
         "total_invoices": invoices,
+        "funnel": {
+            "accounts": f_accounts, "activated": f_activated,
+            "selling_7d": f_selling_7d, "paying": f_paying,
+            "signups_30d": f_signups_30d, "activated_30d": f_activated_30d,
+        },
         "sources": sources,
         "recent": recent,
     }
