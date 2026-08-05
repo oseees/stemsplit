@@ -168,7 +168,25 @@
     .nav-login { color: var(--muted); font-weight: 700; font-size: 15px; white-space: nowrap; }
     .nav-login:hover { color: var(--indigo); }
     .theme-btn { background: none; border: 0; font-size: 18px; line-height: 1; padding: 4px; cursor: pointer; }
-    @media (max-width: 720px) { .nav-links { display: none; } }
+    .nav-toggle { display: none; background: none; border: 0; cursor: pointer; padding: 6px 4px; color: var(--ink); font-size: 24px; line-height: 1; }
+    /* On phones the horizontal menu doesn't fit, so it collapses into a
+       tap-to-open dropdown behind a ☰ button — otherwise Guides/Pricing/etc.
+       become unreachable. .nav is position:sticky, which anchors the dropdown. */
+    @media (max-width: 720px) {
+      .nav-toggle { display: inline-flex; }
+      .nav-links {
+        position: absolute; top: 62px; left: 0; right: 0;
+        flex-direction: column; gap: 0; background: var(--card);
+        border-bottom: 1px solid var(--line); padding: 6px 0;
+        box-shadow: 0 12px 30px rgba(0,0,0,.14); display: none;
+      }
+      .nav-links.open { display: flex; }
+      .nav-links a { padding: 14px 20px; font-size: 16px; }
+      .nav-links a:not(:last-child) { border-bottom: 1px solid var(--line); }
+      .nav-actions .nav-login { display: none; } /* moved into the ☰ menu to free space */
+      .nav-links .nav-login-m { display: block; }
+    }
+    .nav-login-m { display: none; }
     /* Keep the nav on one tidy row on phones: drop the theme toggle (dark mode
        still follows the system and is toggleable inside the app) and tighten
        spacing so logo + Log In + CTA never overlap or wrap. */
@@ -306,17 +324,19 @@
   <header class="nav">
     <div class="wrap nav-row">
       <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="30" height="30" />SalesPal</a>
-      <nav class="nav-links" aria-label="Main">
+      <nav class="nav-links" id="navLinks" aria-label="Main">
         <a href="#features">Features</a>
         <a href="#how-it-works">How It Works</a>
         <a href="#install">Install</a>
         <a href="/guides/">Guides</a>
         <a href="#pricing">Pricing</a>
+        <a href="/app/#login" class="nav-login-m">Log In</a>
       </nav>
       <div class="nav-actions">
         <button class="theme-btn" id="themeToggle" aria-label="Toggle dark mode" onclick="salespalToggleTheme()">🌙</button>
         <a class="nav-login" href="/app/#login">Log In</a>
         <a class="btn btn-primary" href="/app/">Get Started Free</a>
+        <button class="nav-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks" onclick="salespalToggleNav(this)">☰</button>
       </div>
     </div>
   </header>
@@ -865,5 +885,25 @@
     </div>
   </footer>
 
+  <script>
+    // Mobile menu: the ☰ button toggles the nav dropdown. Tapping a link closes it
+    // (so in-page anchors like #pricing don't leave the menu hanging open).
+    window.salespalToggleNav = function (btn) {
+      var links = document.getElementById("navLinks");
+      var open = links.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    (function () {
+      var links = document.getElementById("navLinks");
+      if (!links) return;
+      links.addEventListener("click", function (e) {
+        if (e.target.tagName === "A") {
+          links.classList.remove("open");
+          var t = document.querySelector(".nav-toggle");
+          if (t) t.setAttribute("aria-expanded", "false");
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
