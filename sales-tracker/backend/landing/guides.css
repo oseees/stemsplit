@@ -1,0 +1,62 @@
+/* Shared styling for SalesPal guide/article pages. Same palette as the landing. */
+:root {
+  --indigo: #0b7a4f; --indigo-dark: #095e3d;
+  --ink: #111827; --muted: #4b5563; --faint: #6b7280;
+  --bg: #f6f7fb; --card: #ffffff; --line: #e5e7eb;
+  --green: #16a34a; --tint: #e6f6ef; --nav-bg: rgba(255,255,255,.92); --radius: 16px;
+}
+html.dark {
+  --indigo: #0d8f5f; --indigo-dark: #0b7a4f;
+  --ink: #e6e8ef; --muted: #a3aab8; --faint: #8b93a3;
+  --bg: #11131a; --card: #1b1f2a; --line: #2a2f3d;
+  --green: #4ade80; --tint: #12362a; --nav-bg: rgba(17,19,26,.9);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.65; -webkit-font-smoothing: antialiased;
+}
+a { color: var(--indigo); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+
+/* nav */
+.nav { position: sticky; top: 0; z-index: 10; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.nav-row { max-width: 1080px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 60px; }
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 800; color: var(--ink); text-decoration: none; font-size: 18px; }
+.nav .btn { font-size: 14px; }
+
+/* buttons */
+.btn { display: inline-block; padding: 11px 20px; border-radius: 12px; font-weight: 700; text-decoration: none; font-size: 15px; cursor: pointer; border: 0; }
+.btn-primary { background: var(--indigo); color: #fff; }
+.btn-ghost { background: transparent; color: var(--indigo); border: 1.5px solid var(--indigo); }
+
+/* article */
+.crumb { font-size: 13px; color: var(--faint); padding: 20px 0 0; }
+.crumb a { color: var(--faint); }
+article { padding: 8px 0 40px; }
+article h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.2; margin: 14px 0 10px; letter-spacing: -0.02em; }
+.lede { font-size: 18px; color: var(--muted); margin: 0 0 8px; }
+.byline { font-size: 13px; color: var(--faint); margin: 0 0 28px; }
+article h2 { font-size: 24px; margin: 34px 0 10px; letter-spacing: -0.01em; }
+article h3 { font-size: 19px; margin: 24px 0 8px; }
+article p, article li { color: var(--ink); font-size: 16.5px; }
+article ul, article ol { padding-left: 22px; }
+article li { margin: 6px 0; }
+article strong { font-weight: 700; }
+
+/* callout / cta */
+.cta-box { background: var(--tint); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; margin: 32px 0; text-align: center; }
+.cta-box h3 { margin: 0 0 8px; font-size: 20px; }
+.cta-box p { margin: 0 0 16px; color: var(--muted); font-size: 15px; }
+.tip { background: var(--card); border-left: 3px solid var(--indigo); border-radius: 8px; padding: 14px 18px; margin: 20px 0; color: var(--muted); font-size: 15px; }
+
+/* related */
+.related { border-top: 1px solid var(--line); padding: 28px 0; }
+.related h2 { font-size: 18px; margin: 0 0 14px; }
+.related a { display: block; padding: 6px 0; font-weight: 600; }
+
+/* footer */
+footer { border-top: 1px solid var(--line); padding: 28px 0; color: var(--faint); font-size: 14px; }
+footer .wrap { max-width: 1080px; display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; }
+footer nav a { color: var(--muted); margin-right: 16px; text-decoration: none; }
