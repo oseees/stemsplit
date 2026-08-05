@@ -2255,10 +2255,36 @@ async function settleCustomer(c) {
   try {
     const r = await api.send(`/api/customers/${c.id}/settle`, "POST");
     toast(`Marked ${r.count} invoice${r.count === 1 ? "" : "s"} paid ✓`);
+    // One receipt covering everything just cleared — beats sending the customer
+    // a separate receipt per invoice for the same payment.
+    if (navigator.onLine && r.invoice_ids && r.invoice_ids.length)
+      settleReceiptOffer(c, r.invoice_ids, r.total);
     render();
   } catch (e) {
     if (e.message !== "__auth__" && e.message !== "__upgrade__") toast(e.message || "Couldn't mark paid");
   }
+}
+
+// Show the combined receipt straight after settling, ready to send.
+function settleReceiptOffer(c, ids, total) {
+  const list = ids.join(",");
+  const n = ids.length;
+  openModal(`<h2>Payment recorded ✓</h2>
+    <p style="color:var(--muted);font-size:14px;margin:0 0 12px">One receipt for
+      <strong>${money(total)}</strong> covering ${n} invoice${n === 1 ? "" : "s"} — send it to ${esc(c.name || "your customer")}.</p>
+    <img src="/api/customers/${c.id}/settle-receipt?ids=${list}&fmt=png&t=${Date.now()}" alt="Receipt"
+      style="width:100%;border:1px solid var(--line);border-radius:12px;margin-bottom:12px" />
+    <button class="btn" onclick='shareSettleReceipt(${attrJson({ id: c.id, name: c.name })}, "${list}", ${total}, "png")'><svg class="ic"><use href="#i-send"/></svg> Send receipt</button>
+    <button class="btn secondary" style="margin-top:10px" onclick='shareSettleReceipt(${attrJson({ id: c.id, name: c.name })}, "${list}", ${total}, "jpg")'>Download JPG</button>
+    <button class="btn ghost" style="margin-top:10px" onclick="closeModal()">Done</button>`);
+}
+
+async function shareSettleReceipt(c, ids, total, fmt) {
+  const biz = (state.settings && state.settings.business_name) || "SalesPal";
+  await shareImageFile(`/api/customers/${c.id}/settle-receipt?ids=${ids}&fmt=${fmt}`,
+    `Receipt-${(c.name || "customer").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "customer"}.${fmt}`,
+    `Receipt — ${c.name || "customer"}`,
+    `${biz} — payment of ${money(total)} received with thanks. Please find your receipt attached.`);
 }
 
 // Jump straight to the full debtors list (the Owed tab lives inside Money).
@@ -3427,7 +3453,7 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModa
   doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, paywallSelect, paywallCheckout, whatsappReminder, whatsappCall, phoneCall,
   startCheckout, renderLanding, startBuy, startFree,
   shopSwitcher, switchShop, addShop,
-  shareInvoiceImage, shareReceipt, receiptOffer,
+  shareInvoiceImage, shareReceipt, receiptOffer, settleReceiptOffer, shareSettleReceipt,
   connectPayoutModal, payMaybeResolve, savePayout, disconnectPayout, sharePaymentLink,
   transferModal, saveTransfer, disableTransfer, confirmClaim, dismissClaim,
   addAccountModal, saveNewAccount, makeDefaultAccount, removeAccount,

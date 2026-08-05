@@ -137,6 +137,7 @@ _ATTENDANT_ALLOW = [
     ("GET", re.compile(r"^/api/invoices/\d+/(receipt|image|pdf)$")),
     ("POST", re.compile(r"^/api/invoices/\d+/payments$")),
     ("POST", re.compile(r"^/api/customers/\d+/settle$")),
+    ("GET", re.compile(r"^/api/customers/\d+/settle-receipt$")),
 ]
 
 
@@ -1726,9 +1727,63 @@ def settle_customer(cid: int, user=Depends(current_user)):
                     "INSERT INTO payments(invoice_id,amount,date,method,note) VALUES(?,?,?,?,?)",
                     (inv["id"], round(bal, 2), today(), "Marked paid", None))
                 conn.execute("UPDATE invoices SET status='paid' WHERE id=?", (inv["id"],))
-                count += 1
+                settled.append(inv["id"])
                 total += bal
-    return {"ok": True, "count": count, "total": round(total, 2)}
+    # invoice_ids feeds the combined receipt, so the merchant can send one proof
+    # covering everything this payment cleared.
+    return {"ok": True, "count": len(settled), "total": round(total, 2),
+            "invoice_ids": settled}
+
+
+@app.get("/api/customers/{cid}/settle-receipt")
+def customer_settle_receipt(cid: int, ids: str = "", fmt: str = "png", download: int = 0,
+                            user=Depends(current_user)):
+    """One receipt covering a batch of invoices settled together (debt book →
+    Paid). `ids` is the list the settle call returned; every invoice must belong
+    to this user AND this customer, so the id list can't reach anyone else's
+    data. The amount shown per invoice is that invoice's most recent 'Marked
+    paid' payment — the settlement itself, not the invoice total, which would
+    overstate anything that had already been part-paid."""
+    if fmt not in ("png", "jpg"):
+        raise HTTPException(400, "fmt must be png or jpg")
+    want = [int(p) for p in (ids or "").split(",")[:200] if p.strip().isdigit()]
+    if not want:
+        raise HTTPException(400, "No invoices given")
+    with db.get_conn() as conn:
+        cust = conn.execute("SELECT * FROM customers WHERE id=? AND user_id=?",
+                            (cid, user["id"])).fetchone()
+        if not cust:
+            raise HTTPException(404, "Customer not found")
+        rows, total = [], 0.0
+        for iid in want:
+            inv = conn.execute(
+                "SELECT invoice_no FROM invoices WHERE id=? AND user_id=? AND customer_id=?",
+                (iid, user["id"], cid)).fetchone()
+            if not inv:
+                continue
+            p = conn.execute(
+                "SELECT amount, date FROM payments WHERE invoice_id=? AND method='Marked paid' "
+                "ORDER BY id DESC LIMIT 1", (iid,)).fetchone()
+            if not p:
+                continue
+            rows.append({"invoice_no": inv["invoice_no"], "date": p["date"],
+                         "amount": p["amount"]})
+            total += p["amount"]
+        if not rows:
+            raise HTTPException(404, "Nothing settled to put on a receipt")
+        # Anything still owed elsewhere, so the receipt can't claim "paid in full"
+        # when another invoice is outstanding. Same shop scope as the settle.
+        bal = ("i.total - COALESCE((SELECT SUM(p.amount) FROM payments p "
+               "WHERE p.invoice_id=i.id), 0)")
+        sfi, spi = _shop_and(_active_shop(user), "i")
+        remaining = conn.execute(
+            f"SELECT COALESCE(SUM(MAX({bal}, 0)), 0) t FROM invoices i "
+            "WHERE i.customer_id=? AND i.user_id=?" + sfi,
+            [cid, user["id"]] + spi).fetchone()["t"]
+    data = imgdoc.build_settlement_receipt_image(
+        dict(cust), rows, db.get_settings(user["id"]), round(total, 2), today(),
+        remaining, fmt)
+    return _img_response(data, f"Receipt-{_slug(cust['name'])}.{fmt}", fmt, download)
 
 
 def _pay_to(conn, user, inv):

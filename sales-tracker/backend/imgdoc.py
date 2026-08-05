@@ -418,6 +418,81 @@ def build_promo_image(products, settings, fmt="png"):
     return _export(img, fmt)
 
 
+def build_settlement_receipt_image(customer, rows, settings, total, when, remaining, fmt="png"):
+    """One receipt covering several invoices settled together — the debt book's
+    'mark all paid'. rows = [{invoice_no, date, amount}]. Sending one document
+    beats sending the customer four separate receipts for the same payment."""
+    W, PAD = 1000, 56
+    cur = settings.get("currency", "$")
+    row_h = 52
+    settled = remaining <= 0.001
+    H = 1250 + len(rows) * row_h  # oversized; cropped to content at the end
+    img = Image.new("RGB", (W, H), "white")
+    _wm(img, settings.get("business_name"), 330)
+    d = ImageDraw.Draw(img)
+
+    d.rectangle([0, 0, W, 14], fill=BRAND)
+    y = PAD + 10
+    _center(d, W / 2, y, settings.get("business_name", "My Business"), _font(True, 38), BRAND)
+    y += 58
+    _center(d, W / 2, y, "PAYMENT RECEIPT", _font(False, 24), MUTED)
+    y += 56
+
+    r = 46
+    cx = W / 2
+    d.ellipse([cx - r, y, cx + r, y + 2 * r], fill=GREEN_BG)
+    d.line([cx - 20, y + r + 2, cx - 6, y + r + 18], fill=GREEN, width=9)
+    d.line([cx - 6, y + r + 18, cx + 24, y + r - 16], fill=GREEN, width=9)
+    y += 2 * r + 30
+
+    _center(d, W / 2, y, _money(cur, total), _font(True, 64), INK)
+    y += 86
+    who = (customer or {}).get("name") or "Walk-in customer"
+    _center(d, W / 2, y, f"received from {who}", _font(False, 26), MUTED)
+    y += 44
+    n = len(rows)
+    _center(d, W / 2, y, f"{when}  ·  covering {n} invoice{'s' if n != 1 else ''}",
+            _font(False, 22), MUTED)
+    y += 56
+
+    # Which invoices this payment cleared — the whole point of a combined receipt.
+    x_no, x_date, c_amt = PAD + 18, PAD + 300, W - PAD - 18
+    d.rectangle([PAD, y, W - PAD, y + 48], fill=BRAND)
+    d.text((x_no, y + 12), "Invoice", font=_font(True, 22), fill="white")
+    d.text((x_date, y + 12), "Date", font=_font(True, 22), fill="white")
+    _right(d, c_amt, y + 12, "Paid now", _font(True, 22), "white")
+    y += 48
+    for i, rw in enumerate(rows):
+        if i % 2:
+            d.rectangle([PAD, y, W - PAD, y + row_h], fill=LIGHT)
+        d.text((x_no, y + 14), f"#{rw['invoice_no']}", font=_font(False, 23), fill=INK)
+        d.text((x_date, y + 14), str(rw.get("date") or ""), font=_font(False, 23), fill=MUTED)
+        _right(d, c_amt, y + 14, _money(cur, rw["amount"]), _font(True, 23), INK)
+        y += row_h
+    d.line([PAD, y, W - PAD, y], fill=LINE, width=2)
+    y += 20
+    d.text((x_no, y), "Total received", font=_font(True, 26), fill=INK)
+    _right(d, c_amt, y, _money(cur, total), _font(True, 28), BRAND)
+    y += 66
+
+    if settled:
+        _badge(d, W / 2, y, "PAID IN FULL", _font(True, 24), GREEN, GREEN_BG)
+        y += 92
+        _center(d, W / 2, y, "Thank you for your business!", _font(True, 28), INK)
+        y += 44
+        _center(d, W / 2, y, "Your account is now fully settled.", _font(False, 22), MUTED)
+    else:
+        _badge(d, W / 2, y, f"BALANCE DUE: {_money(cur, remaining)}", _font(True, 24), AMBER, AMBER_BG)
+        y += 92
+        _center(d, W / 2, y, "Thank you for your payment!", _font(True, 28), INK)
+        y += 44
+        _center(d, W / 2, y, f"{_money(cur, remaining)} remains on your account.",
+                _font(False, 22), AMBER)
+    _powered(d, W, y + 56)
+    img = img.crop((0, 0, W, int(y + 114)))
+    return _export(img, fmt)
+
+
 def build_receipt_image(invoice, payment, customer, settings, paid, balance, fmt="png"):
     """Receipt for one payment: what was received, from whom, and what remains."""
     W, PAD = 1000, 56
