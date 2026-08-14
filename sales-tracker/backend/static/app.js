@@ -2206,16 +2206,49 @@ async function renderExpenses() {
         </div>`).join("") : `<div class="empty"><div class="big"><svg class="ic"><use href="#i-expenses"/></svg></div>No expenses logged yet</div>`}
     </div>`;
 }
-function expenseModal() {
+const STOCK_CAT = "Stock / inventory";
+
+async function expenseModal() {
   if (!requireShop()) return;
+  // Whether they record cost prices decides whether a restock logged here would
+  // be counted twice. Cached GET, so this costs nothing on repeat opens.
+  let tracksCost = false;
+  try {
+    const products = await api.get("/api/products");
+    tracksCost = (products || []).some(p => Number(p.unit_cost) > 0);
+  } catch (e) { /* offline: skip the check rather than block the entry */ }
+  window._expTracksCost = tracksCost;
+  // Stock sits last and is no longer the default: it's the one category that
+  // usually ISN'T an expense, so it shouldn't be what you get by just tapping save.
   openModal(`<h2>Add expense</h2>
     <div class="field"><label>Amount</label><input id="expAmt" type="number" inputmode="decimal"></div>
     <div class="field"><label>Category</label>
-      <select id="expCat"><option>Stock / inventory</option><option>Transport</option>
+      <select id="expCat" onchange="expCatChanged()"><option>Transport</option>
         <option>Rent</option><option>Utilities</option><option>Marketing</option>
-        <option>Salaries</option><option>Other</option></select></div>
+        <option>Salaries</option><option>${STOCK_CAT}</option><option>Other</option></select></div>
+    <div id="expWarn"></div>
     <div class="field"><label>Description (optional)</label><input id="expDesc"></div>
     <button class="btn" onclick="saveExpense()">Save expense</button>`);
+  expCatChanged();
+}
+
+// Logging a restock as an expense while the product also carries a cost price
+// subtracts the same money twice — here, and again as cost of goods when the
+// item sells — which can show a profitable month as a loss. Warn at the point
+// of entry; don't silently drop it from profit, because for anyone NOT recording
+// cost prices this expense is their only record of what the stock cost.
+function expCatChanged() {
+  const host = document.getElementById("expWarn");
+  const sel = document.getElementById("expCat");
+  if (!host || !sel) return;
+  host.innerHTML = (sel.value === STOCK_CAT && window._expTracksCost)
+    ? `<div class="warn-note"><strong>This may count twice.</strong>
+        You already record what your stock costs on each product, and SalesPal
+        subtracts that from profit when the item sells. Adding the restock here
+        as well takes it off your profit a second time.
+        <span style="display:block;margin-top:6px">Only log it here if you do
+        <em>not</em> keep cost prices on your products.</span></div>`
+    : "";
 }
 async function saveExpense() {
   const amount = parseFloat(document.getElementById("expAmt").value);
@@ -3445,7 +3478,7 @@ async function _sharePayLinkFallback(id) {
 // expose handlers used in inline onclick
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, settleCustomer, openOwed, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
-  saveSale, voiceSale, expenseModal, saveExpense, delExpense, productModal, saveProduct,
+  saveSale, voiceSale, expenseModal, expCatChanged, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, forceUpdate, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
   filterCustomerSuggest, pickCustomerSuggest, hideCustomerSuggest,
   goalModal, saveGoal, goalTips,

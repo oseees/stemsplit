@@ -407,6 +407,12 @@ body.signed-out .menu-sheet { display: none !important; }
 .wa-mini { background: #25d366; color: #fff; border: 0; border-radius: 8px;
   font-size: 12px; font-weight: 700; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
 .wa-mini.call { background: var(--indigo); }
+/* Inline caution inside a form — e.g. a restock that would be counted twice. */
+.warn-note {
+  background: var(--amber-bg); color: var(--amber); border-radius: 10px;
+  padding: 11px 13px; font-size: 13px; line-height: 1.5; margin: -4px 0 12px;
+}
+.warn-note strong { display: block; margin-bottom: 2px; }
 .wa-mini.paid { background: var(--green); }
 .wa-mini.receipt { background: var(--muted); }
 
