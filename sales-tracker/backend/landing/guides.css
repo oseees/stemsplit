@@ -1,13 +1,13 @@
 /* Shared styling for SalesPal guide/article pages. Same palette as the landing. */
 :root {
   --indigo: #0b7a4f; --indigo-dark: #095e3d;
-  --ink: #111827; --muted: #4b5563; --faint: #6b7280;
+  --ink: #000000; --muted: #4b5563; --faint: #6b7280;
   --bg: #f6f7fb; --card: #ffffff; --line: #e5e7eb;
   --green: #16a34a; --tint: #e6f6ef; --nav-bg: rgba(255,255,255,.92); --radius: 16px;
 }
 html.dark {
   --indigo: #0d8f5f; --indigo-dark: #0b7a4f;
-  --ink: #e6e8ef; --muted: #a3aab8; --faint: #8b93a3;
+  --ink: #ffffff; --muted: #a3aab8; --faint: #8b93a3;
   --bg: #11131a; --card: #1b1f2a; --line: #2a2f3d;
   --green: #4ade80; --tint: #12362a; --nav-bg: rgba(17,19,26,.9);
 }
