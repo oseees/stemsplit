@@ -317,11 +317,13 @@ def _call(client, prompt: str) -> dict:
 
 
 def _no_key_message() -> str:
+    """Shown to the SHOP OWNER inside the app, so it stays in their language.
+    The operator-facing fix (which key to set) lives in Settings → AI insights,
+    which only the account owner sees."""
     return (
-        "**AI insights are turned off.**\n\n"
-        "To enable personalised advice and weekly analysis from Claude, add your "
-        "Anthropic API key to `backend/.env`:\n\n"
-        "```\nANTHROPIC_API_KEY=sk-ant-...\n```\n\n"
-        "Then restart the app. Everything else (sales, invoices, expenses, profit "
-        "tracking) works without it."
+        "**Advice isn't available right now.**\n\n"
+        "SalesPal couldn't generate your advice at the moment. Please try again "
+        "shortly.\n\n"
+        "Everything else — sales, invoices, expenses and profit tracking — is "
+        "working normally."
     )

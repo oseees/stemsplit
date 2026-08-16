@@ -1408,7 +1408,7 @@ async function saveGoal(v) {
   closeModal(); toast(amt > 0 ? "Goal set — go get it!" : "Goal removed"); render();
 }
 async function goalTips(refresh) {
-  openModal(`<h2><svg class="ic"><use href="#i-insights"/></svg> Hit your goal</h2><div class="loading">${refresh ? "Claude is refreshing your advice…" : "Loading your advice…"}</div>`);
+  openModal(`<h2><svg class="ic"><use href="#i-insights"/></svg> Hit your goal</h2><div class="loading">${refresh ? "SalesPal is generating your advice…" : "Loading your advice…"}</div>`);
   try {
     // fresh:true → always reflect what's saved (bypass the 15s GET cache); the
  // backend serves the stored advice unless refresh regenerates it.
@@ -2364,7 +2364,7 @@ async function viewInsights() {
     <div class="card">
       <div class="section-title"><svg class="ic"><use href="#i-insights"/></svg> Grow my business${proTag}</div>
       <p style="font-size:14px;color:var(--muted);margin:0 0 12px">
-        Get specific advice from Claude on increasing your sales and profit, based on your real numbers.</p>
+        Get specific advice from SalesPal on increasing your sales and profit, based on your real numbers.</p>
       ${pro
         ? `<div class="field"><input id="advQ" placeholder="Ask anything — e.g. which product should I stop selling?"
              onkeydown="if(event.key==='Enter')loadAdvice()"></div>
@@ -2413,7 +2413,7 @@ async function loadAdvice(q) {
  const box = document.getElementById("advQ");
  if (q === undefined) q = box ? box.value.trim() : "";
  const out = document.getElementById("insightOut");
- out.innerHTML = `<div class="card"><div class="loading">${q ? "Claude is checking your numbers…" : "Claude is analysing your numbers…"}</div></div>`;
+ out.innerHTML = `<div class="card"><div class="loading">${q ? "SalesPal is checking your numbers…" : "SalesPal is generating your advice…"}</div></div>`;
  try {
    const r = await api.get(`/api/insights/advice?period=${state.period}&q=${encodeURIComponent(q)}`);
    out.innerHTML = `<div class="card">${q ? `<div class="section-title">${esc(q)}</div>` : ""}<div class="md">${md(r.text)}</div></div>`;
@@ -2518,7 +2518,7 @@ async function runPriceCheck(id) {
   const v = parseFloat(document.getElementById("pcPrice").value) || 0;
   if (v <= 0) return toast("Enter the new price");
   const out = document.getElementById("pcOut");
-  out.innerHTML = `<div class="loading">Claude is checking your numbers…</div>`;
+  out.innerHTML = `<div class="loading">SalesPal is checking your numbers…</div>`;
   let r;
   try {
     r = await api.send(`/api/products/${id}/price-advice`, "POST", { new_price: v });
@@ -3130,7 +3130,7 @@ async function viewSettings() {
  ${payCardHtml(pay, pro)}
  <div class="card"><div class="section-title">AI insights</div>
  <p style="font-size:14px;margin:0">${h.ai_enabled
- ? "Claude AI is connected. Advice & weekly reports are live."
+ ? "SalesPal AI is connected. Advice & weekly reports are live."
  : " Not connected. Add ANTHROPIC_API_KEY in backend/.env to enable advice."}</p>
  </div>
  ${pro ? `<div class="card"><div class="section-title"><svg class="ic"><use href="#i-bell"/></svg> Alerts</div>
