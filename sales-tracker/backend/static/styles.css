@@ -388,6 +388,16 @@ body.signed-out .menu-sheet { display: none !important; }
 .auth-switch { text-align: center; font-size: 14px; color: var(--muted);
   margin-top: 16px; }
 .auth-switch a { color: var(--indigo); font-weight: 700; cursor: pointer; }
+/* Password field with an eye button sitting inside the input. */
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 46px; }
+.pw-eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  background: none; border: 0; padding: 8px; width: auto; cursor: pointer;
+  color: var(--muted); display: flex; align-items: center; border-radius: 8px;
+}
+.pw-eye:hover { color: var(--indigo); }
+.pw-eye .ic { width: 20px; height: 20px; }
 .auth-show { display: flex; align-items: center; gap: 7px; font-size: 13px;
   color: var(--muted); font-weight: 500; margin-top: 8px; cursor: pointer; }
 .auth-show input { width: auto; margin: 0; }

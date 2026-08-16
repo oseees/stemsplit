@@ -461,6 +461,29 @@ function _buyPlanInfo() {
   return plans.find(p => p.key === _buyPlan) || { label: "Pro", naira: "" };
 }
 
+// A password input with an eye button inside it. Typing a password blind on a
+// phone keyboard is where most failed logins come from, so every password field
+// gets the same toggle — including the current-password one, which had none.
+function pwFieldHtml(id, placeholder, autocomplete, required) {
+  return `<div class="pw-wrap">
+    <input id="${id}" type="password" placeholder="${placeholder}"
+      autocomplete="${autocomplete}"${required ? " required" : ""}>
+    <button type="button" class="pw-eye" onclick="togglePw('${id}', this)"
+      aria-label="Show password" aria-pressed="false" tabindex="-1"><svg class="ic"><use href="#i-eye"/></svg></button>
+  </div>`;
+}
+
+// type="button" above keeps this from submitting the auth form when tapped.
+function togglePw(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const show = el.type === "password";
+  el.type = show ? "text" : "password";
+  btn.setAttribute("aria-pressed", show ? "true" : "false");
+  btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  btn.innerHTML = `<svg class="ic"><use href="#i-${show ? "eye-off" : "eye"}"/></svg>`;
+}
+
 function renderAuth() {
   const mode = _authMode;                 // "signup" | "login" | "reset"
   const signup = mode === "signup";
@@ -487,9 +510,7 @@ function renderAuth() {
           ${reset ? `<div class="field"><label>Reset code</label>
             <input id="auCode" placeholder="Paste the code you were given" required></div>` : ""}
           <div class="field"><label>${passLabel}</label>
-            <input id="auPass" type="password" placeholder="${passPh}"
-              autocomplete="${signup || reset ? "new-password" : "current-password"}" required>
-            <label class="auth-show"><input type="checkbox" onchange="document.getElementById('auPass').type = this.checked ? 'text' : 'password'"> Show password</label>
+            ${pwFieldHtml("auPass", passPh, signup || reset ? "new-password" : "current-password", true)}
           </div>
           <div class="auth-err" id="auErr"></div>
           <button class="btn" type="submit" id="auBtn">${btnLabel}</button>
@@ -3483,7 +3504,7 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModa
   filterCustomerSuggest, pickCustomerSuggest, hideCustomerSuggest,
   goalModal, saveGoal, goalTips,
   loadWeekly, render, setView, viewSales, renderSalesList, setSalesStatus, loadSavedReports, openReport,
-  doAuth, toggleAuthMode, setAuthMode, logout, changePassword, showUpgrade, paywallSelect, paywallCheckout, whatsappReminder, whatsappCall, phoneCall,
+  doAuth, toggleAuthMode, setAuthMode, togglePw, logout, changePassword, showUpgrade, paywallSelect, paywallCheckout, whatsappReminder, whatsappCall, phoneCall,
   startCheckout, renderLanding, startBuy, startFree,
   shopSwitcher, switchShop, addShop,
   shareInvoiceImage, shareReceipt, receiptOffer, settleReceiptOffer, shareSettleReceipt,
