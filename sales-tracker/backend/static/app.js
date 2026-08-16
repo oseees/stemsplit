@@ -1106,6 +1106,30 @@ document.querySelectorAll(".bottom-nav button").forEach(b => {
 });
 document.getElementById("menuBtn").onclick = () =>
   document.getElementById("menuSheet").classList.toggle("open");
+
+// The drawer's open state lives in one place: .open on the sheet. Seven call
+// sites already toggle it (nav, theme, view switch, logout…), so mirror it onto
+// the backdrop and the scroll lock here instead of editing every one of them.
+// Observing the node survives the desktop/mobile re-parenting.
+(function () {
+  const sheet = document.getElementById("menuSheet");
+  const back = document.getElementById("menuBackdrop");
+  if (!sheet || !back) return;
+  const close = () => sheet.classList.remove("open");
+  const sync = () => {
+    const open = sheet.classList.contains("open");
+    back.classList.toggle("open", open);
+    document.body.classList.toggle("menu-open", open);
+  };
+  new MutationObserver(sync).observe(sheet, { attributes: true, attributeFilter: ["class"] });
+  back.onclick = close;
+  const x = document.getElementById("menuClose");
+  if (x) x.onclick = close;
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sheet.classList.contains("open")) close();
+  });
+  sync();
+})();
 // Only nav buttons switch views; #viewToggle / #installBtn keep their own handlers.
 document.querySelectorAll(".menu-sheet button[data-nav]").forEach(b =>
   b.onclick = () => setView(b.dataset.nav));

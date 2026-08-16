@@ -92,8 +92,12 @@
     </div>
   </header>
 
-  <!-- Slide-down menu -->
+  <!-- Slide-in menu drawer (right edge on mobile; re-parented into the sidebar on desktop) -->
+  <div class="menu-backdrop" id="menuBackdrop"></div>
   <div class="menu-sheet" id="menuSheet">
+    <div class="menu-head">Menu
+      <button class="menu-close" id="menuClose" aria-label="Close menu"><svg class="ic"><use href="#i-close"/></svg></button>
+    </div>
     <button data-nav="products"><svg class="ic"><use href="#i-products"/></svg>Products</button>
     <button data-nav="orders"><svg class="ic"><use href="#i-orders"/></svg>Orders</button>
     <button data-nav="suppliers"><svg class="ic"><use href="#i-suppliers"/></svg>Suppliers</button>

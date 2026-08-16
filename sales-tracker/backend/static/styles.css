@@ -94,20 +94,73 @@ body {
 }
 .period-tabs button.active { background: #fff; color: var(--indigo); }
 
-/* Menu sheet */
+/* Menu sheet — a drawer that slides in from the right on mobile. It stays in the
+   DOM and moves with a transform (rather than display:none) so it animates both
+   opening AND closing; visibility keeps the off-screen panel out of the tab
+   order and away from screen readers. On desktop it's re-parented into the
+   sidebar and these rules are undone further down. */
 .menu-sheet {
-  position: sticky; top: 0; z-index: 25;
-  display: none; flex-direction: column;
-  background: var(--card); border-bottom: 1px solid var(--line);
-  max-width: var(--maxw); margin: 0 auto;
+  position: fixed; top: 0; right: 0; z-index: 60;
+  display: flex; flex-direction: column;
+  width: min(312px, 84vw); height: 100dvh; overflow-y: auto;
+  background: var(--card); border-left: 1px solid var(--line);
+  box-shadow: -18px 0 44px rgba(0, 0, 0, .24);
+  padding-bottom: env(safe-area-inset-bottom);
+  transform: translateX(100%); visibility: hidden;
+  /* Decelerating curve: quick to leave the edge, gentle as it settles. */
+  transition: transform .3s cubic-bezier(.32, .72, 0, 1), visibility .3s;
 }
-.menu-sheet.open { display: flex; }
+.menu-sheet.open { transform: none; visibility: visible; }
 .menu-sheet button {
   display: flex; align-items: center; gap: 12px;
   text-align: left; background: none; border: 0; padding: 14px 18px;
   font-size: 15px; border-bottom: 1px solid var(--line);
 }
 .menu-sheet button .ic { width: 20px; height: 20px; color: var(--muted); flex: 0 0 auto; }
+.menu-sheet button:active { background: var(--tint); }
+
+/* Drawer header: a title and an explicit way out (the backdrop is not obvious). */
+.menu-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 12px 14px 18px; border-bottom: 1px solid var(--line);
+  font-weight: 800; font-size: 15px; color: var(--muted);
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.menu-head .menu-close {
+  background: none; border: 0; padding: 6px; margin: 0; width: auto;
+  color: var(--muted); cursor: pointer; border-bottom: 0; display: flex;
+}
+.menu-head .menu-close .ic { width: 22px; height: 22px; }
+
+/* Dim + blur behind the drawer; tapping it closes. */
+.menu-backdrop {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(0, 0, 0, .45);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  opacity: 0; visibility: hidden;
+  transition: opacity .3s ease, visibility .3s;
+}
+.menu-backdrop.open { opacity: 1; visibility: visible; }
+body.menu-open { overflow: hidden; }
+
+/* Items fan in behind the panel so the drawer feels assembled, not pasted. */
+@keyframes menuItemIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+.menu-sheet.open > button { animation: menuItemIn .34s both cubic-bezier(.32, .72, 0, 1); }
+.menu-sheet.open > button:nth-child(2) { animation-delay: .04s }
+.menu-sheet.open > button:nth-child(3) { animation-delay: .07s }
+.menu-sheet.open > button:nth-child(4) { animation-delay: .10s }
+.menu-sheet.open > button:nth-child(5) { animation-delay: .13s }
+.menu-sheet.open > button:nth-child(6) { animation-delay: .16s }
+.menu-sheet.open > button:nth-child(7) { animation-delay: .19s }
+.menu-sheet.open > button:nth-child(8) { animation-delay: .22s }
+.menu-sheet.open > button:nth-child(9) { animation-delay: .25s }
+.menu-sheet.open > button:nth-child(n+10) { animation-delay: .28s }
+
+/* Respect a system "reduce motion" preference: still works, just doesn't move. */
+@media (prefers-reduced-motion: reduce) {
+  .menu-sheet, .menu-backdrop { transition-duration: .01ms; }
+  .menu-sheet.open > button { animation: none; }
+}
 
 /* Inline SVG icons: inherit text colour, sit on the text baseline. */
 .ic {
@@ -602,10 +655,18 @@ body.desktop:not(.signed-out) .bottom-nav { overflow-y: auto; }
 body.desktop:not(.signed-out) .menu-sheet {
   display: flex; position: static; margin-top: auto;
   width: auto; max-width: none; background: none; border: 0; padding: 0;
+  /* Undo the mobile drawer: in the sidebar it's always present, never slid. */
+  height: auto; transform: none; visibility: visible; box-shadow: none;
+  overflow: visible; transition: none; z-index: auto;
 }
 body.desktop:not(.signed-out) .menu-sheet button {
   border: 0; border-radius: 10px; padding: 11px 16px; font-size: 14px; color: var(--ink);
 }
+/* No drawer chrome on desktop, and never a backdrop over the sidebar. */
+body.desktop .menu-head,
+body.desktop .menu-backdrop { display: none; }
+body.desktop .menu-sheet.open > button { animation: none; }
+body.desktop.menu-open { overflow: auto; }
 
 /* Modals → centered dialog instead of bottom sheet */
 body.desktop .modal {

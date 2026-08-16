@@ -174,19 +174,54 @@
        become unreachable. .nav is position:sticky, which anchors the dropdown. */
     @media (max-width: 720px) {
       .nav-toggle { display: inline-flex; }
+      /* Drawer from the right. Transform rather than display:none so it
+         animates closing too; visibility keeps it out of the tab order. */
       .nav-links {
-        position: absolute; top: 62px; left: 0; right: 0;
+        position: fixed; top: 0; right: 0; z-index: 60;
         flex-direction: column; gap: 0; background: var(--card);
-        border-bottom: 1px solid var(--line); padding: 6px 0;
-        box-shadow: 0 12px 30px rgba(0,0,0,.14); display: none;
+        width: min(300px, 82vw); height: 100dvh; padding: 8px 0;
+        border-left: 1px solid var(--line);
+        box-shadow: -18px 0 44px rgba(0,0,0,.24);
+        transform: translateX(100%); visibility: hidden;
+        transition: transform .3s cubic-bezier(.32,.72,0,1), visibility .3s;
       }
-      .nav-links.open { display: flex; }
-      .nav-links a { padding: 14px 20px; font-size: 16px; }
+      .nav-links.open { transform: none; visibility: visible; }
+      /* The drawer covers the ☰ button, so it needs its own way out.
+         Scoped to .nav-links so it outranks the base `display:none` reset,
+         which sits later in this stylesheet. */
+      .nav-links .nav-close {
+        display: block; align-self: flex-end; background: none; border: 0;
+        font-size: 30px; line-height: 1; color: var(--muted);
+        padding: 6px 20px 12px; cursor: pointer;
+      }
+      .nav-links a { padding: 15px 22px; font-size: 16px; }
       .nav-links a:not(:last-child) { border-bottom: 1px solid var(--line); }
       .nav-actions .nav-login { display: none; } /* moved into the ☰ menu to free space */
       .nav-links .nav-login-m { display: block; }
+      .nav-links.open a { animation: navItemIn .34s both cubic-bezier(.32,.72,0,1); }
+      .nav-links.open a:nth-child(1) { animation-delay: .04s }
+      .nav-links.open a:nth-child(2) { animation-delay: .07s }
+      .nav-links.open a:nth-child(3) { animation-delay: .10s }
+      .nav-links.open a:nth-child(4) { animation-delay: .13s }
+      .nav-links.open a:nth-child(5) { animation-delay: .16s }
+      .nav-links.open a:nth-child(n+6) { animation-delay: .19s }
+      .nav-backdrop {
+        position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,.45);
+        -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+        opacity: 0; visibility: hidden;
+        transition: opacity .3s ease, visibility .3s;
+      }
+      .nav-backdrop.open { opacity: 1; visibility: visible; }
+      body.nav-open { overflow: hidden; }
+    }
+    @keyframes navItemIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      .nav-links, .nav-backdrop { transition-duration: .01ms; }
+      .nav-links.open a { animation: none; }
     }
     .nav-login-m { display: none; }
+    .nav-backdrop, .nav-close { display: none; }
+    @media (max-width: 720px) { .nav-backdrop { display: block; } }
     /* Keep the nav on one tidy row on phones: drop the theme toggle (dark mode
        still follows the system and is toggleable inside the app) and tighten
        spacing so logo + Log In + CTA never overlap or wrap. */
@@ -321,10 +356,12 @@
 <body>
 
   <!-- Sticky navigation -->
+  <div class="nav-backdrop" id="navBackdrop"></div>
   <header class="nav">
     <div class="wrap nav-row">
       <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="30" height="30" />SalesPal</a>
       <nav class="nav-links" id="navLinks" aria-label="Main">
+        <button type="button" class="nav-close" id="navClose" aria-label="Close menu">&times;</button>
         <a href="#features">Features</a>
         <a href="#how-it-works">How It Works</a>
         <a href="#install">Install</a>
@@ -888,20 +925,29 @@
   <script>
     // Mobile menu: the ☰ button toggles the nav dropdown. Tapping a link closes it
     // (so in-page anchors like #pricing don't leave the menu hanging open).
-    window.salespalToggleNav = function (btn) {
-      var links = document.getElementById("navLinks");
-      var open = links.classList.toggle("open");
-      btn.setAttribute("aria-expanded", open ? "true" : "false");
-    };
     (function () {
       var links = document.getElementById("navLinks");
+      var back = document.getElementById("navBackdrop");
       if (!links) return;
-      links.addEventListener("click", function (e) {
-        if (e.target.tagName === "A") {
-          links.classList.remove("open");
-          var t = document.querySelector(".nav-toggle");
-          if (t) t.setAttribute("aria-expanded", "false");
-        }
+      function set(open) {
+        links.classList.toggle("open", open);
+        if (back) back.classList.toggle("open", open);
+        document.body.classList.toggle("nav-open", open);
+        var t = document.querySelector(".nav-toggle");
+        if (t) t.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+      window.salespalToggleNav = function () { set(!links.classList.contains("open")); };
+      // Tapping a link, the backdrop, or Escape all close it.
+      links.addEventListener("click", function (e) { if (e.target.tagName === "A") set(false); });
+      if (back) back.addEventListener("click", function () { set(false); });
+      var x = document.getElementById("navClose");
+      if (x) x.addEventListener("click", function () { set(false); });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") set(false);
+      });
+      // Leaving mobile width mid-open would strand the lock on <body>.
+      window.addEventListener("resize", function () {
+        if (window.innerWidth > 720 && links.classList.contains("open")) set(false);
       });
     })();
   </script>
