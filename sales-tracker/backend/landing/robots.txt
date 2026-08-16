@@ -1,5 +1,8 @@
 User-agent: *
 Allow: /$
+Allow: /invoice-app/
+Allow: /receipt-app/
+Allow: /sales-tracker/
 Allow: /guides/
 Allow: /guides.css
 Allow: /og-image.png
