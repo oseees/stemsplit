@@ -3,13 +3,13 @@
   --indigo: #0b7a4f; --indigo-dark: #095e3d;
   --ink: #000000; --muted: #4b5563; --faint: #6b7280;
   --bg: #f6f7fb; --card: #ffffff; --line: #e5e7eb;
-  --green: #16a34a; --tint: #e6f6ef; --nav-bg: rgba(255,255,255,.92); --radius: 16px;
+  --green: #16a34a; --tint: #e6f6ef; --nav-bg: rgba(255,255,255,.5); --radius: 16px;
 }
 html.dark {
   --indigo: #0d8f5f; --indigo-dark: #0b7a4f;
   --ink: #ffffff; --muted: #a3aab8; --faint: #8b93a3;
   --bg: #11131a; --card: #1b1f2a; --line: #2a2f3d;
-  --green: #4ade80; --tint: #12362a; --nav-bg: rgba(17,19,26,.9);
+  --green: #4ade80; --tint: #12362a; --nav-bg: rgba(17,19,26,.5);
 }
 * { box-sizing: border-box; }
 body {
@@ -21,7 +21,7 @@ a { color: var(--indigo); }
 .wrap { max-width: 760px; margin: 0 auto; padding: 0 20px; }
 
 /* nav */
-.nav { position: sticky; top: 0; z-index: 10; background: var(--nav-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.nav { position: sticky; top: 0; z-index: 10; background: var(--nav-bg); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
 .nav-row { max-width: 1080px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 60px; }
 .logo { display: flex; align-items: center; gap: 8px; font-weight: 800; color: var(--ink); text-decoration: none; font-size: 18px; }
 .nav .btn { font-size: 14px; }
