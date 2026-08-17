@@ -3313,10 +3313,47 @@ def _morning_ping(user_id):
     push.notify(user_id, "Good morning — let's hustle 🌅", body, url="/app/")
 
 
+# --- Midday momentum nudge ------------------------------------------------
+# A lunchtime check-in — momentum on today's sales-so-far, or a prod to get the
+# first one on the board. {cur}=currency, {rev}=today's sales, {n}=count, {s}=plural.
+_MIDDAY_SALES = [
+    "{cur}{rev:,.0f} so far today 💪  Keep the momentum into the afternoon!",
+    "Good pace — {cur}{rev:,.0f} by midday. Push till evening 🔥",
+    "{n} sale{s} already today. Afternoon rush dey come — stay ready 🛒",
+]
+_MIDDAY_NO_SALES = [
+    "Half the day gone — you never make sale today? Log your first 🛒",
+    "Afternoon dey here o. Put small money on the board 💪",
+    "Quiet morning? The afternoon fit change am. Record as you sell 📈",
+]
+
+
+def _midday_ping(user_id):
+    """Midday check-in: momentum push on today's sales-so-far, or a prompt to get
+    the first sale on the board. Deduped via midday_ping:{uid}, like the others."""
+    key = f"midday_ping:{user_id}"
+    with db.get_conn() as conn:
+        last = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if last and last["value"] == today():
+            return
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, today()))
+        m = _metrics(conn, today(), today(), user_id)
+    cur = db.get_settings(user_id).get("currency", "₦")
+    rev, n = m["revenue"], m["num_sales"]
+    s = "" if n == 1 else "s"
+    pick = datetime.now().timetuple().tm_yday
+    if n == 0:
+        pool, title, url = _MIDDAY_NO_SALES, "How's market today? 🛒", "/app/#new"
+    else:
+        pool, title, url = _MIDDAY_SALES, "Keep the momentum 💪", "/app/"
+    body = pool[pick % len(pool)].format(cur=cur, rev=rev, n=n, s=s)
+    push.notify(user_id, title, body, url=url)
+
+
 async def _reminder_scheduler():
-    """Every hour: after 09:00 nudge Pro users with overdue invoices; a morning
-    (07:00-12:00 local) motivational push and an evening (>=18:00) 'did you sell
-    today?' push go to every user. All deduped to one push per day in their pings."""
+    """Every hour: after 09:00 nudge Pro users with overdue invoices; and to every
+    user, a morning (07-12), midday (12-15) and evening (>=18) motivational push.
+    All deduped to one push per day inside their ping fns."""
     while True:
         try:
             hour = datetime.now().hour
@@ -3328,6 +3365,8 @@ async def _reminder_scheduler():
                         await asyncio.to_thread(_reminder_ping, u["id"])
                     if hour < 12:
                         await asyncio.to_thread(_morning_ping, u["id"])
+                    elif hour < 15:
+                        await asyncio.to_thread(_midday_ping, u["id"])
                     if hour >= 18:
                         await asyncio.to_thread(_hustle_ping, u["id"])
         except Exception:
