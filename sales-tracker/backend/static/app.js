@@ -831,6 +831,10 @@ function _consumeDeepLink() {
     salesStatus = "overdue";
     setView("sales");
   }
+  if (location.hash === "#new") { // hustle nudge → straight into recording a sale
+    history.replaceState({}, "", location.pathname);
+    newSaleModal();
+  }
 }
 
 // ================= SHOP ATTENDANT (limited login) =========================

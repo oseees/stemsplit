@@ -3214,17 +3214,76 @@ def _reminder_ping(user_id):
         url="/app/#sales/overdue")
 
 
+# --- Evening hustle nudge -------------------------------------------------
+# Motivational push copy for Nigerian small-business owners. Rotated by day so
+# it doesn't get stale; kept short — a notification body only shows ~2 lines.
+# {cur}=currency, {rev}=today's sales, {n}=sale count, {s}=plural, {goal}=monthly
+# profit goal, {pct}=% of that goal hit this month. Every pool is .format()ed
+# with all of those, so a template may use any subset safely.
+_HUSTLE_NO_SALES = [
+    "You never record any sale today 👀  One tap and your book stays correct.",
+    "Quiet day so far? Log even one sale — small small e dey add up 💪",
+    "No sale entered today o. Add today's own before you forget.",
+    "Money wey you no record, you no fit see. Enter today's sales 📈",
+    "How market today? Record am so your profit go show true.",
+]
+_HUSTLE_SALES = [
+    "{cur}{rev:,.0f} in sales today 🔥  Keep pushing before the day close!",
+    "{n} sale{s} today — {cur}{rev:,.0f}. You dey hustle! Add the rest 💪",
+    "{cur}{rev:,.0f} so far today 💰  Consistency na the secret — keep going.",
+]
+_HUSTLE_GOAL = [
+    "{cur}{rev:,.0f} today. You dey {pct:.0f}% to your {cur}{goal:,.0f} goal — push small!",
+    "Na so you go hit am! {pct:.0f}% to this month's goal. No slow down 🔥",
+]
+
+
+def _hustle_ping(user_id):
+    """Once/day in the evening, push a motivational 'did you sell today?' nudge,
+    personalised by today's sales and (if set) this month's profit goal. Deduped
+    via the settings KV, same pattern as _reminder_ping. Sent to EVERY user — a
+    retention/hustle nudge, not a Pro feature — but only reaches devices that
+    granted notification permission (push.notify no-ops with no subscription)."""
+    key = f"hustle_ping:{user_id}"
+    with db.get_conn() as conn:
+        last = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if last and last["value"] == today():
+            return
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, today()))
+        m = _metrics(conn, today(), today(), user_id)
+        goal = _shop_goal(conn, user_id, 0)  # 0 = combined across the user's shops
+        month_profit = (_metrics(conn, _month_start(), today(), user_id)["net_profit"]
+                        if goal > 0 else 0.0)
+    cur = db.get_settings(user_id).get("currency", "₦")
+    rev, n = m["revenue"], m["num_sales"]
+    s = "" if n == 1 else "s"
+    pct = min(100, month_profit / goal * 100) if (goal > 0 and month_profit > 0) else 0
+    pick = datetime.now().timetuple().tm_yday  # deterministic daily rotation
+    if n == 0:
+        pool, title, url = _HUSTLE_NO_SALES, "Have you made sales today? 🛍️", "/app/#new"
+    elif pct > 0:
+        pool, title, url = _HUSTLE_GOAL, "Chase that goal 💪", "/app/"
+    else:
+        pool, title, url = _HUSTLE_SALES, "You dey move! 🔥", "/app/"
+    body = pool[pick % len(pool)].format(cur=cur, rev=rev, n=n, s=s, goal=goal, pct=pct)
+    push.notify(user_id, title, body, url=url)
+
+
 async def _reminder_scheduler():
-    """Every hour, once past 09:00 local, nudge each Pro user who has overdue
-    invoices (deduped to one push per day inside _reminder_ping)."""
+    """Every hour: after 09:00 local, nudge each Pro user who has overdue
+    invoices; after 18:00, send every user the evening motivational hustle nudge.
+    Both deduped to one push per day inside their ping fns."""
     while True:
         try:
-            if datetime.now().hour >= 9:
+            hour = datetime.now().hour
+            if hour >= 9:
                 with db.get_conn() as conn:
                     users = db.all_users(conn)
                 for u in users:
                     if is_pro(dict(u)):
                         await asyncio.to_thread(_reminder_ping, u["id"])
+                    if hour >= 18:
+                        await asyncio.to_thread(_hustle_ping, u["id"])
         except Exception:
             pass
         await asyncio.sleep(3600)
