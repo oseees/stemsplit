@@ -3269,19 +3269,65 @@ def _hustle_ping(user_id):
     push.notify(user_id, title, body, url=url)
 
 
+# --- Morning kickoff nudge ------------------------------------------------
+# Motivational morning push — sets the tone, references yesterday's takings or
+# this month's goal when there's something to say. Rotated daily; short.
+# {cur}=currency, {y}=yesterday's sales, {goal}=monthly goal, {pct}=% hit.
+_MORNING_GENERIC = [
+    "New day, new money 💰  Record every sale as you sell — no leave any.",
+    "Good morning boss 🌅  Another day to chase your goal. Make am count!",
+    "Rise and hustle 💪  Every sale you log today is money you fit see.",
+    "Fresh day, fresh sales 🛒  Put your first one on the board early.",
+]
+_MORNING_YESTERDAY = [
+    "You made {cur}{y:,.0f} yesterday 🔥  Do pass am today!",
+    "Yesterday: {cur}{y:,.0f}. New day — beat your own record 💪",
+]
+_MORNING_GOAL = [
+    "You dey {pct:.0f}% to this month's goal 🎯  Today's sales fit close the gap.",
+    "{pct:.0f}% to your {cur}{goal:,.0f} goal. Start today strong 💪",
+]
+
+
+def _morning_ping(user_id):
+    """Once each morning, push a motivational kickoff. References yesterday's
+    sales or this month's goal progress when there's something to say, else a
+    generic hustle line. Deduped via the settings KV like _hustle_ping; sent to
+    every user (only reaches devices that granted notification permission)."""
+    key = f"morning_ping:{user_id}"
+    y_date = (date.today() - timedelta(days=1)).isoformat()
+    with db.get_conn() as conn:
+        last = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if last and last["value"] == today():
+            return
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, today()))
+        y = _metrics(conn, y_date, y_date, user_id)["revenue"]
+        goal = _shop_goal(conn, user_id, 0)
+        month_profit = (_metrics(conn, _month_start(), today(), user_id)["net_profit"]
+                        if goal > 0 else 0.0)
+    cur = db.get_settings(user_id).get("currency", "₦")
+    pct = min(100, month_profit / goal * 100) if (goal > 0 and month_profit > 0) else 0
+    pick = datetime.now().timetuple().tm_yday
+    pool = _MORNING_YESTERDAY if y > 0 else (_MORNING_GOAL if pct > 0 else _MORNING_GENERIC)
+    body = pool[pick % len(pool)].format(cur=cur, y=y, goal=goal, pct=pct)
+    push.notify(user_id, "Good morning — let's hustle 🌅", body, url="/app/")
+
+
 async def _reminder_scheduler():
-    """Every hour: after 09:00 local, nudge each Pro user who has overdue
-    invoices; after 18:00, send every user the evening motivational hustle nudge.
-    Both deduped to one push per day inside their ping fns."""
+    """Every hour: after 09:00 nudge Pro users with overdue invoices; a morning
+    (07:00-12:00 local) motivational push and an evening (>=18:00) 'did you sell
+    today?' push go to every user. All deduped to one push per day in their pings."""
     while True:
         try:
             hour = datetime.now().hour
-            if hour >= 9:
+            if hour >= 7:
                 with db.get_conn() as conn:
                     users = db.all_users(conn)
                 for u in users:
-                    if is_pro(dict(u)):
+                    if hour >= 9 and is_pro(dict(u)):
                         await asyncio.to_thread(_reminder_ping, u["id"])
+                    if hour < 12:
+                        await asyncio.to_thread(_morning_ping, u["id"])
                     if hour >= 18:
                         await asyncio.to_thread(_hustle_ping, u["id"])
         except Exception:
