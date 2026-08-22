@@ -230,8 +230,15 @@ def now_iso():
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
+    # WAL lets readers and the single writer run concurrently instead of locking
+    # each other out. Without it, an hourly-scheduler write (the settings-KV
+    # nudge pings, backup stamps) holding the lock makes a concurrent read like
+    # GET /api/expenses raise "database is locked" → a 500 the tab renders as an
+    # error. busy_timeout makes a contended connection wait, not fail instantly.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 15000")
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn

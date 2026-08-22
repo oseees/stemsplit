@@ -2240,7 +2240,24 @@ async function viewMoney() {
 }
 
 async function renderExpenses() {
-  const exp = await api.get("/api/expenses");
+  // /api/expenses isn't an offline-overlay list, so a transient read failure
+  // would otherwise bubble up and replace the WHOLE screen with a raw error
+  // card (losing the tab bar). Fail soft instead: keep the tabs, offer Retry.
+  let exp;
+  try {
+    exp = await api.get("/api/expenses");
+  } catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") throw e;
+    document.getElementById("moneyBody").innerHTML = `
+      <div class="card"><div class="empty">
+        <div class="big"><svg class="ic"><use href="#i-warn"/></svg></div>
+        Couldn't load expenses.
+        <div style="margin-top:6px;font-size:13px;color:var(--muted)">${esc(e.message)}</div>
+        <button class="btn secondary" style="margin-top:14px" onclick="render()">Retry</button>
+      </div></div>`;
+    return;
+  }
+  if (!Array.isArray(exp)) exp = [];
   const total = exp.reduce((s, e) => s + e.amount, 0);
   document.getElementById("moneyBody").innerHTML = `
     <button class="btn" onclick="expenseModal()" style="margin-bottom:14px">＋ Add expense</button>
