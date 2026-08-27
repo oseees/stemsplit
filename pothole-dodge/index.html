@@ -1,0 +1,635 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Dodge Dat Pothole — Naija Road Rally</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0d0c;overflow:hidden;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{max-width:100vw;max-height:100vh;aspect-ratio:360/640;touch-action:none;display:block}
+</style>
+<canvas id=c></canvas>
+<script>
+const W=360, H=640, ROAD_L=44, ROAD_R=316, MINGAP=58;
+// ponytail: 3.2px per km/h keeps a real 210km/h G-Wagon readable on a 640px screen
+const KMH=3.2;
+const cv=document.getElementById('c'), g=cv.getContext('2d');
+cv.width=W*2; cv.height=H*2; g.scale(2,2);
+
+// obstacle kinds. rel = how fast they roll forward vs the road (0 = parked pothole)
+// kmh = what the thing actually does on a Lagos road. rel is that as a fraction of REF, which is
+// what the scrolling maths wants: a loaded tanker crawls, so it falls back fastest of the vehicles.
+const REF=110;
+const KINDS={
+  pothole:{w:64,h:28,  kmh:0,  weight:4},   // it is the road
+  goat:   {w:46,h:34,  kmh:5,  weight:2},   // walking pace
+  okada:  {w:32,h:54,  kmh:40, weight:3},   // 100cc, fully loaded, no helmet
+  car:    {w:42,h:76,  kmh:70, weight:4},   // ordinary traffic
+  danfo:  {w:70,h:100, kmh:55, weight:2},   // stops every 50 metres
+  tanker: {w:88,h:150, kmh:45, weight:1}    // 33,000 litres, going uphill in third
+};
+for(const d of Object.values(KINDS)) d.rel=d.kmh/REF;
+const PAINT=['#c8ccd2','#8f2f2f','#2c5c96','#1f2429','#c9a227','#356b4c','#e8e8e8','#6b4a8f'];
+const BAG=Object.entries(KINDS).flatMap(([k,v])=>Array(v.weight).fill(k));
+const CRASHES=["Your shock absorber don go!","Mechanic don see money today.","Na so pothole take chop that tyre.",
+  "You for dodge am now!","Wetin you dey look? Road no be Instagram.","That one na crater, no be pothole."];
+
+// pick your ride. top/s100 are the real-world numbers, thirst is how hard it drinks,
+// grip is how fast it answers the steering, w is how much road it takes up.
+const CARS=[
+  {name:'Tokunbo Corolla', col:'#2f7ad6', w:38,h:68, grip:14, top:180,s100:10, thirst:1,   cruise:.58,
+   blurb:'nothing spectacular, never fails'},
+  {name:'Okada',           col:'#c1442e', w:26,h:52, grip:20, top:95, s100:13, thirst:.5, cruise:.82, bike:true,
+   blurb:'thin, slow flat out, sips fuel'},
+  {name:'Danfo Bus',       col:'#f2c53d', w:54,h:88, grip:10, top:130,s100:17, thirst:1.3, cruise:.62, van:true,
+   blurb:'loaded Hiace: wide, heavy, patient'},
+  {name:'Owanbe G-Wagon',  col:'#3a4048', w:46,h:74, grip:17, top:210,s100:6,  thirst:1.6, cruise:.5, suv:true,
+   blurb:'V8 — pulls hard, drinks harder'}
+];
+for(const c of CARS) c.accel=100/c.s100;          // km/h per second, straight off the 0-100 time
+let pick=Math.min(CARS.length-1,+localStorage.potholeCar||0);
+
+let st, best=+localStorage.potholeBest||0;
+const keys={};
+
+function reset(){
+  st={mode:'menu',car:{x:W/2,tx:W/2,...CARS[pick]},obs:[],pops:[],trees:[],
+      dist:0,score:0,lives:3,kmh:48,spd:48*KMH,maxKmh:0,t:0,next:1.6,shake:0,inv:0,msg:'',title:'',flash:0,hornCd:0,
+      fuel:1,boost:0,gas:false,gasBtn:false,warned:false,nextFuel:3,nextBoost:9};
+  for(let i=0;i<12;i++) st.trees.push({x:Math.random()<.5?18:W-18,y:i*70,k:Math.random()});
+}
+reset();
+
+// --- the only fiddly bit: never spawn a wall the player can't get through ---
+function gapOK(spans){
+  const s=[...spans].sort((a,b)=>a[0]-b[0]);
+  let cur=ROAD_L, gap=0;
+  for(const [a,b] of s){ gap=Math.max(gap,a-cur); cur=Math.max(cur,b); }
+  return Math.max(gap,ROAD_R-cur)>=MINGAP;
+}
+// a tanker is 150 tall and spawns mostly above the screen, so "is that spot free" has to be a
+// box test, not an x test — otherwise the next bike lands inside it and they drive along fused
+const boxFree=(x,y,w,h)=>!st.obs.some(o=>Math.abs(o.x-x)<(o.w+w)/2+6 && Math.abs(o.y-y)<(o.h+h)/2+10);
+function spawn(){
+  const k=BAG[Math.random()*BAG.length|0], d=KINDS[k], y=-d.h-10;
+  // check against everything still ahead of the car: a fast pothole catches a slow tanker,
+  // so two obstacles that spawned apart can end up in the same band with no way through
+  const ahead=st.obs.filter(o=>!o.good&&o.y<H-150).map(o=>[o.x-o.w/2,o.x+o.w/2]);
+  for(let i=0;i<8;i++){
+    const x=ROAD_L+d.w/2+Math.random()*(ROAD_R-ROAD_L-d.w);
+    if(!gapOK([...ahead,[x-d.w/2,x+d.w/2]])) continue;   // would wall the road off
+    if(!boxFree(x,y,d.w,d.h)) continue;                  // would land on somebody
+    st.obs.push({k,x,y,w:d.w,h:d.h,rel:d.rel,drift:(Math.random()-.5)*20,passed:false,
+      col:PAINT[Math.random()*PAINT.length|0],suv:Math.random()<.35}); return;
+  }
+}
+// pickups ride in the same list as obstacles — one loop moves and collides everything
+function spawnPick(kind){
+  const w=28,h=34,y=-40;
+  for(let i=0;i<6;i++){
+    const x=ROAD_L+w/2+Math.random()*(ROAD_R-ROAD_L-w);
+    if(boxFree(x,y,w,h)){ st.obs.push({k:kind,good:kind,x,y,w,h,rel:0,drift:0,passed:true}); return; }
+  }
+}
+
+// ---------- sound: all synthesised, no files to ship ----------
+const A={ctx:null,eng:null,on:localStorage.potholeMute!=='1'};
+function ac(){ const a=A.ctx||(A.ctx=new (window.AudioContext||webkitAudioContext)());
+  if(a.state==='suspended') a.resume(); return a; }
+function beep(f,dur,type='square',vol=.18,slideTo){
+  if(!A.on) return;
+  try{ const a=ac(), o=a.createOscillator(), gn=a.createGain();
+    o.type=type; o.frequency.setValueAtTime(f,a.currentTime);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,a.currentTime+dur);
+    o.connect(gn); gn.connect(a.destination);
+    gn.gain.setValueAtTime(vol,a.currentTime); gn.gain.exponentialRampToValueAtTime(.001,a.currentTime+dur);
+    o.start(); o.stop(a.currentTime+dur);
+  }catch(e){}
+}
+function engine(on){
+  if(A.eng && (!on||!A.on)){ try{A.eng.o.stop();}catch(e){} A.eng=null; return; }
+  if(!on||!A.on||A.eng) return;
+  try{ const a=ac(), o=a.createOscillator(), f=a.createBiquadFilter(), gn=a.createGain();
+    o.type='sawtooth'; o.frequency.value=55; f.type='lowpass'; f.frequency.value=420; gn.gain.value=.05;
+    o.connect(f); f.connect(gn); gn.connect(a.destination); o.start(); A.eng={o};
+  }catch(e){}
+}
+function pause(on){
+  if(st.mode!=='play'&&st.mode!=='pause') return;
+  st.mode=on?'pause':'play'; st.gasBtn=false;      // never hold the gas through a pause
+  engine(st.mode==='play'); beep(on?300:520,.09);
+}
+function mute(){
+  A.on=!A.on; localStorage.potholeMute=A.on?'0':'1';
+  engine(A.on && st.mode==='play'); if(A.on) beep(660,.08);
+}
+function horn(){
+  if(st.mode!=='play'||st.hornCd>0) return;
+  st.hornCd=1.1;
+  beep(400,.3,'square',.15); beep(505,.3,'sawtooth',.09);
+  // shout at the goats and okada — they scatter. Potholes no dey hear horn.
+  for(const o of st.obs) if((o.k==='goat'||o.k==='okada') && o.y>-40 && o.y<H-130){
+    o.drift=(o.x<st.car.x?-1:1)*75; o.rel=Math.max(0,o.rel-30/REF);   // they lose ~30km/h scrambling
+    st.pops.push({x:o.x,y:o.y-26,t:.8,txt:o.k==='goat'?'MBEEEH!':'Ah ah!'});
+  }
+}
+
+function over(title,msg){
+  st.mode='over'; st.title=title; st.msg=msg; st.boost=0; engine(false); beep(220,.8,'sine',.16,60);
+  if(st.score>best){ best=st.score|0; localStorage.potholeBest=best; }
+}
+function hit(kind){
+  if(st.inv>0) return;
+  st.lives--; st.inv=1.4; st.shake=14; st.flash=.25; st.kmh=Math.max(35,st.kmh-20); st.spd=st.kmh*KMH;
+  if(kind==='pothole') beep(150,.45,'sine',.22,40);        // suspension thud
+  else beep(90,.4,'sawtooth',.2);                           // metal on metal
+  if(st.lives<=0) over('YOU DON WOUND',CRASHES[Math.random()*CRASHES.length|0]);
+}
+function collect(o){
+  if(o.good==='fuel'){
+    st.fuel=Math.min(1,st.fuel+.32); st.pops.push({x:o.x,y:o.y-24,t:.9,txt:'+FUEL'});
+    beep(620,.14,'triangle',.16,980);
+  } else {
+    st.boost=4; st.score+=50; st.pops.push({x:o.x,y:o.y-24,t:.9,txt:'TURBO! +50'});
+    beep(300,.28,'square',.16,900);
+  }
+}
+
+// Traffic. Everything descends at spd*(1-rel), so a bike (rel .45) closes on a danfo (.6) or
+// tanker (.7) in the same lane and used to drive straight through it. Vehicles now brake for the
+// one in front and get separated if they ever touch. Potholes are road surface, not traffic.
+const onRoad=(x,w)=>Math.min(ROAD_R-w/2,Math.max(ROAD_L+w/2,x));
+function traffic(){
+  for(const o of st.obs) o.relEff=o.rel;
+  const cars=st.obs.filter(o=>!o.good&&o.k!=='pothole').sort((a,b)=>a.y-b.y);
+  for(let i=1;i<cars.length;i++){
+    const b=cars[i];
+    for(let j=0;j<i;j++){
+      const a=cars[j];                       // a is ahead of b (smaller y)
+      const ox=(a.w+b.w)/2-Math.abs(a.x-b.x), oy=(a.h+b.h)/2-Math.abs(a.y-b.y);
+      if(ox<=0) continue;                    // different lanes, no interaction
+      if(oy>0){                              // already touching: shove them apart the shorter way
+        if(oy<=ox) b.y=a.y+(b.y>=a.y?1:-1)*(a.h+b.h)/2;      // park it bumper to bumper
+        else {                                                // side by side: slide along the road,
+          const dir=b.x>=a.x?1:-1;                            // but only whoever has kerb room left
+          const bx=onRoad(b.x+dir*ox,b.w), ax=onRoad(a.x-dir*ox,a.w);
+          if(Math.abs(bx-b.x)>ox-.5){ b.x=bx; b.drift=-b.drift; }
+          else if(Math.abs(ax-a.x)>ox-.5){ a.x=ax; a.drift=-a.drift; }
+          else b.y=a.y+(b.y>=a.y?1:-1)*(a.h+b.h)/2;           // both kerbed in: separate lengthwise
+        }
+      } else if(-oy<26 && b.relEff>a.relEff) b.relEff=a.relEff;   // tuck in behind and match speed
+    }
+  }
+}
+function update(dt){
+  if(st.mode!=='play'){ st.t+=dt; return; }
+  st.t+=dt; st.shake=Math.max(0,st.shake-dt*40); st.inv=Math.max(0,st.inv-dt); st.flash=Math.max(0,st.flash-dt);
+  st.hornCd=Math.max(0,st.hornCd-dt); st.boost=Math.max(0,st.boost-dt);
+
+  // throttle: cruise speed ramps with distance, gas and turbo raise the target
+  st.gas=st.gasBtn||!!(keys.ArrowUp||keys.w||keys.W);
+  const c=st.car;
+  const flow=Math.min(c.top*c.cruise,58+st.dist*.09);    // a 100cc okada lives near its top speed,
+                                                        // a V8 is barely trying at the same pace
+  let want=st.gas?c.top:flow;                            // foot down = whatever the ride can do
+  if(st.boost>0) want=Math.min(c.top*1.05,want*1.3);     // turbo leans on it a little past that
+  const rate=(want>st.kmh? c.accel*(st.boost>0?1.5:1) : c.accel*2.4);   // brakes beat the engine
+  st.kmh+=Math.sign(want-st.kmh)*Math.min(Math.abs(want-st.kmh),rate*dt);
+  st.spd=st.kmh*KMH; st.maxKmh=Math.max(st.maxKmh,st.kmh);
+  st.dist+=st.spd*dt/40; st.score+=st.spd*dt/40*(st.boost>0?2:1);
+  if(A.eng) A.eng.o.frequency.value=48+st.kmh*1.9;   // engine note rises with speed
+
+  // fuel burns faster the harder you push it
+  st.fuel-=dt*(.022+(st.gas?.028:0)+(st.boost>0?.012:0))*c.thirst;   // the V8 drinks, the okada sips
+  if(st.fuel<=0){ st.fuel=0; over('FUEL DON FINISH','Filling station far, and NEPA no dey help.'); return; }
+  if(st.fuel<.18&&!st.warned){ st.warned=true; beep(880,.16,'square',.13);
+    st.pops.push({x:W/2,y:H-190,t:1.5,txt:'FUEL DEY FINISH!'}); }
+  if(st.fuel>.28) st.warned=false;
+  st.nextFuel-=dt; if(st.nextFuel<=0){ spawnPick('fuel'); st.nextFuel=4.5+Math.random()*3; }
+  st.nextBoost-=dt; if(st.nextBoost<=0){ spawnPick('boost'); st.nextBoost=11+Math.random()*7; }
+
+  // steering: keys nudge the target, touch sets it
+  if(keys.ArrowLeft||keys.a) st.car.tx-=340*dt;
+  if(keys.ArrowRight||keys.d) st.car.tx+=340*dt;
+  st.car.tx=Math.min(ROAD_R-st.car.w/2-2,Math.max(ROAD_L+st.car.w/2+2,st.car.tx));
+  st.car.x+=(st.car.tx-st.car.x)*Math.min(1,dt*st.car.grip);
+
+  st.next-=dt;
+  if(st.next<=0){ spawn(); st.next=Math.max(.34,1.15-st.spd/700); }
+
+  const cy=H-96, cw=st.car.w, ch=st.car.h;
+  traffic();
+  for(const o of st.obs){
+    o.y+=st.spd*(1-o.relEff)*dt;
+    if(o.k==='goat'||o.k==='okada'){ o.x+=o.drift*dt; if(o.x<ROAD_L+o.w/2||o.x>ROAD_R-o.w/2) o.drift*=-1; }
+    const dx=Math.abs(o.x-st.car.x)-(o.w+cw)/2*0.86, dy=Math.abs(o.y-cy)-(o.h+ch)/2*0.86;
+    if(dx<0&&dy<0){ if(o.good){ collect(o); o.y=H+999; } else hit(o.k); }
+    else if(!o.passed&&o.y-o.h/2>cy+ch/2){
+      o.passed=true;
+      if(dx<14){ st.score+=25; st.pops.push({x:o.x,y:o.y-30,t:.9,txt:'+25 SHAKARA'}); beep(880,.08); }
+    }
+  }
+  traffic();                       // again after everyone moved: drift and braking can still touch
+  st.obs=st.obs.filter(o=>o.y<H+180);
+  for(const p of st.pops) { p.t-=dt; p.y-=30*dt; }
+  st.pops=st.pops.filter(p=>p.t>0);
+  for(const t of st.trees){ t.y+=st.spd*dt; if(t.y>H+40){ t.y-=H+80; t.x=Math.random()<.5?18:W-18; t.k=Math.random(); } }
+}
+
+// ---------- drawing ----------
+function road(){
+  g.fillStyle='#20361f'; g.fillRect(0,0,W,H);                     // bush
+  g.fillStyle='#3a3a38'; g.fillRect(ROAD_L,0,ROAD_R-ROAD_L,H);    // tarmac
+  g.fillStyle='#171716'; g.fillRect(ROAD_L-10,0,10,H); g.fillRect(ROAD_R,0,10,H);  // gutter
+  g.fillStyle='#e8e2c8';
+  const off=(st.dist*4)%56;
+  for(const lx of [ROAD_L+(ROAD_R-ROAD_L)/3, ROAD_L+2*(ROAD_R-ROAD_L)/3])
+    for(let y=-56+off;y<H;y+=56) g.fillRect(lx-2,y,4,30);
+  for(const t of st.trees){                                        // palms / poles
+    if(t.k<.5){ g.fillStyle='#5a4632'; g.fillRect(t.x-2,t.y,4,26);
+      g.fillStyle='#2f6b33'; g.beginPath(); g.arc(t.x,t.y,13,0,7); g.fill(); }
+    else { g.fillStyle='#6b6b66'; g.fillRect(t.x-2,t.y-10,4,36); }
+  }
+}
+const mix=(hex,f,to=0)=>{ const n=parseInt(hex.slice(1),16), m=v=>Math.round(v+(to-v)*f);
+  return `rgb(${m(n>>16&255)},${m(n>>8&255)},${m(n&255)})`; };
+const GLASS=(y,h)=>{ const gr=g.createLinearGradient(0,y-h/2,0,y+h/2);
+  gr.addColorStop(0,'#4a6b88'); gr.addColorStop(.55,'#1e3346'); gr.addColorStop(1,'#3c5a75'); return gr; };
+function wheels(x,y,w,h,n=2){
+  g.fillStyle='#121212';
+  const ww=Math.max(5,w*.12), wh=Math.max(9,h*.15), rows=n===2?[y-h*.29,y+h*.29]:[y-h*.34,y+h*.12,y+h*.32];
+  for(const wy of rows) for(const sx of [-1,1]){ g.beginPath(); g.roundRect(x+sx*w/2-ww/2,wy-wh/2,ww,wh,2); g.fill(); }
+}
+// top-down car: tapered body with a shading gradient, glass, mirrors, lights
+function vehicle(x,y,w,h,col,o={}){
+  const hw=w/2, nh=w*(o.taper??.86)/2, dark=mix(col,.52), lite=mix(col,.3,255), cw=w*(o.cabin??.74);
+  g.fillStyle='rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(x,y+5,hw*1.05,h*.47,0,0,7); g.fill();
+  wheels(x,y,w,h);
+  const gr=g.createLinearGradient(x-hw,0,x+hw,0);
+  gr.addColorStop(0,dark); gr.addColorStop(.2,col); gr.addColorStop(.44,lite); gr.addColorStop(.72,col); gr.addColorStop(1,dark);
+  g.beginPath();
+  g.moveTo(x-nh+3,y-h/2); g.lineTo(x+nh-3,y-h/2);
+  g.quadraticCurveTo(x+nh,y-h/2,x+nh+1,y-h/2+3);
+  g.quadraticCurveTo(x+hw,y-h*.26,x+hw,y-h*.08);
+  g.lineTo(x+hw,y+h*.26);
+  g.quadraticCurveTo(x+hw,y+h/2,x+nh-2,y+h/2);
+  g.lineTo(x-nh+2,y+h/2);
+  g.quadraticCurveTo(x-hw,y+h/2,x-hw,y+h*.26);
+  g.lineTo(x-hw,y-h*.08);
+  g.quadraticCurveTo(x-hw,y-h*.26,x-nh-1,y-h/2+3);
+  g.quadraticCurveTo(x-nh,y-h/2,x-nh+3,y-h/2);
+  g.closePath(); g.fillStyle=gr; g.fill();
+  g.fillStyle=dark; g.fillRect(x-hw-2,y-h*.16,4,5); g.fillRect(x+hw-2,y-h*.16,4,5);   // mirrors
+  g.fillStyle=GLASS(y-h*.15,h*.14);                                                    // windshield
+  g.beginPath(); g.roundRect(x-cw/2,y-h*.22,cw,h*.14,3); g.fill();
+  g.fillStyle=mix(col,.16); g.beginPath(); g.roundRect(x-cw/2-1,y-h*.08,cw+2,h*.24,4); g.fill();  // roof
+  g.fillStyle=GLASS(y+h*.22,h*.12);                                                    // rear screen
+  g.beginPath(); g.roundRect(x-cw/2+1,y+h*.16,cw-2,h*.12,3); g.fill();
+  if(o.rack){ g.fillStyle=mix(col,.6); g.fillRect(x-cw/2+3,y-h*.04,cw-6,2.5); g.fillRect(x-cw/2+3,y+h*.08,cw-6,2.5); }
+  g.fillStyle='#ffeaa7';                                                               // headlights
+  g.beginPath(); g.roundRect(x-nh+2,y-h/2,w*.17,4,2); g.fill();
+  g.beginPath(); g.roundRect(x+nh-2-w*.17,y-h/2,w*.17,4,2); g.fill();
+  g.fillStyle='#cf3b2c';                                                               // tail lights
+  g.beginPath(); g.roundRect(x-nh+1,y+h/2-5,w*.19,4,2); g.fill();
+  g.beginPath(); g.roundRect(x+nh-1-w*.19,y+h/2-5,w*.19,4,2); g.fill();
+}
+// danfo / minibus: flat nose, greenhouse down both sides, roof rack full of luggage
+function busArt(x,y,w,h,col){
+  const hw=w/2, dark=mix(col,.5), lite=mix(col,.28,255);
+  g.fillStyle='rgba(0,0,0,.32)'; g.beginPath(); g.ellipse(x,y+6,hw*1.05,h*.47,0,0,7); g.fill();
+  wheels(x,y,w,h);
+  const gr=g.createLinearGradient(x-hw,0,x+hw,0);
+  gr.addColorStop(0,dark); gr.addColorStop(.22,col); gr.addColorStop(.46,lite); gr.addColorStop(.74,col); gr.addColorStop(1,dark);
+  g.fillStyle=gr; g.beginPath(); g.roundRect(x-hw,y-h/2,w,h,7); g.fill();
+  g.fillStyle=GLASS(y-h*.36,h*.12); g.beginPath(); g.roundRect(x-hw+5,y-h*.42,w-10,h*.12,3); g.fill();
+  g.fillStyle=mix(col,.14); g.beginPath(); g.roundRect(x-hw+3,y-h*.28,w-6,h*.6,5); g.fill();   // roof
+  g.fillStyle='#1b1b1b';                                                                        // side windows
+  for(let i=0;i<3;i++){ g.fillRect(x-hw+5,y-h*.24+i*h*.19,5,h*.13); g.fillRect(x+hw-10,y-h*.24+i*h*.19,5,h*.13); }
+  g.fillStyle=mix(col,.55);                                                                     // roof rack
+  g.fillRect(x-hw+8,y-h*.16,w-16,3); g.fillRect(x-hw+8,y+h*.08,w-16,3);
+  g.fillStyle='#8a6a3a'; g.fillRect(x-14,y-h*.13,28,h*.2);                                      // load
+  g.fillStyle='#ffeaa7'; g.fillRect(x-hw+4,y-h/2+1,10,4); g.fillRect(x+hw-14,y-h/2+1,10,4);
+  g.fillStyle='#cf3b2c'; g.fillRect(x-hw+4,y+h/2-5,11,4); g.fillRect(x+hw-15,y+h/2-5,11,4);
+}
+// tanker: cab up front, ribbed cylinder behind it
+function tankerArt(x,y,w,h){
+  const hw=w/2, cabH=h*.26;
+  g.fillStyle='rgba(0,0,0,.34)'; g.beginPath(); g.ellipse(x,y+7,hw*1.05,h*.47,0,0,7); g.fill();
+  wheels(x,y,w,h,3);
+  g.fillStyle='#2c3238'; g.beginPath(); g.roundRect(x-hw,y-h/2,w,cabH,6); g.fill();             // cab
+  g.fillStyle=GLASS(y-h/2+cabH*.4,cabH*.4); g.beginPath(); g.roundRect(x-hw+6,y-h/2+4,w-12,cabH*.4,3); g.fill();
+  const gr=g.createLinearGradient(x-hw,0,x+hw,0);
+  gr.addColorStop(0,'#7c848c'); gr.addColorStop(.2,'#aeb6bd'); gr.addColorStop(.45,'#e6ebef');
+  gr.addColorStop(.72,'#aeb6bd'); gr.addColorStop(1,'#7c848c');
+  g.fillStyle=gr; g.beginPath(); g.roundRect(x-hw+2,y-h/2+cabH+3,w-4,h-cabH-6,10); g.fill();    // tank
+  g.strokeStyle='rgba(60,70,80,.55)'; g.lineWidth=2;
+  for(let i=1;i<4;i++){ const yy=y-h/2+cabH+3+(h-cabH-6)*i/4;
+    g.beginPath(); g.moveTo(x-hw+3,yy); g.lineTo(x+hw-3,yy); g.stroke(); }
+  g.fillStyle='#c9302c'; g.fillRect(x-13,y+h*.05,26,9); text('FLAM',x,y+h*.05+7,7,'#fff');
+  g.fillStyle='#ffeaa7'; g.fillRect(x-hw+4,y-h/2+1,11,4); g.fillRect(x+hw-15,y-h/2+1,11,4);
+  g.fillStyle='#cf3b2c'; g.fillRect(x-hw+5,y+h/2-5,12,4); g.fillRect(x+hw-17,y+h/2-5,12,4);
+}
+function bikeArt(x,y,w,h,col,helmet='#f0b429'){
+  g.fillStyle='rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(x,y+h/2-4,w/2,5,0,0,7); g.fill();
+  g.fillStyle='#141414'; g.beginPath(); g.roundRect(x-3.5,y-h/2,7,h,3); g.fill();      // frame + tyres
+  g.fillStyle='#3a3a3a'; g.fillRect(x-8,y-h/2+6,16,3);                                  // handlebar
+  g.fillStyle=col; g.beginPath(); g.roundRect(x-9,y-8,18,22,5); g.fill();               // rider
+  g.fillStyle=mix(col,.4); g.fillRect(x-9,y-2,18,4);
+  g.fillStyle=helmet; g.beginPath(); g.arc(x,y-16,8,0,7); g.fill();
+  g.fillStyle='rgba(255,255,255,.35)'; g.beginPath(); g.arc(x-2.5,y-18,2.5,0,7); g.fill();
+}
+function drawCar(x,y,c){
+  if(c.bike) return bikeArt(x,y,c.w,c.h,c.col,'#8fe0ff');   // your helmet is blue, theirs is yellow
+  if(c.van)  return busArt(x,y,c.w,c.h,c.col);
+  vehicle(x,y,c.w,c.h,c.col,{taper:c.suv?.94:.86,cabin:c.suv?.8:.74,rack:c.suv});
+}
+function drawObs(o){
+  const {x,y,w,h}=o;
+  if(o.good){
+    const pulse=1+Math.sin(st.t*8)*.06;
+    g.save(); g.translate(x,y); g.scale(pulse,pulse);
+    if(o.good==='fuel'){
+      g.fillStyle='#d94f3d'; g.beginPath(); g.roundRect(-w/2,-h/2,w,h,4); g.fill();
+      g.fillStyle='#f7d774'; g.fillRect(-w/2+4,-h/2+7,w-8,5);
+      g.fillStyle='#7a2b22'; g.fillRect(-5,-h/2-4,10,5);            // cap
+      text('L',0,7,13,'#f7d774');
+    } else {
+      g.fillStyle='#2f9ee0'; g.beginPath(); g.roundRect(-w/2,-h/2,w,h,7); g.fill();
+      g.fillStyle='#eaf7ff'; g.beginPath();
+      g.moveTo(2,-11); g.lineTo(-7,2); g.lineTo(-1,2); g.lineTo(-3,12); g.lineTo(7,-2); g.lineTo(1,-2);
+      g.closePath(); g.fill();
+    }
+    g.restore(); return;
+  }
+  if(o.k==='pothole'){
+    g.fillStyle='#5a4a33'; g.beginPath(); g.ellipse(x,y,w/2,h/2,0,0,7); g.fill();
+    g.fillStyle='#14100c'; g.beginPath(); g.ellipse(x,y,w/2-5,h/2-5,0,0,7); g.fill();
+    g.fillStyle='rgba(80,120,140,.5)'; g.beginPath(); g.ellipse(x-4,y-2,w/4,h/5,0,0,7); g.fill();
+  } else if(o.k==='goat'){
+    g.fillStyle='#e6e1d6'; g.beginPath(); g.roundRect(x-w/2,y-h/2+6,w,h-10,8); g.fill();
+    g.fillStyle='#cfc7b6'; g.beginPath(); g.arc(x,y-h/2+6,9,0,7); g.fill();
+    g.fillStyle='#3a3226'; g.fillRect(x-7,y-h/2-2,3,7); g.fillRect(x+4,y-h/2-2,3,7);
+  } else if(o.k==='okada'){
+    bikeArt(x,y,w,h,'#c1442e');
+  } else if(o.k==='car'){
+    vehicle(x,y,w,h,o.col||'#c8ccd2',{taper:o.suv?.94:.86,cabin:o.suv?.8:.74,rack:o.suv});
+  } else if(o.k==='danfo'){
+    busArt(x,y,w,h,'#f2c53d');
+  } else {
+    tankerArt(x,y,w,h);
+  }
+}
+function text(s,x,y,size,col='#fff',align='center',weight=800){
+  g.fillStyle=col; g.textAlign=align; g.font=`${weight} ${size}px system-ui,sans-serif`; g.fillText(s,x,y);
+}
+const HORN={x:W-46,y:H-42,r:30}, GAS={x:52,y:H-42,r:32}, MUTE={x:124,y:22,r:14}, PAUSE={x:W-24,y:22,r:14};
+const slotX=i=>W/2+(i-(CARS.length-1)/2)*76;
+function circle(x,y,r,fill,stroke){
+  g.beginPath(); g.arc(x,y,r,0,7); g.fillStyle=fill; g.fill();
+  if(stroke){ g.lineWidth=2; g.strokeStyle=stroke; g.stroke(); }
+}
+function buttons(){
+  if(st.mode==='play'){
+    const ready=st.hornCd<=0;
+    circle(HORN.x,HORN.y,HORN.r,ready?'rgba(242,197,61,.22)':'rgba(255,255,255,.06)',ready?'#f2c53d':'#5a5a5a');
+    text('HORN',HORN.x,HORN.y+5,14,ready?'#f2c53d':'#6f6f6f');
+    circle(GAS.x,GAS.y,GAS.r,st.gas?'rgba(127,214,127,.34)':'rgba(127,214,127,.14)','#7fd67f');
+    text('GAS',GAS.x,GAS.y+6,16,'#bff0bf');
+  }
+  circle(MUTE.x,MUTE.y,MUTE.r,'rgba(0,0,0,.45)',A.on?'#7fd67f':'#6a6a6a');
+  text(A.on?'SFX':'OFF',MUTE.x,MUTE.y+3,9,A.on?'#7fd67f':'#8a8a8a');
+  if(st.mode==='play'||st.mode==='pause'){
+    circle(PAUSE.x,PAUSE.y,PAUSE.r,'rgba(0,0,0,.45)','#dcdcdc');
+    if(st.mode==='play'){ g.fillStyle='#dcdcdc'; g.fillRect(PAUSE.x-4,PAUSE.y-5,3,10); g.fillRect(PAUSE.x+1,PAUSE.y-5,3,10); }
+    else { g.fillStyle='#7fd67f'; g.beginPath();
+      g.moveTo(PAUSE.x-3,PAUSE.y-5); g.lineTo(PAUSE.x+5,PAUSE.y); g.lineTo(PAUSE.x-3,PAUSE.y+5); g.closePath(); g.fill(); }
+  }
+}
+function picker(){
+  text('PICK YOUR RIDE',W/2,392,13,'#a9a9a9',undefined,700);
+  CARS.forEach((c,i)=>{
+    const x=slotX(i), sel=i===pick;
+    g.beginPath(); g.roundRect(x-34,410,68,96,10);
+    g.fillStyle=sel?'rgba(242,197,61,.14)':'rgba(255,255,255,.05)'; g.fill();
+    if(sel){ g.lineWidth=2; g.strokeStyle='#f2c53d'; g.stroke(); }
+    drawCar(x,458,c);
+  });
+  const c=CARS[pick];
+  text(c.name,W/2,530,17,'#fff');
+  text(c.top+' km/h  •  0-100 in '+c.s100+'s  •  '+
+       (c.thirst<.8?'sips fuel':c.thirst>1.2?'drinks fuel':'steady on fuel'),W/2,549,11,'#f2c53d',undefined,700);
+  text(c.blurb,W/2,566,11,'#a9a9a9',undefined,500);
+}
+function hud(){
+  g.fillStyle='rgba(0,0,0,.35)'; g.fillRect(0,0,W,44);
+  text(String(st.score|0).padStart(6,'0'),12,30,22,'#fff','left');
+  text('BEST '+best,W-44,20,12,'#c9c9c9','right',600);
+  text((st.kmh|0)+' km/h',W-44,36,12,'#7fd67f','right',600);
+  for(let i=0;i<3;i++){ g.fillStyle=i<st.lives?'#e8e8e8':'#4a4a4a';
+    g.beginPath(); g.arc(W/2-24+i*24,22,8,0,7); g.fill();
+    g.fillStyle='#2b2b2b'; g.beginPath(); g.arc(W/2-24+i*24,22,3.5,0,7); g.fill(); }
+  // fuel gauge
+  const low=st.fuel<.18, blink=low&&(st.t*6|0)%2;
+  g.fillStyle='rgba(0,0,0,.45)'; g.beginPath(); g.roundRect(12,48,W-24,9,5); g.fill();
+  g.fillStyle=blink?'#2b1a18':st.fuel>.35?'#7fd67f':low?'#e05a4a':'#f2c53d';
+  g.beginPath(); g.roundRect(12,48,Math.max(2,(W-24)*st.fuel),9,5); g.fill();
+  text('FUEL',18,56,8,'#0c0c0c','left',800);
+  if(st.boost>0) text('TURBO '+st.boost.toFixed(1)+'s',W-12,72,11,'#7fd0ff','right',700);
+}
+function draw(){
+  g.save();
+  if(st.shake>0) g.translate((Math.random()-.5)*st.shake,(Math.random()-.5)*st.shake);
+  road();
+  if(st.boost>0){                                   // speed streaks while the turbo burns
+    g.fillStyle='rgba(160,220,255,.45)';
+    for(let i=0;i<10;i++){ const y=((st.t*900+i*97)%H); g.fillRect(ROAD_L+8+((i*53)%(ROAD_R-ROAD_L-16)),y,2,26); }
+  }
+  for(const o of st.obs) if(o.good||o.k==='pothole') drawObs(o);   // road surface first
+  for(const o of st.obs) if(!o.good&&o.k!=='pothole') drawObs(o);  // then the traffic on top of it
+  if(st.mode!=='menu' && !(st.inv>0 && (st.t*12|0)%2)) drawCar(st.car.x,H-96,st.car);
+  for(const p of st.pops){ text(p.txt,p.x,p.y,14,`rgba(255,225,120,${Math.min(1,p.t)})`); }
+  g.restore();
+  if(st.flash>0){ g.fillStyle=`rgba(255,60,40,${st.flash})`; g.fillRect(0,0,W,H); }
+  hud();
+  if(st.mode!=='play'){
+    g.fillStyle='rgba(0,0,0,.72)'; g.fillRect(0,0,W,H);
+    if(st.mode==='pause'){
+      text('PAUSED',W/2,290,34,'#f2c53d');
+      text(String(st.score|0)+' points  •  '+((st.dist/50)|0)+' km',W/2,326,14,'#dcdcdc',undefined,600);
+      text('TAP TO CONTINUE',W/2,400+Math.sin(st.t*4)*3,20,'#7fd67f');
+      text('or press P',W/2,430,11,'#7a7a7a',undefined,500);
+    } else if(st.mode==='menu'){
+      text('DODGE DAT',W/2,150,36,'#f2c53d'); text('POTHOLE',W/2,190,36,'#f2c53d');
+      text('Naija Road Rally',W/2,222,15,'#dcdcdc',undefined,600);
+      text('Swipe to steer  •  hold GAS to fly',W/2,262,13,'#a9a9a9',undefined,500);
+      text('HORN scatters goats and okada',W/2,284,13,'#a9a9a9',undefined,500);
+      text('Grab jerrycans — if fuel finish, na wa',W/2,306,13,'#a9a9a9',undefined,500);
+      text('Blue turbo: more speed, double points',W/2,328,13,'#a9a9a9',undefined,500);
+      text('keys: ← →  ↑ gas  space horn  P pause',W/2,352,11,'#7a7a7a',undefined,500);
+      picker();
+      text('TAP THE ROAD TO START',W/2,594+Math.sin(st.t*4)*3,17,'#7fd67f');
+    } else {
+      text(st.title||'YOU DON WOUND',W/2,230,28,'#e05a4a');
+      text(st.msg,W/2,262,13,'#dcdcdc',undefined,500);
+      text(String(st.score|0),W/2,340,46,'#fff');
+      text(st.score>=best?'NEW BEST!':'BEST '+best,W/2,368,14,'#f2c53d');
+      text(((st.dist/50)|0)+' km covered in the '+CARS[pick].name,W/2,398,13,'#a9a9a9',undefined,500);
+      text('topped out at '+(st.maxKmh|0)+' km/h of '+CARS[pick].top,W/2,418,13,'#7fd67f',undefined,600);
+      text('TAP TO GO AGAIN',W/2,470+Math.sin(st.t*4)*3,20,'#7fd67f');
+      text('tap SFX or press M for sound',W/2,506,11,'#7a7a7a',undefined,500);
+    }
+  }
+  buttons();
+}
+
+let last=performance.now();
+(function loop(now){ const dt=Math.min(.05,(now-last)/1000); last=now; update(dt); draw(); requestAnimationFrame(loop); })(last);
+
+// ---------- input ----------
+function toLogical(e){ const r=cv.getBoundingClientRect();
+  return {x:(e.clientX-r.left)/r.width*W, y:(e.clientY-r.top)/r.height*H}; }
+const inBtn=(p,b)=>Math.hypot(p.x-b.x,p.y-b.y)<=b.r+8;
+function choose(i){ pick=(i+CARS.length)%CARS.length; localStorage.potholeCar=pick;
+  // rebuild from CARS, don't merge: the Okada's bike flag would stick to the next car
+  st.car={x:st.car.x,tx:st.car.tx,...CARS[pick]}; beep(700,.06,'triangle',.12); }
+function start(){ if(st.mode==='play') return;
+  const b=best; reset(); best=b; st.mode='play'; beep(520,.08); engine(true); }
+
+let uiPtr=null, gasPtr=null;
+cv.addEventListener('pointerdown',e=>{
+  try{ cv.setPointerCapture(e.pointerId); }catch(err){}   // never let capture kill the input handler
+  const p=toLogical(e);
+  if(inBtn(p,MUTE)){ uiPtr=e.pointerId; mute(); return; }
+  if(inBtn(p,PAUSE)&&(st.mode==='play'||st.mode==='pause')){ uiPtr=e.pointerId; pause(st.mode==='play'); return; }
+  if(st.mode==='pause'){ uiPtr=e.pointerId; pause(false); return; }
+  if(st.mode==='play'){
+    if(inBtn(p,HORN)){ uiPtr=e.pointerId; horn(); return; }
+    if(inBtn(p,GAS)){ uiPtr=gasPtr=e.pointerId; st.gasBtn=true; return; }
+    st.car.tx=p.x; return;
+  }
+  // menu: tapping a ride picks it, tapping the road starts
+  if(st.mode==='menu' && p.y>400 && p.y<515){
+    const i=CARS.findIndex((c,j)=>Math.abs(p.x-slotX(j))<34);
+    if(i>=0){ uiPtr=e.pointerId; choose(i); return; }
+  }
+  start();
+});
+cv.addEventListener('pointermove',e=>{
+  if(e.pointerId===uiPtr) return;
+  if(e.buttons||e.pointerType==='touch') st.car.tx=toLogical(e).x;
+});
+for(const ev of ['pointerup','pointercancel'])
+  addEventListener(ev,e=>{ if(e.pointerId===uiPtr) uiPtr=null;
+    if(e.pointerId===gasPtr){ gasPtr=null; st.gasBtn=false; } });
+addEventListener('blur',()=>{ st.gasBtn=false; gasPtr=null; if(st.mode==='play') pause(true); });
+document.addEventListener('visibilitychange',()=>{ if(document.hidden&&st.mode==='play') pause(true); });
+addEventListener('keydown',e=>{ keys[e.key]=1;
+  if(e.key==='m'||e.key==='M') mute();
+  else if(e.key==='p'||e.key==='P'||e.key==='Escape') pause(st.mode==='play');
+  else if(e.key===' '||e.code==='Space'||e.key==='Enter'){ st.mode==='play'?horn():start(); }
+  else if(st.mode==='menu'&&e.key==='ArrowLeft') choose(pick-1);
+  else if(st.mode==='menu'&&e.key==='ArrowRight') choose(pick+1);
+  if(['ArrowLeft','ArrowRight','ArrowUp',' '].includes(e.key)) e.preventDefault(); });
+addEventListener('keyup',e=>keys[e.key]=0);
+
+// ponytail: one self-check for the only tricky logic — spawns must always leave a drivable gap
+if(location.hash==='#test'){
+  console.assert(gapOK([[ROAD_L,ROAD_L+100]]),'gap on the right');
+  console.assert(gapOK([[ROAD_L+120,ROAD_L+180]]),'gaps on both sides');
+  console.assert(!gapOK([[ROAD_L,ROAD_R]]),'full wall must fail');
+  console.assert(!gapOK([[ROAD_L,180],[200,ROAD_R]]),'20px slit must fail');
+  console.assert(!gapOK([[ROAD_L,150],[150+MINGAP-1,ROAD_R]]),'gap just under min must fail');
+  // horn: livestock swerves away from the car, tarmac does not
+  st.mode='play'; st.car.x=200; st.hornCd=0;
+  st.obs=[{k:'goat',x:150,y:100,w:46,h:34,rel:.25,drift:0},
+          {k:'pothole',x:250,y:100,w:64,h:28,rel:0,drift:0}];
+  horn();
+  console.assert(st.obs[0].drift<0,'goat left of car must swerve left');
+  console.assert(st.obs[1].drift===0,'pothole cannot hear horn');
+  console.assert(st.hornCd>0,'horn goes on cooldown');
+  st.obs[0].drift=0; horn();          // still cooling down from the honk above
+  console.assert(st.obs[0].drift===0,'horn on cooldown does nothing');
+  // switching rides must not carry the previous one's shape over
+  const bike=CARS.findIndex(c=>c.bike), saved=pick;
+  choose(bike); console.assert(st.car.bike&&st.car.w===CARS[bike].w,'okada selected');
+  choose(bike+1); console.assert(!st.car.bike,'next ride is not a bike');
+  choose(saved); reset();             // leave the player's saved ride alone
+  // fuel burns faster on the gas, and empty ends the run
+  st.mode='play'; st.obs=[]; st.gasBtn=false; const f0=st.fuel;
+  for(let i=0;i<60;i++) update(1/60); const cruiseBurn=f0-st.fuel;
+  st.fuel=f0; st.gasBtn=true;
+  for(let i=0;i<60;i++) update(1/60); const gasBurn=f0-st.fuel;
+  console.assert(gasBurn>cruiseBurn*1.5,'gas must drink more fuel than cruising');
+  console.assert(st.spd>190,'gas must actually speed you up');
+  st.fuel=.02; for(let i=0;i<60;i++) update(1/60);
+  console.assert(st.mode==='over'&&st.title==='FUEL DON FINISH','empty tank ends the run');
+  // pickups top you up / turbo you, and never cost a life
+  st.mode='play'; st.lives=3; st.fuel=.4; st.boost=0; st.gasBtn=false; st.obs=[];
+  collect({good:'fuel',x:180,y:300}); console.assert(st.fuel>.6&&st.lives===3,'jerrycan refuels, costs nothing');
+  st.fuel=1; collect({good:'fuel',x:180,y:300}); console.assert(st.fuel===1,'tank never overfills');
+  collect({good:'boost',x:180,y:300}); console.assert(st.boost>0,'turbo pickup starts the boost');
+  // traffic: a bike must never end up inside the bus in front of it
+  st.mode='play'; st.spd=300; st.fuel=1; st.lives=3; st.car.x=st.car.tx=60;
+  const bus={k:'danfo',x:220,y:260,w:70,h:100,rel:.6,drift:0,passed:false},
+        moto={k:'okada',x:222,y:100,w:32,h:54,rel:.45,drift:0,passed:false};  // moto ahead, bus closing
+  st.obs=[bus,moto];
+  let worst=0;
+  for(let i=0;i<60*8;i++){ update(1/60);
+    if(!st.obs.includes(bus)||!st.obs.includes(moto)) break;   // one drove off screen, stop comparing
+    worst=Math.max(worst,Math.min((bus.w+moto.w)/2-Math.abs(bus.x-moto.x),(bus.h+moto.h)/2-Math.abs(bus.y-moto.y)));
+  }
+  console.assert(worst<=2,'moto overlapped the bus by '+worst.toFixed(1)+'px');
+  // the specs have to actually mean something
+  console.assert(KINDS.car.rel>KINDS.tanker.rel,'a loaded tanker must fall back faster than a car');
+  console.assert(KINDS.danfo.rel>KINDS.tanker.rel&&KINDS.tanker.rel>KINDS.okada.rel,'traffic order follows real speeds');
+  const runRide=(i)=>{                     // empty road, foot flat, from a standstill
+    const b=best, sp=spawn, sk=spawnPick; window.spawn=()=>{}; window.spawnPick=()=>{};
+    choose(i); reset(); best=b; st.mode='play'; st.obs=[]; st.gasBtn=true; st.kmh=0; st.spd=0;
+    let t100=null, f=0;
+    for(;f<60*120;f++){ st.fuel=1; st.lives=3; update(1/60);
+      if(t100===null&&st.kmh>=100) t100=f/60;
+      if(st.kmh>=CARS[i].top-.4) break; }
+    window.spawn=sp; window.spawnPick=sk;
+    return {top:+st.kmh.toFixed(1), s100:t100===null?null:+t100.toFixed(1)};
+  };
+  const wagon=runRide(3), hiace=runRide(2), moto2=runRide(1), rolla=runRide(0);
+  console.assert(Math.abs(wagon.top-210)<1,'G-Wagon must reach its real 210, got '+wagon.top);
+  console.assert(Math.abs(moto2.top-95)<1,'okada tops out at 95, got '+moto2.top);
+  console.assert(Math.abs(rolla.s100-10)<.7&&Math.abs(wagon.s100-6)<.7&&Math.abs(hiace.s100-17)<.7,
+    '0-100 must match the spec sheet: '+JSON.stringify({rolla:rolla.s100,wagon:wagon.s100,hiace:hiace.s100}));
+  console.assert(moto2.s100===null,'a 100cc okada never sees 100km/h');
+  console.assert(moto2.top<rolla.top&&rolla.top<wagon.top,'top speeds must order the rides');
+  reset();
+  // horn shoving a bike into a tanker that is already hard against the kerb
+  st.mode='play'; st.spd=300; st.fuel=1; st.lives=3; st.car.x=st.car.tx=290; st.hornCd=0;
+  const tank={k:'tanker',x:ROAD_L+44,y:300,w:88,h:150,rel:.7,drift:0,passed:false},
+        bike2={k:'okada',x:ROAD_L+110,y:300,w:32,h:54,rel:.45,drift:0,passed:false};
+  st.obs=[tank,bike2]; horn();
+  let stuck=0;
+  for(let i=0;i<60*3;i++){ update(1/60);
+    if(!st.obs.includes(tank)||!st.obs.includes(bike2)) break;
+    const ov=Math.min((tank.w+bike2.w)/2-Math.abs(tank.x-bike2.x),(tank.h+bike2.h)/2-Math.abs(tank.y-bike2.y));
+    if(ov>2) stuck++;
+  }
+  console.assert(stuck<=2,'horn-scared bike stayed inside the kerbed tanker for '+stuck+' frames');
+  // a pothole is road surface — traffic must not brake for it
+  st.obs=[{k:'tanker',x:200,y:100,w:88,h:150,rel:.7,drift:0,passed:false},
+          {k:'pothole',x:200,y:300,w:64,h:28,rel:0,drift:0,passed:false}];
+  traffic();
+  console.assert(st.obs[1].relEff===0,'pothole keeps rolling under the traffic');
+  // pause freezes the world and gives it back untouched
+  st.mode='play'; st.fuel=1; st.lives=3; st.obs=[]; st.gasBtn=true;
+  for(let i=0;i<30;i++) update(1/60);
+  const frozen={score:st.score,dist:st.dist,fuel:st.fuel};
+  pause(true);
+  for(let i=0;i<120;i++) update(1/60);
+  console.assert(st.mode==='pause','pause holds');
+  console.assert(st.score===frozen.score&&st.dist===frozen.dist&&st.fuel===frozen.fuel,'paused world must not move');
+  console.assert(!st.gasBtn,'pause lets go of the gas');
+  pause(false); update(1/60);
+  console.assert(st.mode==='play'&&st.score>frozen.score,'resume puts it back on the road');
+  reset();
+  document.title='tests done — check console';
+}
+</script>
