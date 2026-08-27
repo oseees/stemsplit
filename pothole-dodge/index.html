@@ -3,7 +3,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>Dodge Dat Pothole — Naija Road Rally</title>
 <style>
-  html,body{margin:0;height:100%;background:#0b0d0c;overflow:hidden;
+  html,body{margin:0;height:100%;background:#0b0d0c;overflow:hidden;touch-action:none;overscroll-behavior:none;
     font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;
     -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   body{display:flex;align-items:center;justify-content:center}
@@ -383,7 +383,9 @@ function drawObs(o){
 function text(s,x,y,size,col='#fff',align='center',weight=800){
   g.fillStyle=col; g.textAlign=align; g.font=`${weight} ${size}px system-ui,sans-serif`; g.fillText(s,x,y);
 }
-const HORN={x:W-46,y:H-42,r:30}, GAS={x:52,y:H-42,r:32}, MUTE={x:124,y:22,r:14}, PAUSE={x:W-24,y:22,r:14};
+// both thumb buttons live in the left column so the whole rest of the screen is free to steer —
+// HORN used to sit bottom-right, which is exactly where a right thumb lands to drag
+const GAS={x:52,y:H-42,r:32}, HORN={x:52,y:H-116,r:26}, MUTE={x:124,y:22,r:14}, PAUSE={x:W-24,y:22,r:14};
 const slotX=i=>W/2+(i-(CARS.length-1)/2)*76;
 function circle(x,y,r,fill,stroke){
   g.beginPath(); g.arc(x,y,r,0,7); g.fillStyle=fill; g.fill();
@@ -393,7 +395,7 @@ function buttons(){
   if(st.mode==='play'){
     const ready=st.hornCd<=0;
     circle(HORN.x,HORN.y,HORN.r,ready?'rgba(242,197,61,.22)':'rgba(255,255,255,.06)',ready?'#f2c53d':'#5a5a5a');
-    text('HORN',HORN.x,HORN.y+5,14,ready?'#f2c53d':'#6f6f6f');
+    text('HORN',HORN.x,HORN.y+4,12,ready?'#f2c53d':'#6f6f6f');
     circle(GAS.x,GAS.y,GAS.r,st.gas?'rgba(127,214,127,.34)':'rgba(127,214,127,.14)','#7fd67f');
     text('GAS',GAS.x,GAS.y+6,16,'#bff0bf');
   }
@@ -462,7 +464,7 @@ function draw(){
     } else if(st.mode==='menu'){
       text('DODGE DAT',W/2,150,36,'#f2c53d'); text('POTHOLE',W/2,190,36,'#f2c53d');
       text('Naija Road Rally',W/2,222,15,'#dcdcdc',undefined,600);
-      text('Swipe to steer  •  hold GAS to fly',W/2,262,13,'#a9a9a9',undefined,500);
+      text('Left thumb GAS, right thumb drags to steer',W/2,262,13,'#a9a9a9',undefined,500);
       text('HORN scatters goats and okada',W/2,284,13,'#a9a9a9',undefined,500);
       text('Grab jerrycans — if fuel finish, na wa',W/2,306,13,'#a9a9a9',undefined,500);
       text('Blue turbo: more speed, double points',W/2,328,13,'#a9a9a9',undefined,500);
@@ -489,40 +491,50 @@ let last=performance.now();
 // ---------- input ----------
 function toLogical(e){ const r=cv.getBoundingClientRect();
   return {x:(e.clientX-r.left)/r.width*W, y:(e.clientY-r.top)/r.height*H}; }
-const inBtn=(p,b)=>Math.hypot(p.x-b.x,p.y-b.y)<=b.r+8;
+// Touch: every finger gets a job when it lands and keeps it until it lifts. One thumb can sit on
+// GAS while another steers, and a thumb parked on a button never drags the car with it.
+const SLOP=e=>e.pointerType==='touch'?16:8;                 // thumbs are not mice
+const inBtn=(p,b,slop=8)=>Math.hypot(p.x-b.x,p.y-b.y)<=b.r+slop;
+const DRAG=1.7;          // a short thumb swipe should cross the whole road
+const ptr=new Map();     // pointerId -> {role:'ui'|'gas'|'steer', x0, tx0}
+
 function choose(i){ pick=(i+CARS.length)%CARS.length; localStorage.potholeCar=pick;
   // rebuild from CARS, don't merge: the Okada's bike flag would stick to the next car
   st.car={x:st.car.x,tx:st.car.tx,...CARS[pick]}; beep(700,.06,'triangle',.12); }
 function start(){ if(st.mode==='play') return;
   const b=best; reset(); best=b; st.mode='play'; beep(520,.08); engine(true); }
+const steering=e=>ptr.set(e.pointerId,{role:'steer',x0:toLogical(e).x,tx0:st.car.tx});
+const gasHeld=()=>{ for(const v of ptr.values()) if(v.role==='gas') return true; return false; };
 
-let uiPtr=null, gasPtr=null;
 cv.addEventListener('pointerdown',e=>{
   try{ cv.setPointerCapture(e.pointerId); }catch(err){}   // never let capture kill the input handler
-  const p=toLogical(e);
-  if(inBtn(p,MUTE)){ uiPtr=e.pointerId; mute(); return; }
-  if(inBtn(p,PAUSE)&&(st.mode==='play'||st.mode==='pause')){ uiPtr=e.pointerId; pause(st.mode==='play'); return; }
-  if(st.mode==='pause'){ uiPtr=e.pointerId; pause(false); return; }
+  const p=toLogical(e), slop=SLOP(e), ui=()=>ptr.set(e.pointerId,{role:'ui'});
+  if(inBtn(p,MUTE,slop)){ ui(); mute(); return; }
+  if(inBtn(p,PAUSE,slop)&&(st.mode==='play'||st.mode==='pause')){ ui(); pause(st.mode==='play'); return; }
+  if(st.mode==='pause'){ ui(); pause(false); return; }
   if(st.mode==='play'){
-    if(inBtn(p,HORN)){ uiPtr=e.pointerId; horn(); return; }
-    if(inBtn(p,GAS)){ uiPtr=gasPtr=e.pointerId; st.gasBtn=true; return; }
-    st.car.tx=p.x; return;
+    if(inBtn(p,HORN,slop)){ ui(); horn(); return; }
+    if(inBtn(p,GAS,slop)){ ptr.set(e.pointerId,{role:'gas'}); st.gasBtn=true; return; }
+    steering(e);                       // a finger on the road steers from where it landed
+    if(e.pointerType!=='touch') st.car.tx=p.x;   // mouse keeps click-to-position
+    return;
   }
-  // menu: tapping a ride picks it, tapping the road starts
-  if(st.mode==='menu' && p.y>400 && p.y<515){
+  if(st.mode==='menu' && p.y>400 && p.y<515){    // menu: tapping a ride picks it
     const i=CARS.findIndex((c,j)=>Math.abs(p.x-slotX(j))<34);
-    if(i>=0){ uiPtr=e.pointerId; choose(i); return; }
+    if(i>=0){ ui(); choose(i); return; }
   }
-  start();
+  start(); steering(e);                // keep driving with the same finger that started the run
 });
 cv.addEventListener('pointermove',e=>{
-  if(e.pointerId===uiPtr) return;
-  if(e.buttons||e.pointerType==='touch') st.car.tx=toLogical(e).x;
+  const s=ptr.get(e.pointerId);
+  if(!s||s.role!=='steer') return;     // a thumb resting on GAS or HORN must never steer
+  const x=toLogical(e).x;
+  // touch drags relative to where the finger landed, so the car never jumps to your thumb
+  st.car.tx = e.pointerType==='touch' ? s.tx0+(x-s.x0)*DRAG : x;
 });
 for(const ev of ['pointerup','pointercancel'])
-  addEventListener(ev,e=>{ if(e.pointerId===uiPtr) uiPtr=null;
-    if(e.pointerId===gasPtr){ gasPtr=null; st.gasBtn=false; } });
-addEventListener('blur',()=>{ st.gasBtn=false; gasPtr=null; if(st.mode==='play') pause(true); });
+  addEventListener(ev,e=>{ if(!ptr.delete(e.pointerId)) return; st.gasBtn=gasHeld(); });
+addEventListener('blur',()=>{ ptr.clear(); st.gasBtn=false; if(st.mode==='play') pause(true); });
 document.addEventListener('visibilitychange',()=>{ if(document.hidden&&st.mode==='play') pause(true); });
 addEventListener('keydown',e=>{ keys[e.key]=1;
   if(e.key==='m'||e.key==='M') mute();
@@ -629,6 +641,32 @@ if(location.hash==='#test'){
   console.assert(!st.gasBtn,'pause lets go of the gas');
   pause(false); update(1/60);
   console.assert(st.mode==='play'&&st.score>frozen.score,'resume puts it back on the road');
+  reset();
+  // phone controls: gas thumb and steering thumb at the same time
+  st.mode='play'; st.gasBtn=false; st.car.x=st.car.tx=180;
+  const rect=cv.getBoundingClientRect();
+  const touch=(lx,ly,type,id)=>cv.dispatchEvent(new PointerEvent(type,{pointerId:id,bubbles:true,
+    clientX:rect.left+lx/W*rect.width, clientY:rect.top+ly/H*rect.height, pointerType:'touch', isPrimary:id===1}));
+  const lift=(lx,ly,id)=>dispatchEvent(new PointerEvent('pointerup',{pointerId:id,bubbles:true,
+    clientX:rect.left+lx/W*rect.width, clientY:rect.top+ly/H*rect.height, pointerType:'touch'}));
+  touch(GAS.x,GAS.y,'pointerdown',1);                       // left thumb on the gas
+  console.assert(st.gasBtn,'gas thumb holds the throttle');
+  touch(240,420,'pointerdown',2); touch(200,420,'pointermove',2);   // right thumb drags left
+  console.assert(st.car.tx<180,'second thumb steers while the gas is held, got '+st.car.tx.toFixed(0));
+  console.assert(st.gasBtn,'steering must not drop the throttle');
+  const held=st.car.tx;
+  touch(GAS.x+9,GAS.y-6,'pointermove',1);                   // gas thumb wiggles on its button
+  console.assert(st.car.tx===held,'a thumb parked on GAS must never steer');
+  st.hornCd=0; touch(HORN.x,HORN.y,'pointerdown',3); lift(HORN.x,HORN.y,3);
+  console.assert(st.hornCd>0&&st.gasBtn,'horn works without letting go of the gas');
+  touch(GAS.x+9,GAS.y-6,'pointermove',1);
+  console.assert(st.car.tx===held,'gas thumb still not steering after a horn tap');
+  lift(GAS.x,GAS.y,1);
+  console.assert(!st.gasBtn,'lifting the gas thumb lets go');
+  touch(268,420,'pointermove',2);   // same finger, new spot: must track it
+  console.assert(st.car.tx>held,'the steering thumb still works after the gas lifts');
+  lift(268,420,2);
+  console.assert(ptr.size===0,'every finger let go of its job');
   reset();
   document.title='tests done — check console';
 }
