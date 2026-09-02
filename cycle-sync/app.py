@@ -401,6 +401,36 @@ def health():  # GET+HEAD so any uptime-monitor check type gets 200, not a 405
     return {"ok": True}
 
 
+@app.get("/api/export")
+def export_data(user: int = Depends(uid)):
+    """Everything Attune holds about this account, as JSON (GDPR data portability)."""
+    with closing(db()) as c:
+        u = c.execute("SELECT email, created_at FROM users WHERE id=?", (user,)).fetchone()
+        p = get_profile(c, user)
+        rows = c.execute("SELECT day, energy, mood, flow, symptoms, notes FROM logs "
+                         "WHERE user_id=? ORDER BY day", (user,)).fetchall()
+    return {
+        "account": {"email": u["email"], "created_at": u["created_at"]},
+        "cycle": ({"last_period": p["last_period"], "cycle_len": p["cycle_len"],
+                   "period_len": p["period_len"]} if p else None),
+        "logs": [{"day": r["day"], "energy": r["energy"], "mood": r["mood"], "flow": r["flow"],
+                  "symptoms": r["symptoms"].split(",") if r["symptoms"] else [],
+                  "notes": r["notes"]} for r in rows],
+        "exported_at": now(),
+    }
+
+
+@app.delete("/api/account")
+def delete_account(response: Response, user: int = Depends(uid)):
+    """Erase the account and everything tied to it. FK ON DELETE CASCADE + foreign_keys=ON
+    means deleting the user row also removes their profile, logs, and sessions."""
+    with closing(db()) as c:
+        c.execute("DELETE FROM users WHERE id=?", (user,))
+        c.commit()
+    response.delete_cookie("at")
+    return {"ok": True}
+
+
 PAGE = r"""
 <!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -436,6 +466,8 @@ button{font:inherit;border:0;border-radius:13px;padding:13px 16px;background:var
 button:hover{filter:brightness(1.05)}button:active{transform:scale(.98)}
 button.ghost{background:transparent;color:var(--fg2);border:1px solid var(--line);font-weight:500}
 button.ghost:hover{border-color:var(--dim);filter:none}
+button.danger{background:transparent;color:var(--men);border:1px solid color-mix(in srgb,var(--men) 45%,var(--line));font-weight:500}
+button.danger:hover{border-color:var(--men);filter:none}
 input,select,textarea{font:16px inherit;font-family:inherit;padding:13px;border:1px solid var(--line);
   border-radius:13px;background:var(--bg);color:var(--fg);width:100%;min-width:0}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--soft)}
@@ -541,6 +573,9 @@ nav button.on{color:var(--accent)}
       <div class=btn-col>
         <button onclick="doAuth('login')">Sign in</button>
         <button class=ghost onclick="doAuth('signup')">Create account</button>
+      </div>
+      <div style="text-align:center;margin-top:14px;font-size:13px">
+        <a href="/privacy" target="_blank" style="color:var(--dim)">Privacy policy</a>
       </div>
     </div>
   </div>
@@ -655,6 +690,15 @@ nav button.on{color:var(--accent)}
     <div class=divider></div>
     <button class=ghost id=remindbtn style="width:100%" onclick=enableReminders()>Enable phase reminders</button>
     <div class=note>A nudge when your phase changes or your period is due. Fires while Attune is open in your browser.</div>
+  </div>
+  <div class=card>
+    <h2>Privacy &amp; your data</h2>
+    <div class=dim style="line-height:1.55">Attune never sells or shares your data, and uses no trackers or ads.
+      <a href="/privacy" target="_blank" style="color:var(--accent)">Read the privacy policy</a>.</div>
+    <div class=btn-col style="margin-top:14px">
+      <button class=ghost onclick=exportData()>Download my data</button>
+      <button class=danger onclick=deleteAccount()>Delete account &amp; all data</button>
+    </div>
   </div>
 </div>
 
@@ -771,6 +815,17 @@ async function enableReminders(){
   if(p=='granted'){toast('Reminders on'); notifyPhase();}
   else if(p=='denied')toast('Blocked — enable notifications in your browser settings');
 }
+async function exportData(){
+  const d=await api('/api/export');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));
+  a.download='attune-data.json'; a.click(); URL.revokeObjectURL(a.href); toast('Downloaded');
+}
+async function deleteAccount(){
+  if(!confirm('Delete your account and ALL your data? This cannot be undone.'))return;
+  if(!confirm('Really delete everything? There is no way to recover it.'))return;
+  await api('/api/account',{method:'DELETE'}); location.reload();
+}
 
 function renderToday(){
   const i=S.info, pc=CC[i.phase];
@@ -873,7 +928,7 @@ function toast(m){const t=document.createElement('div');t.textContent=m;
     'box-shadow:0 6px 20px rgba(0,0,0,.2)';
   document.body.appendChild(t);setTimeout(()=>t.remove(),1500);}
 
-Object.assign(window,{show,doAuth,logout,pick,pickEnergy,toggleSymp,saveLog,periodToday,saveSetup,saveSettings,enableReminders});
+Object.assign(window,{show,doAuth,logout,pick,pickEnergy,toggleSymp,saveLog,periodToday,saveSetup,saveSettings,enableReminders,exportData,deleteAccount});
 $('#slp').value=today();
 window.addEventListener('unhandledrejection',e=>{if(e.reason&&e.reason.message=='auth')e.preventDefault()});
 load().catch(()=>{});
@@ -885,6 +940,85 @@ load().catch(()=>{});
 def home():
     # ponytail: the page IS the app — a cached copy means an old app after every edit
     return HTMLResponse(PAGE, headers={"cache-control": "no-store"})
+
+
+PRIVACY = """
+<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%239c3b60' stroke-width='4'/%3E%3Ccircle cx='16' cy='5' r='3.4' fill='%239c3b60'/%3E%3C/svg%3E">
+<title>Privacy — Attune</title><style>
+:root{--bg:#f5f2ef;--card:#fff;--fg:#211d1b;--fg2:#4a4441;--dim:#918a85;--line:#eae4de;--accent:#9c3b60;
+  --serif:"Iowan Old Style",Palatino,Georgia,serif}
+@media(prefers-color-scheme:dark){:root{--bg:#14100f;--card:#1c1715;--fg:#efe9e5;--fg2:#c9c1bc;--dim:#a0958f;
+  --line:#2b2420;--accent:#e07fa2}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,system-ui,sans-serif}
+.wrap{max-width:640px;margin:0 auto;padding:32px 20px 64px}
+a{color:var(--accent)}
+h1{font-family:var(--serif);font-size:30px;font-weight:500;letter-spacing:-.01em;margin:8px 0 4px}
+.upd{color:var(--dim);font-size:13px;margin-bottom:24px}
+h2{font-size:15px;letter-spacing:-.01em;margin:26px 0 6px}
+p,li{color:var(--fg2);font-size:15px}
+ul{padding-left:20px;margin:6px 0}
+li{margin:4px 0}
+.lead{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:18px 0}
+.lead b{color:var(--fg)}
+.back{display:inline-block;margin-bottom:18px;font-size:14px}
+</style></head><body><div class=wrap>
+<a class=back href="/">&larr; Back to Attune</a>
+<h1>Privacy Policy</h1>
+<div class=upd>Last updated 2 September 2026</div>
+
+<div class=lead><b>The short version:</b> Attune stores only what you enter, uses it only to run the
+app for you, and shares it with no one. There are no trackers, no ads, and your data is never sold.
+Your cycle information never leaves our server. You can export or permanently delete everything at
+any time from the <b>You</b> tab.</div>
+
+<h2>What we collect</h2>
+<ul>
+  <li><b>Your email</b> — so you can sign in.</li>
+  <li><b>Cycle details</b> — your last period date, cycle length, and period length.</li>
+  <li><b>Daily logs you choose to add</b> — energy, mood, flow, symptoms, and any notes.</li>
+</ul>
+<p>That's all. We don't ask for your name, we don't access your device's contacts, location, or health
+records, and we don't collect anything in the background.</p>
+
+<h2>How we use it</h2>
+<p>Only to provide the app to you: to work out your current cycle phase, show recommendations and
+predictions, and surface patterns in your own logs. We do not profile you, advertise to you, or use
+your data to train any model.</p>
+
+<h2>Who we share it with</h2>
+<p>No one. We do not sell, rent, or share your personal data with advertisers, data brokers, or any
+third party. Attune runs no analytics or tracking, and the app makes no outside requests carrying your
+data. Our only processor is our hosting provider (Railway), which stores the database that runs the
+service on our behalf.</p>
+
+<h2>Your rights &amp; choices</h2>
+<ul>
+  <li><b>Export</b> — download everything we hold about you as a JSON file (You &rarr; Download my data).</li>
+  <li><b>Delete</b> — permanently erase your account and all associated data at any time
+    (You &rarr; Delete account). This is immediate and cannot be undone.</li>
+</ul>
+
+<h2>Security</h2>
+<p>Passwords are stored only as salted hashes, never in plain text. Every account's data is isolated,
+the service is served over HTTPS, and your session is kept by a single essential cookie — there are no
+tracking cookies.</p>
+
+<h2>Not medical advice</h2>
+<p>Attune's predictions are estimates from the dates you provide. It is not a medical device, not a
+diagnosis, and not a reliable form of contraception. Talk to a clinician about any health concern.</p>
+
+<h2>Contact</h2>
+<p>Questions or requests about your data: <a href="mailto:oseabhi@gmail.com">oseabhi@gmail.com</a>.</p>
+</div></body></html>
+"""
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy():
+    return HTMLResponse(PRIVACY, headers={"cache-control": "no-store"})
 
 
 def demo():
