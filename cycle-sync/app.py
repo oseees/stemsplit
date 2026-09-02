@@ -6,9 +6,11 @@ import hashlib
 import hmac
 import os
 import secrets
+import smtplib
 import sqlite3
 from contextlib import closing
 from datetime import date, datetime, timezone, timedelta
+from email.message import EmailMessage
 from typing import Optional
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
@@ -59,6 +61,12 @@ with closing(db()) as c:
         notes TEXT,
         PRIMARY KEY(user_id, day)
     );
+    CREATE TABLE IF NOT EXISTS resets(
+        token TEXT PRIMARY KEY,            -- sha256(raw token); raw token is only in the email link
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires TEXT NOT NULL,             -- UTC ISO
+        used INTEGER NOT NULL DEFAULT 0
+    );
     """)
     c.commit()
 
@@ -67,6 +75,28 @@ app = FastAPI(title="Attune")
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+# --- email (stdlib SMTP; defaults to Gmail — set SMTP_USER/SMTP_PASS to enable) -------------
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER")
+SMTP_PASS = os.environ.get("SMTP_PASS")
+SMTP_FROM = os.environ.get("SMTP_FROM") or SMTP_USER
+APP_URL = (os.environ.get("APP_URL") or "https://attune-production-c20e.up.railway.app").rstrip("/")
+EMAIL_ON = bool(SMTP_USER and SMTP_PASS)
+
+
+def send_email(to: str, subject: str, body: str):
+    msg = EmailMessage()
+    msg["From"] = SMTP_FROM
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+        s.starttls()
+        s.login(SMTP_USER, SMTP_PASS)
+        s.send_message(msg)
 
 
 # --- auth (same shape as the other one-file apps) ---------------------------
@@ -138,6 +168,58 @@ def logout(response: Response, at: Optional[str] = Cookie(default=None)):
             c.execute("DELETE FROM tokens WHERE token=?", (at,))
             c.commit()
     response.delete_cookie("at")
+    return {"ok": True}
+
+
+# --- password reset ---------------------------------------------------------
+
+RESET_TTL_MIN = 60
+
+
+class EmailIn(BaseModel):
+    email: str = Field(min_length=5, max_length=200, pattern=r"^\S+@\S+\.\S+$")
+
+
+class ResetIn(BaseModel):
+    token: str = Field(min_length=10, max_length=400)
+    password: str = Field(min_length=6, max_length=200)
+
+
+@app.post("/api/forgot")
+def forgot(e: EmailIn):
+    """Email a reset link if the account exists. Always returns the same response so it can't
+    be used to discover which emails have accounts (an enumeration leak on a health app)."""
+    with closing(db()) as c:
+        u = c.execute("SELECT id FROM users WHERE email=?", (e.email.strip(),)).fetchone()
+        if u and EMAIL_ON:
+            raw = secrets.token_urlsafe(32)
+            th = hashlib.sha256(raw.encode()).hexdigest()
+            exp = (datetime.now(timezone.utc) + timedelta(minutes=RESET_TTL_MIN)).isoformat()
+            c.execute("INSERT INTO resets(token,user_id,expires,used) VALUES(?,?,?,0)",
+                      (th, u["id"], exp))
+            c.commit()
+            link = f"{APP_URL}/reset?token={raw}"
+            try:
+                send_email(e.email.strip(), "Reset your Attune password",
+                           f"Tap this link to set a new password (valid for {RESET_TTL_MIN} "
+                           f"minutes):\n\n{link}\n\nIf you didn't ask to reset your password, "
+                           f"you can safely ignore this email.")
+            except Exception:
+                pass  # never surface send failures — would leak whether the address exists
+    return {"ok": True, "enabled": EMAIL_ON}
+
+
+@app.post("/api/reset")
+def reset_password(r: ResetIn):
+    th = hashlib.sha256(r.token.encode()).hexdigest()
+    with closing(db()) as c:
+        row = c.execute("SELECT user_id, expires, used FROM resets WHERE token=?", (th,)).fetchone()
+        if not row or row["used"] or row["expires"] < now():
+            raise HTTPException(400, "This reset link is invalid or has expired. Request a new one.")
+        c.execute("UPDATE users SET pw=? WHERE id=?", (hash_pw(r.password), row["user_id"]))
+        c.execute("UPDATE resets SET used=1 WHERE token=?", (th,))
+        c.execute("DELETE FROM tokens WHERE user_id=?", (row["user_id"],))  # sign out other sessions
+        c.commit()
     return {"ok": True}
 
 
@@ -578,7 +660,10 @@ nav button.on{color:var(--accent)}
         <button onclick="doAuth('signup')">Create account</button>
         <button class=ghost onclick="doAuth('login')">Sign in</button>
       </div>
-      <div style="text-align:center;margin-top:14px;font-size:13px;color:var(--dim)">
+      <div style="text-align:center;margin-top:14px;font-size:13px">
+        <a onclick=forgotPw() style="color:var(--accent);cursor:pointer">Forgot password?</a>
+      </div>
+      <div style="text-align:center;margin-top:10px;font-size:13px;color:var(--dim)">
         New here? Tap <b style="color:var(--fg2)">Create account</b>. &middot;
         <a href="/privacy" target="_blank" style="color:var(--dim)">Privacy</a>
       </div>
@@ -781,6 +866,13 @@ async function doAuth(path){
 }
 const logout=()=>{if(!confirm('Sign out of Attune?'))return;
   fetch('/api/logout',{method:'POST'}).finally(()=>location.reload());};
+async function forgotPw(){
+  const ae=$('#aerr'), email=$('#aemail').value.trim();
+  if(!email){ae.style.color='var(--men)';ae.textContent='Enter your email above first, then tap Forgot password.';return;}
+  await fetch('/api/forgot',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email})});
+  ae.style.color='var(--fg2)';
+  ae.textContent='If that email has an account, we’ve sent a reset link. Check your inbox (and spam).';
+}
 
 function show(v){view=v;['setup','today','cycle','me'].forEach(x=>$('#v-'+x).classList.add('hide'));
   ['today','cycle','me'].forEach(x=>$('#n-'+x)&&$('#n-'+x).classList.toggle('on',x==v));
@@ -936,7 +1028,7 @@ function toast(m){const t=document.createElement('div');t.textContent=m;
     'box-shadow:0 6px 20px rgba(0,0,0,.2)';
   document.body.appendChild(t);setTimeout(()=>t.remove(),1500);}
 
-Object.assign(window,{show,doAuth,logout,pick,pickEnergy,toggleSymp,saveLog,periodToday,saveSetup,saveSettings,enableReminders,exportData,deleteAccount});
+Object.assign(window,{show,doAuth,logout,forgotPw,pick,pickEnergy,toggleSymp,saveLog,periodToday,saveSetup,saveSettings,enableReminders,exportData,deleteAccount});
 $('#slp').value=today();
 window.addEventListener('unhandledrejection',e=>{if(e.reason&&e.reason.message=='auth')e.preventDefault()});
 load().catch(()=>{});
@@ -1029,6 +1121,70 @@ def privacy():
     return HTMLResponse(PRIVACY, headers={"cache-control": "no-store"})
 
 
+RESET_PAGE = """
+<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name=theme-color content="#f5f2ef" media="(prefers-color-scheme: light)">
+<meta name=theme-color content="#14100f" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%239c3b60' stroke-width='4'/%3E%3Ccircle cx='16' cy='5' r='3.4' fill='%239c3b60'/%3E%3C/svg%3E">
+<title>Reset password — Attune</title><style>
+:root{--bg:#f5f2ef;--card:#fff;--fg:#211d1b;--fg2:#4a4441;--dim:#918a85;--line:#eae4de;--accent:#9c3b60;
+  --men:#c34a63;--soft:#f7edf0;--serif:"Iowan Old Style",Palatino,Georgia,serif}
+@media(prefers-color-scheme:dark){:root{--bg:#14100f;--card:#1c1715;--fg:#efe9e5;--fg2:#c9c1bc;--dim:#a0958f;
+  --line:#2b2420;--accent:#e07fa2;--men:#d76a80;--soft:#2a1c22}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 -apple-system,system-ui,sans-serif;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:24px;
+  width:100%;max-width:380px;box-shadow:0 8px 24px rgba(40,30,25,.06)}
+h1{font-family:var(--serif);font-size:24px;font-weight:500;margin:0 0 4px}
+.sub{color:var(--dim);font-size:14px;margin-bottom:18px}
+input{font:16px inherit;padding:13px;border:1px solid var(--line);border-radius:13px;background:var(--bg);
+  color:var(--fg);width:100%;margin-bottom:10px}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--soft)}
+button{font:inherit;font-weight:600;border:0;border-radius:13px;padding:13px;background:var(--accent);
+  color:#fff;width:100%;cursor:pointer}
+.msg{font-size:13px;margin:4px 0 10px;min-height:16px;color:var(--men)}
+a{color:var(--accent)}
+</style></head><body>
+<div class=card id=form>
+  <h1>Set a new password</h1>
+  <div class=sub>Enter a new password for your Attune account.</div>
+  <div class=msg id=msg></div>
+  <input id=p type=password placeholder="New password (6+ characters)" autocomplete=new-password>
+  <input id=c type=password placeholder="Confirm new password" autocomplete=new-password
+    onkeydown="if(event.key=='Enter')go()">
+  <button onclick=go()>Update password</button>
+</div>
+<script>
+const token=new URLSearchParams(location.search).get('token');
+const msg=m=>document.getElementById('msg').textContent=m;
+if(!token){document.getElementById('form').innerHTML=
+  '<h1>Invalid link</h1><div class=sub>This reset link is missing or broken. '+
+  '<a href="/">Back to Attune</a> and request a new one.</div>';}
+async function go(){
+  const p=document.getElementById('p').value, c=document.getElementById('c').value;
+  if(p.length<6) return msg('Password must be at least 6 characters.');
+  if(p!==c) return msg('Those passwords don’t match.');
+  msg('');
+  const r=await fetch('/api/reset',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({token,password:p})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) return msg((j.detail&&j.detail.length<160?j.detail:'Could not reset your password.'));
+  document.getElementById('form').innerHTML=
+    '<h1>Password updated</h1><div class=sub>You can now sign in with your new password.</div>'+
+    '<a href="/"><button>Go to sign in</button></a>';
+}
+window.go=go;
+</script></body></html>
+"""
+
+
+@app.get("/reset", response_class=HTMLResponse)
+def reset_page():
+    return HTMLResponse(RESET_PAGE, headers={"cache-control": "no-store"})
+
+
 def demo():
     # Self-check: phase boundaries and predictions for a clean 28-day cycle from 2026-01-01.
     lp, cl, pl = "2026-01-01", 28, 5
@@ -1056,6 +1212,12 @@ def demo():
     r = compute_insights(lp, cl, pl, logs)
     assert any("Menstrual" in t and "energy" in t.lower() for t in r["insights"])  # low energy in menstrual
     assert any("Cramps" in t and "menstrual" in t for t in r["insights"])          # cramps ↔ menstrual
+
+    # reset/security path: password hashes round-trip, and ISO expiry strings order by time.
+    assert check_pw("secret6", hash_pw("secret6")) and not check_pw("wrong6", hash_pw("secret6"))
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    future = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    assert past < now() < future  # reset_password compares row["expires"] < now() the same way
     print("ok")
 
 
