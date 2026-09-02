@@ -346,6 +346,61 @@ def list_logs(user: int = Depends(uid)):
         return {"logs": out}
 
 
+MIN_INSIGHT_DAYS = 5  # below this, patterns are noise, not signal
+
+
+def compute_insights(last_period, cycle_len, period_len, logs):
+    """Correlate a user's own logs with their cycle phase. Pure aggregation, no ML.
+    logs: list of {"day","energy","symptoms":[...]}."""
+    days = len(logs)
+    if days < MIN_INSIGHT_DAYS:
+        return {"insights": [], "days": days, "need": MIN_INSIGHT_DAYS}
+    by_phase = {}
+    for r in logs:
+        ph = cycle_info(last_period, cycle_len, period_len, r["day"])["phase"]
+        by_phase.setdefault(ph, []).append(r)
+    out = []
+    # energy: highest vs lowest phase (need >=2 readings in a phase to trust the average)
+    avg = {ph: sum(e) / len(e) for ph, rs in by_phase.items()
+           if (e := [r["energy"] for r in rs if r.get("energy")]) and len(e) >= 2}
+    if len(avg) >= 2:
+        hi, lo = max(avg, key=avg.get), min(avg, key=avg.get)
+        if avg[hi] - avg[lo] >= 0.5:
+            out.append(f"Your energy runs highest in your {hi} phase and lowest in your {lo} phase.")
+    # symptoms: which phase each one concentrates in
+    phase_days = {ph: len(rs) for ph, rs in by_phase.items()}
+    sym = {}
+    for ph, rs in by_phase.items():
+        for r in rs:
+            for s in r.get("symptoms") or []:
+                sym[(s, ph)] = sym.get((s, ph), 0) + 1
+    for (s, ph), n in sorted(sym.items(), key=lambda kv: -kv[1])[:3]:
+        if n >= 2:
+            out.append(f"{s.capitalize()} shows up most in your {ph.lower()} phase — "
+                       f"{n} of {phase_days[ph]} logged {ph.lower()} days.")
+    if not out:
+        out.append("Keep logging — a few more days and clearer patterns will surface.")
+    return {"insights": out[:4], "days": days}
+
+
+@app.get("/api/insights")
+def insights(user: int = Depends(uid)):
+    with closing(db()) as c:
+        p = get_profile(c, user)
+        rows = c.execute("SELECT * FROM logs WHERE user_id=? ORDER BY day DESC LIMIT 180",
+                         (user,)).fetchall()
+    if not p:
+        return {"insights": [], "days": 0, "need": MIN_INSIGHT_DAYS}
+    logs = [{"day": r["day"], "energy": r["energy"],
+             "symptoms": r["symptoms"].split(",") if r["symptoms"] else []} for r in rows]
+    return compute_insights(p["last_period"], p["cycle_len"], p["period_len"], logs)
+
+
+@app.get("/health")
+def health():  # for an external uptime pinger; also a cheap liveness probe
+    return {"ok": True}
+
+
 PAGE = r"""
 <!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -576,6 +631,10 @@ nav button.on{color:var(--accent)}
   <h1>You</h1>
   <div class=sub id=msub></div>
   <div class=card>
+    <h2>Your patterns</h2>
+    <div id=insights></div>
+  </div>
+  <div class=card>
     <h2>Recent logs</h2>
     <div id=history></div>
   </div>
@@ -593,6 +652,9 @@ nav button.on{color:var(--accent)}
       <button class=grow onclick=saveSettings()>Save changes</button>
       <button class="grow ghost" onclick=logout()>Sign out</button>
     </div>
+    <div class=divider></div>
+    <button class=ghost id=remindbtn style="width:100%" onclick=enableReminders()>Enable phase reminders</button>
+    <div class=note>A nudge when your phase changes or your period is due. Fires while Attune is open in your browser.</div>
   </div>
 </div>
 
@@ -678,7 +740,36 @@ async function load(){
     ['today','cycle','me'].forEach(x=>$('#v-'+x).classList.add('hide'));
     $('#v-setup').classList.remove('hide');return;}
   document.querySelector('nav').classList.remove('hide');$('#v-setup').classList.add('hide');
-  renderToday(); show(view=='setup'?'today':view);
+  renderToday(); show(view=='setup'?'today':view); notifyPhase();
+}
+
+// Reminders: fire once per phase-change / period-due, while the app is open. localStorage
+// dedupes so you don't get pinged on every reload. Background push (service worker) is a
+// separate, heavier feature — not built.
+function ping(title,body){ try{new Notification(title,{body})}catch(e){} }
+function notifyPhase(){
+  if(!('Notification'in window)||Notification.permission!='granted'||!S.info)return;
+  const i=S.info, k=today();
+  let seen; try{seen=JSON.parse(localStorage.attune_notif||'{}')}catch(e){seen={}}
+  if(seen.phase!==i.phase){seen.phase=i.phase; ping('You’re in your '+i.phase+' phase',i.rec.feel);}
+  if(i.days_to_next<=0 && seen.due!==k){seen.due=k;
+    ping('Your period may start today','Open Attune and tap “My period started today” to recalibrate.');}
+  else if(i.days_to_next===2 && seen.soon!==k){seen.soon=k;
+    ping('Period expected in about 2 days','A good time to start winding down.');}
+  try{localStorage.attune_notif=JSON.stringify(seen)}catch(e){}
+}
+function updateRemindBtn(){
+  const b=$('#remindbtn'); if(!b)return;
+  if(!('Notification'in window)){b.textContent='Reminders not supported here';b.disabled=true;return;}
+  const p=Notification.permission;
+  b.textContent=p=='granted'?'Reminders are on':p=='denied'?'Reminders blocked in browser settings':'Enable phase reminders';
+  b.disabled=p!='default';
+}
+async function enableReminders(){
+  if(!('Notification'in window))return toast('Notifications aren’t supported here');
+  const p=await Notification.requestPermission(); updateRemindBtn();
+  if(p=='granted'){toast('Reminders on'); notifyPhase();}
+  else if(p=='denied')toast('Blocked — enable notifications in your browser settings');
 }
 
 function renderToday(){
@@ -742,6 +833,11 @@ async function renderMe(){
   ['today','cycle'].forEach(x=>$('#v-'+x).classList.add('hide'));$('#v-setup').classList.add('hide');
   $('#v-me').classList.remove('hide');
   $('#elp').value=S.profile.last_period;$('#ecl').value=S.profile.cycle_len;$('#epl').value=S.profile.period_len;
+  updateRemindBtn();
+  const ins=await api('/api/insights');
+  $('#insights').innerHTML=ins.insights.length
+    ? ins.insights.map(t=>`<div class=li><span class="grow" style="font-size:14px;line-height:1.5;color:var(--fg2)">${esc(t)}</span></div>`).join('')
+    : `<div class=empty>Log ${Math.max(1,(ins.need||5)-ins.days)} more day${(ins.need||5)-ins.days==1?'':'s'} to unlock your patterns.</div>`;
   const {logs}=await api('/api/logs');
   $('#msub').textContent=logs.length+' day'+(logs.length==1?'':'s')+' logged';
   $('#history').innerHTML=logs.length?logs.map(l=>{
@@ -777,7 +873,7 @@ function toast(m){const t=document.createElement('div');t.textContent=m;
     'box-shadow:0 6px 20px rgba(0,0,0,.2)';
   document.body.appendChild(t);setTimeout(()=>t.remove(),1500);}
 
-Object.assign(window,{show,doAuth,logout,pick,pickEnergy,toggleSymp,saveLog,periodToday,saveSetup,saveSettings});
+Object.assign(window,{show,doAuth,logout,pick,pickEnergy,toggleSymp,saveLog,periodToday,saveSetup,saveSettings,enableReminders});
 $('#slp').value=today();
 window.addEventListener('unhandledrejection',e=>{if(e.reason&&e.reason.message=='auth')e.preventDefault()});
 load().catch(()=>{});
@@ -809,6 +905,15 @@ def demo():
     # fertile window brackets ovulation
     i = f("2026-01-10")
     assert i["fertile_start"] <= i["ovulation_date"] <= i["fertile_end"]
+
+    # insights: under threshold returns nothing; with a clear pattern it surfaces it.
+    assert compute_insights(lp, cl, pl, [{"day": "2026-01-01", "energy": 1, "symptoms": []}])["insights"] == []
+    logs = ([{"day": f"2026-01-0{d}", "energy": 1, "symptoms": ["cramps"]} for d in range(1, 6)]  # menstrual
+            + [{"day": "2026-01-14", "energy": 5, "symptoms": []},                                # ovulatory
+               {"day": "2026-01-15", "energy": 5, "symptoms": []}])
+    r = compute_insights(lp, cl, pl, logs)
+    assert any("Menstrual" in t and "energy" in t.lower() for t in r["insights"])  # low energy in menstrual
+    assert any("Cramps" in t and "menstrual" in t for t in r["insights"])          # cramps ↔ menstrual
     print("ok")
 
 
