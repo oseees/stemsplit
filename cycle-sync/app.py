@@ -396,8 +396,8 @@ def insights(user: int = Depends(uid)):
     return compute_insights(p["last_period"], p["cycle_len"], p["period_len"], logs)
 
 
-@app.get("/health")
-def health():  # for an external uptime pinger; also a cheap liveness probe
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health():  # GET+HEAD so any uptime-monitor check type gets 200, not a 405
     return {"ok": True}
 
 
