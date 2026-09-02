@@ -470,6 +470,10 @@ button.danger{background:transparent;color:var(--men);border:1px solid color-mix
 button.danger:hover{border-color:var(--men);filter:none}
 input,select,textarea{font:16px inherit;font-family:inherit;padding:13px;border:1px solid var(--line);
   border-radius:13px;background:var(--bg);color:var(--fg);width:100%;min-width:0}
+/* iOS date/time inputs have an intrinsic min-width that ignores width:100% and overflows the
+   card — dropping the native appearance makes them respect their box (tap still opens the picker). */
+input[type=date]{-webkit-appearance:none;appearance:none;max-width:100%}
+input[type=date]::-webkit-date-and-time-value{text-align:left}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--soft)}
 .row{display:flex;gap:10px;align-items:center}.row>*{min-width:0}
 .grow{flex:1;min-width:0}.hide{display:none!important}  /* !important so it beats ID selectors that set display */
