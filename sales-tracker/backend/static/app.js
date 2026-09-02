@@ -1605,6 +1605,7 @@ async function invoiceDetail(id) {
       ? `<button class="btn whatsapp" style="margin-bottom:10px" onclick='whatsappReminder(${attrJson(inv)})'><svg class="ic"><use href="#i-chat"/></svg> WhatsApp reminder</button>`
       : ""}
     ${inv.balance > 0.01 ? `<button class="btn secondary" style="margin-bottom:10px" onclick="paymentModal(${id}, ${inv.balance})">Record part payment</button>` : ""}
+    ${inv.paid > 0.01 ? `<button class="btn outline" style="margin-bottom:10px" onclick="markUnpaid(${id})">↺ Mark as unpaid</button>` : ""}
     ${bankSwitcherHtml(inv)}
     <div class="btn-row">
       <button class="btn outline" onclick="editSaleModal(${id})"><svg class="ic"><use href="#i-edit"/></svg> Edit sale</button>
@@ -1849,6 +1850,21 @@ async function markPaid(id, balance) {
  if (navigator.onLine && id > 0) { toast("Marked as paid ✓"); receiptOffer(id); }
  else toast("Payment saved offline — syncs when you're online");
   render();
+}
+
+// Inverse of markPaid: reset an invoice to unpaid (clears its payments). A
+// correction, so it confirms first; then re-open the detail to show the new
+// status. Online-only — this isn't in the offline write queue.
+async function markUnpaid(id) {
+  if (!confirm("Set this invoice back to unpaid? This clears the payment(s) recorded on it.")) return;
+  try {
+    await api.send(`/api/invoices/${id}/unpay`, "POST");
+  } catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return;
+    return toast(e.message || "Couldn't mark unpaid");
+  }
+  toast("Marked as unpaid");
+  invoiceDetail(id); // reopen with the refreshed status (the write cleared the GET cache)
 }
 
 async function shareInvoice(id) {
@@ -3542,7 +3558,7 @@ async function _sharePayLinkFallback(id) {
 })();
 
 // expose handlers used in inline onclick
-Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, settleCustomer, openOwed, paymentModal,
+Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, markUnpaid, settleCustomer, openOwed, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
   saveSale, voiceSale, expenseModal, expCatChanged, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, forceUpdate, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,

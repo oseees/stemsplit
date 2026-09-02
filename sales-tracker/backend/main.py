@@ -1702,6 +1702,19 @@ def add_payment(iid: int, p: PaymentIn, user=Depends(current_user)):
         return {"ok": True, "paid": paid, "balance": inv["total"] - paid}
 
 
+@app.post("/api/invoices/{iid}/unpay")
+def mark_unpaid(iid: int, user=Depends(current_user)):
+    """Reverse the payment mark: clear this invoice's recorded payments and set
+    it back to unpaid — the inverse of 'Mark as paid', for fixing a mistaken
+    mark. Deletes the payment rows so profit/collected revert with it. Owner-only
+    (not in the attendant allowlist), so staff can't quietly reverse takings."""
+    with db.get_conn() as conn:
+        inv = _owned_invoice(conn, iid, user["id"])
+        conn.execute("DELETE FROM payments WHERE invoice_id=?", (iid,))
+        conn.execute("UPDATE invoices SET status='unpaid' WHERE id=?", (iid,))
+        return {"ok": True, "paid": 0, "balance": inv["total"]}
+
+
 @app.post("/api/customers/{cid}/settle")
 def settle_customer(cid: int, user=Depends(current_user)):
     """Mark every unpaid invoice for one customer as paid in a single go — the
