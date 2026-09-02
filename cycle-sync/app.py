@@ -349,14 +349,18 @@ def list_logs(user: int = Depends(uid)):
 PAGE = r"""
 <!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name=theme-color content="#f5f2ef">
+<meta name=theme-color content="#f5f2ef" media="(prefers-color-scheme: light)">
+<meta name=theme-color content="#14100f" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%239c3b60' stroke-width='4'/%3E%3Ccircle cx='16' cy='5' r='3.4' fill='%239c3b60'/%3E%3C/svg%3E">
 <title>Attune</title><style>
 :root{
+  color-scheme:light;  /* themes native date/number controls */
   --bg:#f5f2ef;--card:#ffffff;--fg:#211d1b;--fg2:#4a4441;--dim:#918a85;--line:#eae4de;
   --accent:#9c3b60;--accent2:#7c2f4c;--soft:#f7edf0;--shadow:0 1px 2px rgba(40,30,25,.04),0 8px 24px rgba(40,30,25,.05);
   --men:#c34a63;--fol:#3f927a;--ovu:#c98a35;--lut:#6f5fa6;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif}
 @media(prefers-color-scheme:dark){:root{
+  color-scheme:dark;
   --bg:#14100f;--card:#1c1715;--fg:#efe9e5;--fg2:#c9c1bc;--dim:#a0958f;--line:#2b2420;
   --accent:#e07fa2;--accent2:#e79bb6;--soft:#2a1c22;--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 26px rgba(0,0,0,.35);
   --men:#d76a80;--fol:#57ad94;--ovu:#dca253;--lut:#9284c7}}
@@ -381,7 +385,7 @@ input,select,textarea{font:16px inherit;font-family:inherit;padding:13px;border:
   border-radius:13px;background:var(--bg);color:var(--fg);width:100%;min-width:0}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--soft)}
 .row{display:flex;gap:10px;align-items:center}.row>*{min-width:0}
-.grow{flex:1;min-width:0}.hide{display:none}
+.grow{flex:1;min-width:0}.hide{display:none!important}  /* !important so it beats ID selectors that set display */
 
 /* ---- cycle ring ---- */
 .ringwrap{display:flex;justify-content:center;margin:6px 0}
@@ -445,22 +449,44 @@ nav button{flex:1;max-width:180px;background:none;color:var(--dim);border-radius
   font-weight:600;letter-spacing:.02em;display:flex;flex-direction:column;align-items:center;gap:4px}
 nav button svg{width:22px;height:22px;stroke-width:1.7}
 nav button.on{color:var(--accent)}
-#auth{position:fixed;inset:0;z-index:20;background:var(--bg);padding:0 18px;overflow-y:auto}
-#auth .card{max-width:400px;margin:15vh auto 0}
-.brand{font-family:var(--serif);font-size:30px;font-weight:500;letter-spacing:-.01em}
+#auth{position:fixed;inset:0;z-index:20;background:var(--bg);padding:24px 18px;overflow-y:auto;
+  display:flex;flex-direction:column;justify-content:center;
+  background-image:radial-gradient(130% 55% at 50% -5%,var(--soft),transparent 68%)}
+/* onboarding: short form, so center it vertically like the sign-in screen */
+#v-setup{min-height:calc(100vh - 96px);display:flex;flex-direction:column;justify-content:center}
+.setup-hero{text-align:center;margin-bottom:20px}
+.setup-hero .brandmark{width:56px;height:56px;margin:0 auto 12px}
+#auth .inner{width:100%;max-width:400px;margin:auto}
+.authhero{text-align:center;margin-bottom:24px}
+.brandmark{width:74px;height:74px;display:block;margin:0 auto 14px}
+.brand{font-family:var(--serif);font-size:34px;font-weight:500;letter-spacing:-.01em}
+.authtag{color:var(--dim);font-size:14.5px;margin-top:5px}
+.btn-col{display:flex;flex-direction:column;gap:10px;margin-top:16px}
 </style></head><body>
 
 <div id=auth class=hide>
-  <div class=card>
-    <div class=brand>Attune</div>
-    <div class=sub style="margin:4px 0 18px">Live in rhythm with your cycle.</div>
-    <input id=aemail type=email placeholder=Email autocomplete=email>
-    <input id=apw type=password placeholder="Password" autocomplete=current-password
-      style="margin-top:10px" onkeydown="if(event.key=='Enter')doAuth('login')">
-    <div class=dim id=aerr style="margin-top:10px;color:var(--men)"></div>
-    <div class=row style="margin-top:16px">
-      <button class=grow onclick="doAuth('login')">Sign in</button>
-      <button class="grow ghost" onclick="doAuth('signup')">Create account</button>
+  <div class=inner>
+    <div class=authhero>
+      <svg class=brandmark viewBox="0 0 76 76" fill="none">
+        <g transform="rotate(-90 38 38)" stroke-width="7" stroke-linecap="round">
+          <circle cx="38" cy="38" r="30" style="stroke:var(--men)" stroke-dasharray="43 146" stroke-dashoffset="0"></circle>
+          <circle cx="38" cy="38" r="30" style="stroke:var(--fol)" stroke-dasharray="43 146" stroke-dashoffset="-47"></circle>
+          <circle cx="38" cy="38" r="30" style="stroke:var(--ovu)" stroke-dasharray="43 146" stroke-dashoffset="-94"></circle>
+          <circle cx="38" cy="38" r="30" style="stroke:var(--lut)" stroke-dasharray="43 146" stroke-dashoffset="-141"></circle>
+        </g>
+      </svg>
+      <div class=brand>Attune</div>
+      <div class=authtag>Live in rhythm with your cycle.</div>
+    </div>
+    <div class=card>
+      <input id=aemail type=email placeholder=Email autocomplete=email>
+      <input id=apw type=password placeholder="Password" autocomplete=current-password
+        style="margin-top:10px" onkeydown="if(event.key=='Enter')doAuth('login')">
+      <div class=dim id=aerr style="margin-top:10px;color:var(--men)"></div>
+      <div class=btn-col>
+        <button onclick="doAuth('login')">Sign in</button>
+        <button class=ghost onclick="doAuth('signup')">Create account</button>
+      </div>
     </div>
   </div>
 </div>
@@ -469,8 +495,18 @@ nav button.on{color:var(--accent)}
 
 <!-- onboarding -->
 <div id=v-setup class=hide>
-  <h1>Set up your cycle</h1>
-  <div class=sub>Three numbers to begin. You can change these anytime.</div>
+  <div class=setup-hero>
+    <svg class=brandmark viewBox="0 0 76 76" fill="none">
+      <g transform="rotate(-90 38 38)" stroke-width="7" stroke-linecap="round">
+        <circle cx="38" cy="38" r="30" style="stroke:var(--men)" stroke-dasharray="43 146" stroke-dashoffset="0"></circle>
+        <circle cx="38" cy="38" r="30" style="stroke:var(--fol)" stroke-dasharray="43 146" stroke-dashoffset="-47"></circle>
+        <circle cx="38" cy="38" r="30" style="stroke:var(--ovu)" stroke-dasharray="43 146" stroke-dashoffset="-94"></circle>
+        <circle cx="38" cy="38" r="30" style="stroke:var(--lut)" stroke-dasharray="43 146" stroke-dashoffset="-141"></circle>
+      </g>
+    </svg>
+    <h1 style="margin:0">Set up your cycle</h1>
+    <div class=sub style="margin-top:5px">Three numbers to begin — change them anytime.</div>
+  </div>
   <div class=card>
     <label>First day of your last period</label>
     <input id=slp type=date style="margin:8px 0 16px">
@@ -614,11 +650,19 @@ function ring(info,size){
 }
 
 async function doAuth(path){
-  $('#aerr').textContent='';
+  const err=m=>{$('#aerr').textContent=m;};
+  err('');
+  const email=$('#aemail').value.trim(), password=$('#apw').value;
+  // Validate here so a short password shows a friendly line, not a 422 whose detail is an object.
+  if(!email) return err('Enter your email.');
+  if(password.length<6) return err('Password must be at least 6 characters.');
   const r=await fetch('/api/'+path,{method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify({email:$('#aemail').value.trim(),password:$('#apw').value})});
+    body:JSON.stringify({email,password})});
   const j=await r.json().catch(()=>({}));
-  if(!r.ok){$('#aerr').textContent=(j.detail&&j.detail.length<200?j.detail:null)||'That did not work.';return}
+  if(!r.ok){
+    const d=j.detail, msg=typeof d=='string'?d:(Array.isArray(d)&&d[0]&&d[0].msg)||'';
+    return err(msg&&msg.length<160?msg:'That didn’t work — check your email and password.');
+  }
   $('#auth').classList.add('hide');$('#apw').value='';load();
 }
 const logout=()=>{if(!confirm('Sign out of Attune?'))return;
