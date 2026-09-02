@@ -575,11 +575,12 @@ nav button.on{color:var(--accent)}
         style="margin-top:10px" onkeydown="if(event.key=='Enter')doAuth('login')">
       <div class=dim id=aerr style="margin-top:10px;color:var(--men)"></div>
       <div class=btn-col>
-        <button onclick="doAuth('login')">Sign in</button>
-        <button class=ghost onclick="doAuth('signup')">Create account</button>
+        <button onclick="doAuth('signup')">Create account</button>
+        <button class=ghost onclick="doAuth('login')">Sign in</button>
       </div>
-      <div style="text-align:center;margin-top:14px;font-size:13px">
-        <a href="/privacy" target="_blank" style="color:var(--dim)">Privacy policy</a>
+      <div style="text-align:center;margin-top:14px;font-size:13px;color:var(--dim)">
+        New here? Tap <b style="color:var(--fg2)">Create account</b>. &middot;
+        <a href="/privacy" target="_blank" style="color:var(--dim)">Privacy</a>
       </div>
     </div>
   </div>
@@ -771,7 +772,10 @@ async function doAuth(path){
   const j=await r.json().catch(()=>({}));
   if(!r.ok){
     const d=j.detail, msg=typeof d=='string'?d:(Array.isArray(d)&&d[0]&&d[0].msg)||'';
-    return err(msg&&msg.length<160?msg:'That didn’t work — check your email and password.');
+    // Don't dead-end a new user who tapped Sign in — point them at Create account (without
+    // revealing whether the email exists, which for a health app would be a privacy leak).
+    if(path=='login') return err('Couldn’t sign in. Double-check your password — or if you’re new here, tap Create account below.');
+    return err(msg&&msg.length<160?msg:'That didn’t work — please try again.');
   }
   $('#auth').classList.add('hide');$('#apw').value='';load();
 }
