@@ -1654,13 +1654,22 @@ async function setInvoiceAccount(id, accountId) {
   } catch (e) { toast(e.message || "Couldn't switch account"); }
 }
 
-async function deleteInvoice(id) {
-  try { await api.send(`/api/invoices/${id}`, "DELETE"); }
+// Optimistic mutation: the feedback (closed modal / toast) is already on screen,
+// so run the write in the background, then refresh from the server. On failure we
+// surface an error AND the refresh re-reads server truth, so the UI self-corrects
+// — a delete that didn't go through simply reappears. Fire-and-forget by design.
+async function _optimistic(write) {
+  try { await write(); }
   catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") return;
-    toast(e.message || "Couldn't delete"); return;
- }
- closeModal(); toast("Invoice deleted"); render();
+    toast(e.message || "Couldn't save — try again");
+  }
+  render();
+}
+
+function deleteInvoice(id) {
+  closeModal(); toast("Invoice deleted");
+  _optimistic(() => api.send(`/api/invoices/${id}`, "DELETE"));
 }
 
 // ---------- EDIT SALE ----------
@@ -2340,7 +2349,7 @@ async function saveExpense() {
     description: document.getElementById("expDesc").value });
   closeModal(); toast("Expense added"); render();
 }
-async function delExpense(id) { await api.send(`/api/expenses/${id}`, "DELETE"); toast("Deleted"); render(); }
+function delExpense(id) { toast("Deleted"); _optimistic(() => api.send(`/api/expenses/${id}`, "DELETE")); }
 
 // One debtor row — a customer and everything they owe across invoices. Shared by
 // the Owed tab and the dashboard's Owed card, so the two can't drift apart.
@@ -2651,7 +2660,7 @@ function callSupplier(product) {
       </div></div>`).join("")}
     <button class="btn secondary" style="margin-top:14px" onclick="closeModal()">Close</button>`);
 }
-async function delProduct(id) { await api.send(`/api/products/${id}`, "DELETE"); closeModal(); toast("Deleted"); render(); }
+function delProduct(id) { closeModal(); toast("Deleted"); _optimistic(() => api.send(`/api/products/${id}`, "DELETE")); }
 
 // ---------- SUPPLIERS (restock orders) ----------
 // Suppliers come from the per-product supplier lists (Products → edit). We group
@@ -2872,7 +2881,7 @@ async function saveCustomer(id) {
   else await api.send("/api/customers", "POST", body);
   closeModal(); toast("Customer saved"); render();
 }
-async function delCustomer(id) { await api.send(`/api/customers/${id}`, "DELETE"); closeModal(); toast("Deleted"); render(); }
+function delCustomer(id) { closeModal(); toast("Deleted"); _optimistic(() => api.send(`/api/customers/${id}`, "DELETE")); }
 
 // ---------- ORDERS (public storefront) ----------
 async function viewOrders() {
