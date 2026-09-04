@@ -28,6 +28,7 @@ export default function Navbar() {
         <div className="hidden md:flex items-center gap-8">
           <Link href="/#pricing" className="text-sm text-white/60 hover:text-white transition-colors">Pricing</Link>
           <Link href="/dashboard" className={`text-sm transition-colors ${pathname === "/dashboard" ? "text-white" : "text-white/60 hover:text-white"}`}>Dashboard</Link>
+          <Link href="/broiler" className={`text-sm transition-colors ${pathname === "/broiler" ? "text-white" : "text-white/60 hover:text-white"}`}>Broiler Sim</Link>
         </div>
 
         <div className="flex items-center gap-3">
