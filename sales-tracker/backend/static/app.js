@@ -1854,10 +1854,18 @@ function isOverdue(inv) {
 }
 
 async function markPaid(id, balance) {
- await api.send(`/api/invoices/${id}/payments`, "POST",
- { amount: balance, method: "Marked paid" });
- if (navigator.onLine && id > 0) { toast("Marked as paid ✓"); receiptOffer(id); }
- else toast("Payment saved offline — syncs when you're online");
+  // Optimistic: acknowledge the tap now, record in the background, then refresh.
+  const online = navigator.onLine && id > 0;
+  toast(online ? "Marked as paid ✓" : "Payment saved offline — syncs when you're online");
+  try {
+    await api.send(`/api/invoices/${id}/payments`, "POST", { amount: balance, method: "Marked paid" });
+  } catch (e) {
+    if (e.message === "__auth__" || e.message === "__upgrade__") return;
+    toast(e.message || "Couldn't mark paid"); render(); return;
+  }
+  // Only offer the receipt once the payment actually recorded — never for a
+  // write that failed (that would receipt an unpaid invoice).
+  if (online) receiptOffer(id);
   render();
 }
 
@@ -1866,14 +1874,16 @@ async function markPaid(id, balance) {
 // status. Online-only — this isn't in the offline write queue.
 async function markUnpaid(id) {
   if (!confirm("Set this invoice back to unpaid? This clears the payment(s) recorded on it.")) return;
+  toast("Marked as unpaid"); // acknowledge now; reverse in the background
   try {
     await api.send(`/api/invoices/${id}/unpay`, "POST");
   } catch (e) {
     if (e.message === "__auth__" || e.message === "__upgrade__") return;
-    return toast(e.message || "Couldn't mark unpaid");
+    toast(e.message || "Couldn't mark unpaid");
   }
-  toast("Marked as unpaid");
-  invoiceDetail(id); // reopen with the refreshed status (the write cleared the GET cache)
+  // Reopen with the refreshed status — success shows unpaid, a failure shows it
+  // still paid (self-correcting). The successful write cleared the GET cache.
+  invoiceDetail(id);
 }
 
 async function shareInvoice(id) {
