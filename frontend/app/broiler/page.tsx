@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bird, Thermometer, Wind, Droplets, Compass, Sun, Moon, Gauge,
-  AlertTriangle, CheckCircle2, Info, XCircle, Utensils, Ruler, Flame,
+  AlertTriangle, CheckCircle2, Info, XCircle, Utensils, Ruler, Flame, Navigation,
 } from "lucide-react";
 import {
   simulate, DEFAULT_INPUTS, bearingToCardinal,
@@ -108,6 +108,201 @@ function CompassDial({ orientation, wind }: { orientation: number; wind: number 
       <circle cx={w.x} cy={w.y} r={4} fill="#38bdf8" />
       <circle cx={c} cy={c} r={3} fill="rgba(255,255,255,0.4)" />
     </svg>
+  );
+}
+
+// Top-down, to-scale plan of the house: orientation, sun side, wind, vents, density.
+function PenPlan({ inp, r }: { inp: BroilerInputs; r: BroilerResult }) {
+  const cx = 170, cy = 120, R = 92;
+  const D2R = Math.PI / 180;
+  const onCircle = (deg: number, rr: number): [number, number] =>
+    [cx + rr * Math.sin(deg * D2R), cy - rr * Math.cos(deg * D2R)];
+
+  const densColor = r.densityStatus === "danger" ? "#f43f5e" : r.densityStatus === "ok" ? "#10b981" : "#f59e0b";
+  const sunBearing = inp.hemisphere === "N" ? 180 : 0; // sun sits equator-ward
+  const sunOn = inp.timeOfDay === "day" && inp.sky !== "overcast";
+  const sunAlpha = sunOn ? (0.1 + 0.28 * r.compass.solarLoadIndex) * (inp.sky === "partly" ? 0.6 : 1) : 0;
+
+  const Lpx = 150;
+  const Wpx = Math.min(78, Math.max(13, Lpx * (inp.houseWidthM / Math.max(1, inp.houseLengthM))));
+  const hx = cx - Lpx / 2, hy = cy - Wpx / 2, midY = cy;
+  const rot = inp.houseOrientationDeg - 90; // rotate so length runs along the bearing
+
+  const [sx, sy] = onCircle(sunBearing, R - 8);
+  const [sgx, sgy] = onCircle(sunBearing, R - 18);
+
+  // Ventilation schematic (inside the rotated house group).
+  const vents: React.ReactNode[] = [];
+  if (inp.ventilation === "tunnel") {
+    for (let t = 0; t < 3; t++) {
+      const ax = hx + 34 + t * 40;
+      vents.push(<line key={`a${t}`} x1={ax} y1={midY} x2={ax + 22} y2={midY} stroke="#38bdf8" strokeWidth={1.6} />);
+      vents.push(<path key={`ah${t}`} d={`M ${ax + 22} ${midY} l -5 -3 v 6 z`} fill="#38bdf8" />);
+    }
+    for (let f = -1; f <= 1; f++)
+      vents.push(<circle key={`fan${f}`} cx={hx + Lpx - 5} cy={midY + f * (Wpx / 3.2)} r={3.4} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={1.4} />);
+    for (let f = -1; f <= 1; f++)
+      vents.push(<line key={`in${f}`} x1={hx + 2} y1={midY + f * (Wpx / 3.2) - 3} x2={hx + 2} y2={midY + f * (Wpx / 3.2) + 3} stroke="#34d399" strokeWidth={2} />);
+  } else if (inp.ventilation === "mechanical") {
+    for (let f = -1; f <= 1; f++)
+      vents.push(<circle key={`mf${f}`} cx={cx + f * 34} cy={hy + Wpx - 3} r={3.4} fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth={1.4} />);
+  } else {
+    for (let t = 0; t < 5; t++) {
+      const ox = hx + 18 + t * 28;
+      vents.push(<line key={`ot${t}`} x1={ox} y1={hy} x2={ox + 12} y2={hy} stroke="#34d399" strokeWidth={3} />);
+      vents.push(<line key={`ob${t}`} x1={ox} y1={hy + Wpx} x2={ox + 12} y2={hy + Wpx} stroke="#34d399" strokeWidth={3} />);
+    }
+  }
+
+  // Wind arrow (geographic — blows from the wind bearing toward the house).
+  const [wpx, wpy] = onCircle(inp.prevailingWindDeg, R + 16);
+  const [wex, wey] = onCircle(inp.prevailingWindDeg, R - 24);
+  const wa = Math.atan2(wey - wpy, wex - wpx);
+  const [wlx, wly] = onCircle(inp.prevailingWindDeg, R + 27);
+
+  return (
+    <svg viewBox="0 0 340 250" className="w-full max-w-[420px] mx-auto block" role="img"
+      aria-label="Scaled top-down plan of the broiler house">
+      <defs>
+        <radialGradient id="penSun" cx={sx} cy={sy} r={R * 1.4} gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#fbbf24" stopOpacity={sunAlpha} />
+          <stop offset="1" stopColor="#fbbf24" stopOpacity={0} />
+        </radialGradient>
+      </defs>
+      <circle cx={cx} cy={cy} r={R} fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.12)" />
+      {sunAlpha > 0 && <circle cx={cx} cy={cy} r={R - 1} fill="url(#penSun)" />}
+
+      {["N", "E", "S", "W"].map((lbl, k) => {
+        const [x1, y1] = onCircle(k * 90, R);
+        const [x2, y2] = onCircle(k * 90, R - 7);
+        const [lx, ly] = onCircle(k * 90, R + 11);
+        return (
+          <g key={lbl}>
+            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(255,255,255,0.35)" strokeWidth={1.5} />
+            <text x={lx} y={ly} fontSize={11} fontWeight={600} textAnchor="middle" dominantBaseline="middle"
+              fill={lbl === "N" ? "#fb7185" : "rgba(255,255,255,0.45)"}>{lbl}</text>
+          </g>
+        );
+      })}
+
+      {sunOn && (
+        <g>
+          {Array.from({ length: 8 }, (_, k) => {
+            const a = k * 45 * D2R;
+            return <line key={k} x1={sgx + 7 * Math.cos(a)} y1={sgy + 7 * Math.sin(a)}
+              x2={sgx + 11 * Math.cos(a)} y2={sgy + 11 * Math.sin(a)} stroke="#f59e0b" strokeWidth={1.6} strokeLinecap="round" />;
+          })}
+          <circle cx={sgx} cy={sgy} r={5.5} fill="#fbbf24" stroke="#f59e0b" />
+        </g>
+      )}
+
+      <g transform={`rotate(${rot} ${cx} ${cy})`}>
+        <rect x={hx} y={hy} width={Lpx} height={Wpx} rx={3} fill={densColor} fillOpacity={0.22} stroke={densColor} strokeWidth={2} />
+        {vents}
+      </g>
+
+      <text x={cx} y={cy - 4} fontSize={11} fontWeight={700} textAnchor="middle" fill="rgba(255,255,255,0.9)" fontFamily="var(--font-mono)">
+        {Math.round(inp.houseLengthM)}×{Math.round(inp.houseWidthM)} m
+      </text>
+      <text x={cx} y={cy + 9} fontSize={9.5} textAnchor="middle" fill="rgba(255,255,255,0.55)" fontFamily="var(--font-mono)">
+        {r.densityKgM2.toFixed(1)} kg/m²
+      </text>
+
+      <line x1={wpx} y1={wpy} x2={wex} y2={wey} stroke="#38bdf8" strokeWidth={2.4} />
+      <path fill="#38bdf8"
+        d={`M ${wex} ${wey} l ${-9 * Math.cos(wa - 0.4)} ${-9 * Math.sin(wa - 0.4)} l ${9 * (Math.cos(wa - 0.4) - Math.cos(wa + 0.4))} ${9 * (Math.sin(wa - 0.4) - Math.sin(wa + 0.4))} z`} />
+      <text x={wlx} y={wly} fontSize={9} textAnchor="middle" dominantBaseline="middle" fill="#7dd3fc">wind</text>
+    </svg>
+  );
+}
+
+// Reads the device magnetometer so the farmer can capture true bearings on-site.
+type DeviceOrientationEventiOS = { requestPermission?: () => Promise<"granted" | "denied"> };
+type OrientationWithHeading = DeviceOrientationEvent & { webkitCompassHeading?: number };
+
+function PhoneCompass({
+  onSet,
+}: { onSet: (target: "houseOrientationDeg" | "prevailingWindDeg", deg: number) => void }) {
+  const [active, setActive] = useState(false);
+  const [heading, setHeading] = useState<number | null>(null);
+  const [note, setNote] = useState("Point your phone along the pen's long wall, then tap “Set house axis”.");
+  const headingRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const onOrient = (ev: Event) => {
+      const e = ev as OrientationWithHeading;
+      let h: number | null = null;
+      if (typeof e.webkitCompassHeading === "number" && !Number.isNaN(e.webkitCompassHeading)) h = e.webkitCompassHeading;
+      else if (e.absolute && typeof e.alpha === "number") h = (360 - e.alpha) % 360;
+      else if (typeof e.alpha === "number") h = (360 - e.alpha) % 360;
+      if (h == null) return;
+      const hh = (h + 360) % 360;
+      headingRef.current = hh;
+      setHeading(hh);
+      setNote("Aim the phone down a wall or into the wind, then capture it below.");
+    };
+    window.addEventListener("deviceorientationabsolute", onOrient, true);
+    window.addEventListener("deviceorientation", onOrient, true);
+    const t = window.setTimeout(() => {
+      if (headingRef.current == null)
+        setNote("No compass reading yet — this device may lack a magnetometer, or the browser blocks it. Use the sliders above.");
+    }, 2500);
+    return () => {
+      window.removeEventListener("deviceorientationabsolute", onOrient, true);
+      window.removeEventListener("deviceorientation", onOrient, true);
+      window.clearTimeout(t);
+    };
+  }, [active]);
+
+  const start = async () => {
+    setActive(true);
+    try {
+      const DOE = (window as unknown as { DeviceOrientationEvent?: DeviceOrientationEventiOS }).DeviceOrientationEvent;
+      if (DOE && typeof DOE.requestPermission === "function") {
+        const res = await DOE.requestPermission();
+        if (res !== "granted") {
+          setNote("Compass permission denied. Enable Motion & Orientation access in Settings, or use the sliders.");
+          setActive(false);
+        }
+      }
+    } catch {
+      setNote("Couldn't start the compass on this device — use the sliders above.");
+    }
+  };
+
+  const capture = (target: "houseOrientationDeg" | "prevailingWindDeg") => {
+    if (headingRef.current != null) onSet(target, Math.round(headingRef.current));
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-dashed border-white/10">
+      {!active ? (
+        <button onClick={start}
+          className="w-full flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium
+            bg-purple-500/15 text-purple-200 border border-purple-500/40 hover:bg-purple-500/25 transition-colors">
+          <Navigation size={14} /> Use my phone&apos;s compass
+        </button>
+      ) : (
+        <div className="text-center">
+          <div className="text-3xl font-bold tracking-tight tabular-nums">
+            {heading == null ? "—" : `${Math.round(heading)}°`}
+            {heading != null && <span className="text-sm text-white/40 font-normal ml-1">{bearingToCardinal(heading)}</span>}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button onClick={() => capture("houseOrientationDeg")} disabled={heading == null}
+              className="flex-1 rounded-lg py-2 text-xs border border-white/15 text-white/90 bg-white/5 hover:bg-white/10 disabled:opacity-40 transition-colors">
+              Set house axis
+            </button>
+            <button onClick={() => capture("prevailingWindDeg")} disabled={heading == null}
+              className="flex-1 rounded-lg py-2 text-xs border border-white/15 text-white/90 bg-white/5 hover:bg-white/10 disabled:opacity-40 transition-colors">
+              Set wind from
+            </button>
+          </div>
+        </div>
+      )}
+      <p className="mt-2 text-[11px] text-white/40 leading-snug">{note}</p>
+    </div>
   );
 }
 
@@ -227,6 +422,7 @@ export default function BroilerSimulatorPage() {
               <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-purple-500 inline-block" /> house axis</span>
               <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-sky-400 inline-block" /> wind</span>
             </div>
+            <PhoneCompass onSet={(t, deg) => set(t, deg)} />
           </div>
 
           {/* Environment */}
@@ -316,6 +512,26 @@ export default function BroilerSimulatorPage() {
               They feel about <strong>{r.effectiveTempC.toFixed(1)}°C</strong> against a target of{" "}
               <strong>{r.targetTempC.toFixed(0)}°C</strong> ({r.comfortLowC.toFixed(1)}–{r.comfortHighC.toFixed(1)}°C comfort band).
             </p>
+          </div>
+
+          {/* Pen layout */}
+          <div className="glass-card rounded-2xl p-5">
+            <h3 className="flex items-center gap-2 text-xs uppercase tracking-wider text-white/40 mb-2">
+              <Bird size={13} /> Pen layout — top-down, to scale
+            </h3>
+            <PenPlan inp={inp} r={r} />
+            <div className="mt-2 text-center text-xs text-white/50">
+              Long axis {inp.houseOrientationDeg}° {bearingToCardinal(inp.houseOrientationDeg)} · wind from{" "}
+              {inp.prevailingWindDeg}° {bearingToCardinal(inp.prevailingWindDeg)} · {inp.timeOfDay}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[10px] text-white/40">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-500/60 inline-block" /> flock density</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-emerald-400 inline-block" /> air inlets</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-sky-400 inline-block" /> airflow / wind</span>
+              {inp.timeOfDay === "day" && inp.sky !== "overcast" && (
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-400 inline-block" /> sun side</span>
+              )}
+            </div>
           </div>
 
           {/* Climate stats */}
