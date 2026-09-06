@@ -1,0 +1,11 @@
+# Ramble user blocklist.
+#
+# One domain per line. A domain blocks itself and all subdomains, e.g.
+#   example.com   -> blocks example.com and ads.example.com
+# Lines starting with '#' and blank lines are ignored.
+#
+# These are merged with the built-in defaults in ramble/security.py, so you only
+# need to add extra domains here. Point RAMBLE_BLOCKLIST at another file to use
+# a different one.
+
+# --- add your own domains below ---
