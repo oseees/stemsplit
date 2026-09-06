@@ -29,6 +29,7 @@ from PyQt6.QtWebEngineCore import (
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QHBoxLayout,
     QLabel,
@@ -72,7 +73,14 @@ def build_profile(config: BrowserConfig, interceptor: RequestInterceptor) -> QWe
     # An unnamed profile is off-the-record: cookies, cache and storage live only
     # in memory and vanish on exit. That is both the RAM-friendly and the secure
     # default. A named profile (private=False) persists to disk instead.
-    profile = QWebEngineProfile() if config.private else QWebEngineProfile("ramble")
+    #
+    # Parent the profile to the QApplication so it outlives every page: Qt tears
+    # down the widget tree (and its pages) when the window closes, and only then
+    # the application, so the profile is destroyed last. Without this the profile
+    # can be released while pages still reference it ("Expect troubles!") and
+    # crash on exit.
+    app = QApplication.instance()
+    profile = QWebEngineProfile(app) if config.private else QWebEngineProfile("ramble", app)
 
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
     profile.setHttpCacheMaximumSize(HTTP_CACHE_MAX_BYTES)

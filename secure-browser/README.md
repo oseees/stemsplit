@@ -37,7 +37,19 @@ on PyQt6's Chromium-based web engine.
   from JS are off.
 - **Off-the-record by default** — no persistent cookies, cache, or history.
 
-## Install & run
+## Quick start
+
+The launcher sets up a virtualenv, installs the dependency, and starts the
+browser — one command:
+
+```bash
+cd secure-browser
+./run.sh                        # opens the home page
+./run.sh https://example.com    # open a specific URL
+./run.sh --max-live-tabs 3      # pass any option through
+```
+
+### Manual install
 
 ```bash
 cd secure-browser
@@ -47,8 +59,17 @@ python -m ramble                       # opens the home page
 python -m ramble https://example.com   # open a specific URL
 ```
 
-On a headless Linux box you'll also need system Qt/OpenGL libraries (e.g.
-`libgl1`, `libxkbcommon0`, `libegl1`) and a display (or `xvfb-run`).
+Ramble is a **desktop** app: it opens a real window, so run it on a machine with
+a display (not a headless server). On Linux you also need a few system libraries
+the bundled engine links against:
+
+```bash
+sudo apt install libegl1 libgl1 libxkbcommon0 libnss3 \
+     libxcomposite1 libxdamage1 libxrandr2 libasound2t64
+```
+
+macOS and Windows need no extra system packages — `pip install` pulls in
+everything.
 
 ### Options
 
@@ -88,5 +109,14 @@ tested without a display:
 
 ```bash
 cd secure-browser
-python -m pytest        # or: python -m unittest discover -s tests
+python -m pytest tests/test_security.py tests/test_suspend.py
+```
+
+There is also a headless GUI smoke test that runs the real window under Qt's
+`offscreen` platform (no display) to verify the profile, tabs, suspend/resume,
+the live-renderer cap and the request interceptor all construct and operate
+without crashing:
+
+```bash
+QT_QPA_PLATFORM=offscreen python tests/smoke_gui.py
 ```
