@@ -364,6 +364,63 @@ def youtube_videos():
         raise HTTPException(400, str(e))
 
 
+@app.post("/batch")
+async def batch(beats: list[UploadFile] = File(...), covers: list[UploadFile] = File(...),
+                titles: str = Form(default="[]"), schedule: str = Form(default="[]"),
+                fmt: str = Form(default="landscape"), filter: str = Form(default="none"),
+                overlay_text: str = Form(default=""), overlay_font: str = Form(default=""),
+                visualizer: str = Form(default="none"), description: str = Form(default=""),
+                tags: str = Form(default="")):
+    """Render one video per beat (paired with a cover image by order) and upload each to
+    YouTube, scheduled at its own publishAt so YouTube auto-publishes them over time."""
+    import youtube as yt  # local-only
+    if fmt not in FORMATS:
+        raise HTTPException(400, f"format must be one of {list(FORMATS)}")
+    vf_extra = FILTERS.get(filter) or ""
+    if visualizer not in ("none", *VISUALIZERS):
+        raise HTTPException(400, "bad visualizer")
+    try:
+        title_list, sched_list = json.loads(titles), json.loads(schedule)
+    except ValueError:
+        raise HTTPException(400, "titles/schedule must be JSON arrays")
+    if not beats or not covers:
+        raise HTTPException(400, "need at least one beat and one cover")
+    font_path, tag_list = FONTS.get(overlay_font), [t.strip() for t in tags.split(",") if t.strip()]
+    now = datetime.now(timezone.utc)
+    # read every upload up front — an UploadFile stream can only be read once, and we reuse covers
+    beat_blobs = [(Path(b.filename).stem, Path(b.filename).suffix, await b.read()) for b in beats]
+    cover_blobs = [(Path(c.filename).suffix.lower(), await c.read()) for c in covers]
+
+    results = []
+    for i, (stem, suffix, blob) in enumerate(beat_blobs):
+        title = (title_list[i] if i < len(title_list) and title_list[i] else stem) or "BeatVideo"
+        pub = sched_list[i] if i < len(sched_list) else ""
+        work = Path(tempfile.mkdtemp(prefix="beatvideo_batch_"))
+        try:
+            if pub:
+                when = datetime.fromisoformat(pub.replace("Z", "+00:00"))
+                if when <= now:
+                    raise ValueError("schedule time is in the past")
+            beat_path = work / ("beat" + suffix)
+            beat_path.write_bytes(blob)
+            csuf, cblob = cover_blobs[i] if i < len(cover_blobs) else cover_blobs[-1]
+            cover_path = work / ("cover" + csuf)
+            cover_path.write_bytes(cblob)
+            out = work / "beat_video.mp4"
+            build(beat_path, [cover_path], out, vf_extra, fmt=fmt,
+                  overlay_text=overlay_text.strip()[:60], visualizer=visualizer,
+                  overlay_font=font_path)
+            video_id = yt.upload(out, title, description=description, privacy="private",
+                                 tags=tag_list, publish_at=pub or None)
+            results.append({"title": title, "youtube_url": f"https://youtu.be/{video_id}",
+                            "publish_at": pub})
+        except Exception as e:
+            results.append({"title": title, "error": str(e)})
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    return {"results": results}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     font_opts = "".join(f'<option value="{n}">{n}</option>' for n in FONTS)
@@ -472,6 +529,22 @@ onto the boxes below.</p>
 </div>
 <button id="go">Make video</button>
 <div id="msg"></div>
+
+<div class="card" style="border:1px solid #333">
+  <label>📅 Batch schedule (many beats at once)</label>
+  <div style="color:#888;font-size:.8rem;margin-bottom:8px">Drop several beats + cover images (paired
+    in order; one cover works for all). Each becomes a video, uploaded Private and set to go Public on
+    its date. Uses the Format, Filter, Producer tag &amp; YouTube description/tags chosen above.</div>
+  <label style="font-weight:400">Beats (audio, multiple)<input type="file" id="batchBeats" accept="audio/*" multiple></label>
+  <label style="font-weight:400;margin-top:8px">Cover images<input type="file" id="batchCovers" accept="image/*" multiple></label>
+  <div class="row" style="margin-top:10px">
+    <label style="font-weight:400;flex:2">Start date/time<input type="datetime-local" id="batchStart" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"></label>
+    <label style="font-weight:400;flex:1">Every<input type="number" id="batchInterval" value="2" min="0" step="1" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"> day(s)</label>
+  </div>
+  <table id="batchRows" style="width:100%;margin-top:10px;border-collapse:collapse;font-size:.85rem"></table>
+  <button id="batchGo" style="margin-top:12px;background:#1a7f4b">📤 Render &amp; schedule batch</button>
+  <div id="batchMsg" style="margin-top:10px;color:#aaa"></div>
+</div>
 <script>
 const $ = id => document.getElementById(id);
 const beat = $('beat'), source = $('source'), media = $('media'), player = $('player'),
@@ -641,5 +714,67 @@ go.onclick = async () => {
     }
   } catch (e) { msg.textContent = 'Failed: ' + e.message; }
   go.disabled = false;
+};
+
+// ---- Batch schedule ----
+const batchBeats = $('batchBeats'), batchStart = $('batchStart'), batchInterval = $('batchInterval'),
+      batchRows = $('batchRows'), batchGo = $('batchGo'), batchMsg = $('batchMsg');
+const toLocalInput = d => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+batchStart.min = toLocalInput(new Date());
+if (!batchStart.value) batchStart.value = toLocalInput(new Date(Date.now() + 86400000));  // default: tomorrow
+
+function buildBatchRows() {
+  batchRows.innerHTML = '';
+  [...batchBeats.files].forEach((f, i) => {
+    const tr = document.createElement('tr');
+    const stem = f.name.replace(/\.[^.]+$/, '');
+    tr.innerHTML =
+      '<td style="padding:3px 4px 3px 0"><input class="btitle" value="' + stem.replace(/"/g, '&quot;') +
+        '" style="width:100%;padding:6px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"></td>' +
+      '<td style="padding:3px 0"><input type="datetime-local" class="bdate" style="padding:6px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444"></td>';
+    batchRows.appendChild(tr);
+  });
+  fillBatchDates();
+}
+function fillBatchDates() {
+  if (!batchStart.value) return;
+  const start = new Date(batchStart.value), gap = Math.max(0, +batchInterval.value || 0);
+  batchRows.querySelectorAll('.bdate').forEach((inp, i) => {
+    inp.value = toLocalInput(new Date(start.getTime() + i * gap * 86400000));
+  });
+}
+batchBeats.onchange = buildBatchRows;
+batchStart.onchange = fillBatchDates;
+batchInterval.oninput = fillBatchDates;
+
+batchGo.onclick = async () => {
+  if (!batchBeats.files.length) { batchMsg.textContent = 'Add at least one beat.'; return; }
+  if (!$('batchCovers').files.length) { batchMsg.textContent = 'Add at least one cover image.'; return; }
+  const fd = new FormData();
+  for (const f of batchBeats.files) fd.append('beats', f);
+  for (const f of $('batchCovers').files) fd.append('covers', f);
+  fd.append('titles', JSON.stringify([...batchRows.querySelectorAll('.btitle')].map(i => i.value)));
+  fd.append('schedule', JSON.stringify([...batchRows.querySelectorAll('.bdate')]
+    .map(i => i.value ? new Date(i.value).toISOString() : '')));
+  fd.append('fmt', $('fmt').value);
+  fd.append('filter', filterSel.value);
+  fd.append('overlay_text', $('overlayText').value);
+  fd.append('overlay_font', $('overlayFont').value);
+  fd.append('visualizer', $('visualizer').value);
+  fd.append('description', description.value);
+  fd.append('tags', tags.value);
+  batchGo.disabled = true;
+  batchMsg.textContent = 'Rendering & uploading ' + batchBeats.files.length + ' videos… this takes a while, keep this tab open.';
+  try {
+    const r = await fetch('/batch', {method: 'POST', body: fd});
+    if (!r.ok) throw new Error(await r.text());
+    const {results} = await r.json();
+    batchMsg.innerHTML = results.map(x => x.error
+      ? '⚠ <b>' + x.title + '</b>: ' + x.error
+      : '✅ <b>' + x.title + '</b> → <a href="' + x.youtube_url + '" target="_blank">link</a>' +
+        (x.publish_at ? ' · ' + new Date(x.publish_at).toLocaleString() : ' · now (Private)')
+    ).join('<br>');
+  } catch (e) { batchMsg.textContent = 'Failed: ' + e.message; }
+  batchGo.disabled = false;
 };
 </script>"""
