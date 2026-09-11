@@ -542,6 +542,8 @@ onto the boxes below.</p>
     style="width:100%;margin-top:10px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit;resize:vertical"></textarea>
   <input type="text" id="batchTags" placeholder="Tags for all (afrobeats, type beat, free beat)"
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+  <select id="batchReuse" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+    <option value="">↺ Copy description &amp; tags from a past video…</option></select>
   <div style="color:#888;font-size:.8rem;margin-top:6px">Each beat's <b>title</b> is editable in the table below
     (defaults to the file name). Description &amp; tags are remembered.</div>
   <div class="row" style="margin-top:10px">
@@ -590,6 +592,7 @@ for (const el of Object.values(YT_FIELDS)) el.addEventListener('input', () => { 
 
 // pull title/description/tags from a video already on the channel and reuse them
 let pastVideos = [], loadedPast = false;
+const reuseTargets = [reuseFrom, $('batchReuse')];  // both dropdowns share one fetch
 async function loadPast() {
   if (loadedPast) return;
   loadedPast = true;
@@ -597,12 +600,13 @@ async function loadPast() {
     const r = await fetch('/youtube/videos');
     if (!r.ok) throw new Error(await r.text());
     pastVideos = await r.json();
-    pastVideos.forEach((v, i) =>
-      reuseFrom.appendChild(new Option((v.title || '(untitled)').slice(0, 70), String(i))));
-    if (!pastVideos.length) reuseFrom.appendChild(new Option('(no past videos found)', ''));
+    reuseTargets.forEach(sel => {
+      pastVideos.forEach((v, i) => sel.appendChild(new Option((v.title || '(untitled)').slice(0, 70), String(i))));
+      if (!pastVideos.length) sel.appendChild(new Option('(no past videos found)', ''));
+    });
   } catch (e) {
     loadedPast = false;  // let it retry next open
-    reuseFrom.appendChild(new Option('(could not load videos)', ''));
+    reuseTargets.forEach(sel => sel.appendChild(new Option('(could not load videos)', '')));
   }
 }
 reuseFrom.onchange = () => {
@@ -612,6 +616,16 @@ reuseFrom.onchange = () => {
   description.value = v.description;
   tags.value = (v.tags || []).join(', ');
   saveYt();
+};
+// batch reuse: load the list on first focus, and copy just description + tags (titles are per-beat)
+$('batchReuse').addEventListener('focus', loadPast);
+$('batchReuse').onchange = () => {
+  const v = pastVideos[$('batchReuse').value];
+  if (!v) return;
+  $('batchDescription').value = v.description;
+  $('batchTags').value = (v.tags || []).join(', ');
+  $('batchDescription').dispatchEvent(new Event('input'));  // persist
+  $('batchTags').dispatchEvent(new Event('input'));
 };
 syncYt();
 const MAX_CLIP = 5, clips = [];
