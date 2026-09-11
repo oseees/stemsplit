@@ -410,7 +410,8 @@ async def batch(beats: list[UploadFile] = File(...), covers: list[UploadFile] = 
             build(beat_path, [cover_path], out, vf_extra, fmt=fmt,
                   overlay_text=overlay_text.strip()[:60], visualizer=visualizer,
                   overlay_font=font_path)
-            video_id = yt.upload(out, title, description=description, privacy="private",
+            desc = description.replace("{title}", title)  # personalize per video
+            video_id = yt.upload(out, title, description=desc, privacy="private",
                                  tags=tag_list, publish_at=pub or None)
             results.append({"title": title, "youtube_url": f"https://youtu.be/{video_id}",
                             "publish_at": pub})
@@ -537,6 +538,12 @@ onto the boxes below.</p>
     its date. Uses the Format, Filter, Producer tag &amp; YouTube description/tags chosen above.</div>
   <label style="font-weight:400">Beats (audio, multiple)<input type="file" id="batchBeats" accept="audio/*" multiple></label>
   <label style="font-weight:400;margin-top:8px">Cover images<input type="file" id="batchCovers" accept="image/*" multiple></label>
+  <textarea id="batchDescription" rows="3" placeholder="Description for every video — use {title} to insert each beat's title"
+    style="width:100%;margin-top:10px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit;resize:vertical"></textarea>
+  <input type="text" id="batchTags" placeholder="Tags for all (afrobeats, type beat, free beat)"
+    style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+  <div style="color:#888;font-size:.8rem;margin-top:6px">Each beat's <b>title</b> is editable in the table below
+    (defaults to the file name). Description &amp; tags are remembered.</div>
   <div class="row" style="margin-top:10px">
     <label style="font-weight:400;flex:2">Start date/time<input type="datetime-local" id="batchStart" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"></label>
     <label style="font-weight:400;flex:1">Every<input type="number" id="batchInterval" value="2" min="0" step="1" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"> day(s)</label>
@@ -722,6 +729,12 @@ const batchBeats = $('batchBeats'), batchStart = $('batchStart'), batchInterval 
 const toLocalInput = d => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 batchStart.min = toLocalInput(new Date());
 if (!batchStart.value) batchStart.value = toLocalInput(new Date(Date.now() + 86400000));  // default: tomorrow
+// remember the batch description/tags template across sessions
+for (const [id, key] of [['batchDescription', 'beatvideo_bdesc'], ['batchTags', 'beatvideo_btags']]) {
+  const el = $(id);
+  if (localStorage.getItem(key)) el.value = localStorage.getItem(key);
+  el.addEventListener('input', () => localStorage.setItem(key, el.value));
+}
 
 function buildBatchRows() {
   batchRows.innerHTML = '';
@@ -761,8 +774,8 @@ batchGo.onclick = async () => {
   fd.append('overlay_text', $('overlayText').value);
   fd.append('overlay_font', $('overlayFont').value);
   fd.append('visualizer', $('visualizer').value);
-  fd.append('description', description.value);
-  fd.append('tags', tags.value);
+  fd.append('description', $('batchDescription').value);
+  fd.append('tags', $('batchTags').value);
   batchGo.disabled = true;
   batchMsg.textContent = 'Rendering & uploading ' + batchBeats.files.length + ' videos… this takes a while, keep this tab open.';
   try {
