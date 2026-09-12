@@ -157,6 +157,28 @@ def auto_clips(src: Path, beat_dur: float, head_skip: float = 5.0,
     return [(round(s, 2), round(s + length, 2)) for s in starts]
 
 
+def best_window(beat: Path, length: float) -> float:
+    """Start time (s) of the highest-energy `length`-second window — usually the
+    drop/hook. Used to cut a Short teaser from the loudest part of the beat."""
+    import librosa
+    import numpy as np
+    total = duration(beat)
+    if total <= length + 0.5:
+        return 0.0
+    wav = beat.parent / "beat_energy.wav"
+    run(["ffmpeg", "-y", "-i", str(beat), "-ac", "1", "-ar", "22050", "-t", "600", str(wav)])
+    y, sr = librosa.load(str(wav), sr=22050, mono=True)
+    hop = 512
+    rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+    fps = sr / hop
+    wlen = int(length * fps)
+    if wlen >= len(rms) or wlen < 1:
+        return 0.0
+    csum = np.cumsum(np.insert(rms, 0, 0.0))  # prefix sum -> O(n) sliding energy
+    start = int(np.argmax(csum[wlen:] - csum[:-wlen])) / fps
+    return round(min(start, total - length), 2)
+
+
 def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] = None,
               length: Optional[float] = None, vf_base: str = VF) -> None:
     """Re-encode an image, video, or video slice into a uniform silent segment."""
@@ -254,7 +276,8 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                head_skip: float = Form(default=5.0), tail_skip: float = Form(default=15.0),
                fmt: str = Form(default="landscape"), beat_sync: str = Form(default="on"),
                overlay_text: str = Form(default=""), visualizer: str = Form(default="none"),
-               overlay_font: str = Form(default="")):
+               overlay_font: str = Form(default=""),
+               also_short: str = Form(default="off"), short_len: float = Form(default=30.0)):
     if fmt not in FORMATS:
         raise HTTPException(400, f"format must be one of {list(FORMATS)}")
     if visualizer not in ("none", *VISUALIZERS):
@@ -342,8 +365,38 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                     yt.set_thumbnail(video_id, thumb_path)
                 except RuntimeError as e:
                     thumb_note = str(e)  # keep the video; just report the thumbnail didn't stick
+            # optional vertical Short that links back to the full video (audience funnel)
+            short_url, short_note = "", ""
+            if also_short == "on":
+                try:
+                    slen = min(max(short_len, 15.0), 60.0)  # YouTube Shorts must be <= 60s
+                    s_start = best_window(beat_path, slen)
+                    short_beat = work / ("short_beat" + Path(beat.filename).suffix)
+                    run(["ffmpeg", "-y", "-ss", str(s_start), "-t", str(slen),
+                         "-i", str(beat_path), "-c", "copy", str(short_beat)])
+                    s_seg, s_first, _ = (detect_beats(short_beat) if beat_sync == "on"
+                                         else (None, 0.0, 0.0))
+                    s_clips = clip_list
+                    if auto:  # re-pick clips to fill the shorter beat
+                        s_clips = auto_clips(source_path, duration(short_beat), head_skip,
+                                             tail_skip, clip_len=s_seg or 4.0)
+                    short_out = work / "short.mp4"
+                    build(short_beat, media_paths, short_out, vf_extra, source_path, s_clips,
+                          "vertical", seg_len=s_seg, first_extra=s_first,
+                          overlay_text=overlay_text.strip()[:60], visualizer=visualizer,
+                          overlay_font=FONTS.get(overlay_font))
+                    s_title = (title or "BeatVideo")
+                    if "#short" not in s_title.lower():
+                        s_title = s_title[:88] + " #Shorts"
+                    s_desc = f"🔊 Full beat 👇\nhttps://youtu.be/{video_id}\n\n{description}"
+                    short_id = yt.upload(short_out, s_title, description=s_desc, privacy=youtube,
+                                         tags=tag_list, publish_at=publish_at or None)
+                    short_url = f"https://youtu.be/{short_id}"
+                except Exception as e:
+                    short_note = f"Short skipped: {e}"  # never lose the main upload
             return {"youtube_url": f"https://youtu.be/{video_id}", "privacy": youtube,
-                    "publish_at": publish_at, "thumbnail_error": thumb_note, "bpm": bpm}
+                    "publish_at": publish_at, "thumbnail_error": thumb_note, "bpm": bpm,
+                    "short_url": short_url, "short_error": short_note}
     except Exception:
         shutil.rmtree(work, ignore_errors=True)
         raise
@@ -501,6 +554,26 @@ _INDEX = """<!doctype html>
   </div>
 </details>
 
+<details class="card">
+  <summary>🚀 Type-beat SEO <span class="hint">— title &amp; tags people actually search</span></summary>
+  <div class="sub">
+    <label>Artist(s) to target <span class="hint">(comma-separated, first is primary)</span></label>
+    <input type="text" id="seoArtist" placeholder="e.g. Drake, Rema">
+    <label style="margin-top:12px">Genre / vibe</label>
+    <input type="text" id="seoGenre" placeholder="e.g. Afrobeats, Trap, Drill">
+    <label style="margin-top:12px">Song / mood name <span class="hint">(optional)</span></label>
+    <input type="text" id="seoSong" placeholder="e.g. Midnight">
+    <div class="row" style="margin-top:12px">
+      <label style="font-weight:400;flex:1">BPM <input type="text" id="seoBpm" placeholder="140" style="width:100%"></label>
+      <label style="font-weight:400;flex:1">Key <input type="text" id="seoKey" placeholder="C min" style="width:100%"></label>
+    </div>
+    <button type="button" id="seoGo" class="mini" style="margin-top:12px">✨ Generate title &amp; tags</button>
+    <div id="seoMsg" class="hint"></div>
+    <div class="hint">Builds the proven <b>[FREE] "Song" | Artist Type Beat | Genre Type Beat YEAR</b> title
+      plus ~30 search tags, and drops them into both Single and Batch. Tweak after.</div>
+  </div>
+</details>
+
 <div id="singlePane">
 <p class="hint">Upload a beat, then pick clips from a music video and/or add pictures. Drag &amp; drop works too.</p>
 <div class="card"><label>Beat (mp3 / wav)<input type="file" id="beat" accept="audio/*"></label>
@@ -550,6 +623,11 @@ _INDEX = """<!doctype html>
     <div style="color:#888;font-size:.8rem;margin-top:6px">If set, the video uploads private and
       goes <b>Public</b> automatically at that time. Leave blank to publish now.
       Title/description/tags are remembered for next time.</div>
+    <label class="chk" style="margin-top:14px"><input type="checkbox" id="alsoShort">🎬 Also make a vertical
+      <b>&nbsp;Short</b>&nbsp; that links to this video (funnels viewers to the full beat)</label>
+    <label id="shortLenRow" style="font-weight:400;margin-top:6px;display:none">Short length
+      <input type="number" id="shortLen" value="30" min="15" max="60" style="width:64px"> s
+      <span class="hint">cut from the loudest part (the drop). Uploads at the same privacy/schedule.</span></label>
   </div>
 </div>
 <button id="go">Make video</button>
@@ -574,10 +652,19 @@ _INDEX = """<!doctype html>
   <button type="button" id="batchApplyDesc" class="mini" style="margin-top:8px">↻ Apply title &amp; description to every video below</button>
   <div style="color:#888;font-size:.8rem;margin-top:6px">Each video's <b>title</b> and <b>description</b> are
     editable per row below — the fields above are the defaults. Description &amp; tags are remembered.</div>
+  <label style="font-weight:400;margin-top:10px">Posting rhythm
+    <select id="batchCadence" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;margin-top:6px">
+      <option value="1">Daily</option>
+      <option value="2" selected>Every 2 days</option>
+      <option value="3">Every 3 days</option>
+      <option value="7">Weekly</option>
+    </select></label>
+  <div class="hint">A steady cadence keeps you in the algorithm — pick one and the dates fill in.</div>
   <div class="row" style="margin-top:10px">
     <label style="font-weight:400;flex:2">Start date/time<input type="datetime-local" id="batchStart" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"></label>
     <label style="font-weight:400;flex:1">Every<input type="number" id="batchInterval" value="2" min="0" step="1" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"> day(s)</label>
   </div>
+  <div id="batchSummary" class="hint" style="margin-top:8px"></div>
   <div id="batchRows" style="margin-top:10px"></div>
   <button id="batchGo" style="margin-top:12px;background:#1a7f4b">📤 Render &amp; schedule batch</button>
   <div id="batchMsg" style="margin-top:10px;color:#aaa"></div>
@@ -666,6 +753,43 @@ $('batchReuse').addEventListener('change', () => {
   $('batchReuse').value = '';
 });
 syncYt();
+
+// ---- Type-beat SEO: build the proven title + a fat tag set, drop into Single & Batch ----
+$('seoGo').onclick = () => {
+  const artists = $('seoArtist').value.split(',').map(s => s.trim()).filter(Boolean);
+  const genre = $('seoGenre').value.trim(), song = $('seoSong').value.trim();
+  const bpm = $('seoBpm').value.trim(), key = $('seoKey').value.trim();
+  const year = new Date().getFullYear();
+  if (!artists.length && !genre) { $('seoMsg').textContent = 'Add at least an artist or a genre.'; return; }
+  const a0 = artists[0] || '', parts = [];
+  if (song) parts.push('"' + song + '"');
+  if (a0) parts.push(a0 + (artists[1] ? ' x ' + artists[1] : '') + ' Type Beat');
+  parts.push((genre ? genre + ' ' : '') + 'Type Beat ' + year);
+  const t = ('[FREE] ' + parts.join(' | ')).slice(0, 100);
+  const tags_ = new Set();
+  artists.forEach(a => { const l = a.toLowerCase();
+    ['{} type beat', '{} type beat ' + year, 'free {} type beat', '{} instrumental', '{} beat']
+      .forEach(f => tags_.add(f.replace('{}', l))); });
+  if (genre) { const g = genre.toLowerCase();
+    ['{} type beat', '{} instrumental', '{} type beat ' + year, 'free {} type beat', '{} beat']
+      .forEach(f => tags_.add(f.replace('{}', g))); }
+  ['type beat', 'free type beat', 'type beat ' + year, 'free beat', 'instrumental',
+   'free instrumental', 'beats', 'freestyle beat', 'rap beat', 'trap beat'].forEach(x => tags_.add(x));
+  if (bpm) tags_.add(bpm + ' bpm'); if (key) tags_.add(key + ' type beat');
+  const tagStr = [...tags_].join(', ').slice(0, 480);  // YouTube caps total tag text ~500 chars
+  title.value = t; tags.value = tagStr; saveYt();
+  $('batchTitle').value = t; $('batchTags').value = tagStr;
+  [$('batchTitle'), $('batchTags')].forEach(el => el.dispatchEvent(new Event('input')));
+  $('seoMsg').textContent = '✓ Applied to Single & Batch (' + tags_.size + ' tags). Edit anything below.';
+};
+
+// ---- Auto-Short toggle (single pane) ----
+const alsoShort = $('alsoShort');
+alsoShort.checked = localStorage.getItem('beatvideo_short') === '1';
+const syncShort = () => { $('shortLenRow').style.display = alsoShort.checked ? 'block' : 'none';
+  localStorage.setItem('beatvideo_short', alsoShort.checked ? '1' : '0'); };
+alsoShort.onchange = syncShort; syncShort();
+
 const MAX_CLIP = 5, clips = [];
 let inPoint = null;
 const fmt = t => t.toFixed(1) + 's';
@@ -748,6 +872,7 @@ go.onclick = async () => {
   fd.append('tags', tags.value);
   const scheduled = yt !== 'off' && scheduleAt.value;
   if (scheduled) fd.append('publish_at', new Date(scheduleAt.value).toISOString());  // local -> UTC
+  if (yt !== 'off' && alsoShort.checked) { fd.append('also_short', 'on'); fd.append('short_len', $('shortLen').value); }
   if (yt !== 'off' && $('thumbnail').files[0]) {
     fd.append('thumbnail', $('thumbnail').files[0]);
     fd.append('thumb_filter', $('thumbFilter').value);
@@ -765,7 +890,9 @@ go.onclick = async () => {
       msg.innerHTML = (scheduled
         ? 'Scheduled — goes Public ' + new Date(scheduleAt.value).toLocaleString() + ': ' + link
         : 'Uploaded (' + j.privacy + '): ' + link)
-        + (j.thumbnail_error ? '<br><span style="color:#e0a">⚠ ' + j.thumbnail_error + '</span>' : '');
+        + (j.thumbnail_error ? '<br><span style="color:#e0a">⚠ ' + j.thumbnail_error + '</span>' : '')
+        + (j.short_url ? '<br>🎬 Short: <a href="' + j.short_url + '" target="_blank">' + j.short_url + '</a>' : '')
+        + (j.short_error ? '<br><span style="color:#e0a">⚠ ' + j.short_error + '</span>' : '');
     } else {
       const beatInfo = r.headers.get('X-Beat');
       const url = URL.createObjectURL(await r.blob());
@@ -782,7 +909,9 @@ const batchBeats = $('batchBeats'), batchStart = $('batchStart'), batchInterval 
       batchRows = $('batchRows'), batchGo = $('batchGo'), batchMsg = $('batchMsg');
 const toLocalInput = d => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 batchStart.min = toLocalInput(new Date());
-if (!batchStart.value) batchStart.value = toLocalInput(new Date(Date.now() + 86400000));  // default: tomorrow
+// default: tomorrow at 17:00 local (a solid, consistent upload slot)
+{ const d = new Date(Date.now() + 86400000); d.setHours(17, 0, 0, 0);
+  if (!batchStart.value) batchStart.value = toLocalInput(d); }
 // remember the batch description/tags template across sessions
 for (const [id, key] of [['batchTitle', 'beatvideo_btitle'], ['batchDescription', 'beatvideo_bdesc'], ['batchTags', 'beatvideo_btags']]) {
   const el = $(id);
@@ -859,13 +988,17 @@ $('batchApplyDesc').onclick = () => syncBatchDefaults(true);
 function fillBatchDates() {
   if (!batchStart.value) return;
   const start = new Date(batchStart.value), gap = Math.max(0, +batchInterval.value || 0);
-  batchRows.querySelectorAll('.bdate').forEach((inp, i) => {
-    inp.value = toLocalInput(new Date(start.getTime() + i * gap * 86400000));
-  });
+  const dates = [...batchRows.querySelectorAll('.bdate')];
+  dates.forEach((inp, i) => { inp.value = toLocalInput(new Date(start.getTime() + i * gap * 86400000)); });
+  $('batchSummary').textContent = dates.length
+    ? dates.length + ' video(s) · every ' + gap + ' day(s) · ' +
+      new Date(dates[0].value).toLocaleDateString() + ' → ' + new Date(dates[dates.length - 1].value).toLocaleDateString()
+    : '';
 }
 batchBeats.onchange = buildBatchRows;
 batchStart.onchange = fillBatchDates;
 batchInterval.oninput = fillBatchDates;
+$('batchCadence').onchange = () => { batchInterval.value = $('batchCadence').value; fillBatchDates(); };
 buildBatchRows();  // show the empty-state hint up front
 
 batchGo.onclick = async () => {

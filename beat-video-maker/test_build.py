@@ -3,8 +3,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from app import (FORMATS, MAX_CLIP_SECONDS, auto_clips, build, detect_beats,
-                 duration, make_tag_png)
+from app import (FORMATS, MAX_CLIP_SECONDS, auto_clips, best_window, build,
+                 detect_beats, duration, make_tag_png)
 
 
 def main():
@@ -87,6 +87,14 @@ def main():
     tagged = work / "tagged.mp4"
     build(beat, [img], tagged, overlay_text="PROD. BY TEST", visualizer="waveform")
     assert abs(duration(tagged) - 10.0) < 0.5, duration(tagged)
+
+    # best_window lands on the loud half: 8s near-silence then 8s loud -> a 5s window
+    # must start in the loud region (>= ~8s)
+    step = work / "loudstep.wav"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "aevalsrc=0.9*sin(2*PI*220*t)*gt(t\\,8):d=16", str(step)],
+                   check=True, capture_output=True)
+    assert best_window(step, 5.0) >= 7.5, best_window(step, 5.0)
 
     # intro/outro skip: on a 30s video, no clip should start in the first 5s or last 10s
     long_src = work / "long.mp4"
