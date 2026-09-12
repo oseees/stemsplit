@@ -561,13 +561,15 @@ _INDEX = """<!doctype html>
     <b>Look &amp; style</b> section above.</div>
   <label style="font-weight:400">Beats (audio, multiple)<input type="file" id="batchBeats" accept="audio/*" multiple></label>
   <label style="font-weight:400;margin-top:8px">Cover images<input type="file" id="batchCovers" accept="image/*" multiple></label>
+  <input type="text" id="batchTitle" placeholder="Default title for every video — use {name} for the file name (blank = file name)"
+    style="width:100%;margin-top:10px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
   <textarea id="batchDescription" rows="3" placeholder="Default description for every video — use {title} to insert each beat's title"
-    style="width:100%;margin-top:10px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit;resize:vertical"></textarea>
+    style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit;resize:vertical"></textarea>
   <input type="text" id="batchTags" placeholder="Tags for all (afrobeats, type beat, free beat)"
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
   <select id="batchReuse" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
     <option value="">↺ Copy description &amp; tags from a past video…</option></select>
-  <button id="batchApplyDesc" class="mini" style="margin-top:8px">↻ Apply this description to every video below</button>
+  <button type="button" id="batchApplyDesc" class="mini" style="margin-top:8px">↻ Apply title &amp; description to every video below</button>
   <div style="color:#888;font-size:.8rem;margin-top:6px">Each video's <b>title</b> and <b>description</b> are
     editable per row below — the fields above are the defaults. Description &amp; tags are remembered.</div>
   <div class="row" style="margin-top:10px">
@@ -777,7 +779,7 @@ const toLocalInput = d => new Date(d - d.getTimezoneOffset() * 60000).toISOStrin
 batchStart.min = toLocalInput(new Date());
 if (!batchStart.value) batchStart.value = toLocalInput(new Date(Date.now() + 86400000));  // default: tomorrow
 // remember the batch description/tags template across sessions
-for (const [id, key] of [['batchDescription', 'beatvideo_bdesc'], ['batchTags', 'beatvideo_btags']]) {
+for (const [id, key] of [['batchTitle', 'beatvideo_btitle'], ['batchDescription', 'beatvideo_bdesc'], ['batchTags', 'beatvideo_btags']]) {
   const el = $(id);
   if (localStorage.getItem(key)) el.value = localStorage.getItem(key);
   el.addEventListener('input', () => localStorage.setItem(key, el.value));
@@ -785,6 +787,8 @@ for (const [id, key] of [['batchDescription', 'beatvideo_bdesc'], ['batchTags', 
 
 const fieldCss = 'width:100%;padding:8px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box';
 const descTemplate = title => ($('batchDescription').value || '').split('{title}').join(title);
+const titleFor = stem => { const t = ($('batchTitle').value || '').trim();
+  return t ? t.split('{name}').join(stem) : stem; };
 const cap = t => { const s = document.createElement('div'); s.textContent = t;
   s.style.cssText = 'color:#888;font-size:.72rem;margin:8px 0 2px;font-weight:600'; return s; };
 function buildBatchRows() {
@@ -803,10 +807,10 @@ function buildBatchRows() {
     head.textContent = '🎵 ' + f.name;
     head.style.cssText = 'font-weight:600;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     const title = document.createElement('input');
-    title.className = 'btitle'; title.value = stem; title.style.cssText = fieldCss;
+    title.className = 'btitle'; title.dataset.stem = stem; title.value = titleFor(stem); title.style.cssText = fieldCss;
     const desc = document.createElement('textarea');
     desc.className = 'bdesc'; desc.rows = 3; desc.style.cssText = 'font:inherit;resize:vertical;' + fieldCss;
-    desc.value = descTemplate(stem);
+    desc.value = descTemplate(title.value);
     const date = document.createElement('input');
     date.type = 'datetime-local'; date.className = 'bdate'; date.style.cssText = fieldCss;
     title.addEventListener('input', () => { if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
@@ -818,8 +822,11 @@ function buildBatchRows() {
 }
 $('batchApplyDesc').onclick = () => {
   const titles = [...batchRows.querySelectorAll('.btitle')];
-  batchRows.querySelectorAll('.bdesc').forEach((d, i) => {
-    d.value = descTemplate(titles[i] ? titles[i].value : ''); delete d.dataset.edited;
+  const descs = [...batchRows.querySelectorAll('.bdesc')];
+  titles.forEach((t, i) => {
+    t.value = titleFor(t.dataset.stem);                 // re-apply title template
+    descs[i].value = descTemplate(t.value);             // then description, using the new title
+    delete descs[i].dataset.edited;
   });
 };
 function fillBatchDates() {
