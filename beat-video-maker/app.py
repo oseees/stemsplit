@@ -783,28 +783,35 @@ for (const [id, key] of [['batchDescription', 'beatvideo_bdesc'], ['batchTags', 
   el.addEventListener('input', () => localStorage.setItem(key, el.value));
 }
 
-const fieldCss = 'padding:6px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box';
+const fieldCss = 'width:100%;padding:8px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box';
 const descTemplate = title => ($('batchDescription').value || '').split('{title}').join(title);
+const cap = t => { const s = document.createElement('div'); s.textContent = t;
+  s.style.cssText = 'color:#888;font-size:.72rem;margin:8px 0 2px;font-weight:600'; return s; };
 function buildBatchRows() {
   batchRows.innerHTML = '';
-  [...batchBeats.files].forEach(f => {
+  const files = [...batchBeats.files];
+  if (!files.length) {
+    batchRows.innerHTML = '<div class="hint" style="text-align:center;padding:14px;border:1px dashed #333;border-radius:10px">' +
+      'Add beats above — each one gets its own editable <b>title</b>, <b>description</b> &amp; <b>publish date</b> here.</div>';
+    return;
+  }
+  files.forEach(f => {
     const stem = f.name.replace(/\.[^.]+$/, '');
     const block = document.createElement('div');
-    block.style.cssText = 'border:1px solid #333;border-radius:8px;padding:8px;margin-bottom:8px';
-    const top = document.createElement('div');
-    top.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    block.style.cssText = 'border:1px solid #333;border-radius:10px;padding:10px 12px;margin-bottom:10px';
+    const head = document.createElement('div');
+    head.textContent = '🎵 ' + f.name;
+    head.style.cssText = 'font-weight:600;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     const title = document.createElement('input');
-    title.className = 'btitle'; title.value = stem; title.style.cssText = 'flex:2;' + fieldCss;
-    const date = document.createElement('input');
-    date.type = 'datetime-local'; date.className = 'bdate'; date.style.cssText = 'flex:1;' + fieldCss;
-    top.append(title, date);
+    title.className = 'btitle'; title.value = stem; title.style.cssText = fieldCss;
     const desc = document.createElement('textarea');
-    desc.className = 'bdesc'; desc.rows = 2; desc.placeholder = 'Description for this video';
-    desc.style.cssText = 'width:100%;font:inherit;resize:vertical;' + fieldCss;
+    desc.className = 'bdesc'; desc.rows = 3; desc.style.cssText = 'font:inherit;resize:vertical;' + fieldCss;
     desc.value = descTemplate(stem);
+    const date = document.createElement('input');
+    date.type = 'datetime-local'; date.className = 'bdate'; date.style.cssText = fieldCss;
     title.addEventListener('input', () => { if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
     desc.addEventListener('input', () => desc.dataset.edited = '1');  // stop auto-syncing once hand-edited
-    block.append(top, desc);
+    block.append(head, cap('Title'), title, cap('Description'), desc, cap('Publishes'), date);
     batchRows.appendChild(block);
   });
   fillBatchDates();
@@ -825,6 +832,7 @@ function fillBatchDates() {
 batchBeats.onchange = buildBatchRows;
 batchStart.onchange = fillBatchDates;
 batchInterval.oninput = fillBatchDates;
+buildBatchRows();  // show the empty-state hint up front
 
 batchGo.onclick = async () => {
   if (!batchBeats.files.length) { batchMsg.textContent = 'Add at least one beat.'; return; }
