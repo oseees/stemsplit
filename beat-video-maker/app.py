@@ -568,7 +568,7 @@ _INDEX = """<!doctype html>
   <input type="text" id="batchTags" placeholder="Tags for all (afrobeats, type beat, free beat)"
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
   <select id="batchReuse" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
-    <option value="">↺ Copy description &amp; tags from a past video…</option></select>
+    <option value="">↺ Copy title, description &amp; tags from a past video…</option></select>
   <button type="button" id="batchApplyDesc" class="mini" style="margin-top:8px">↻ Apply title &amp; description to every video below</button>
   <div style="color:#888;font-size:.8rem;margin-top:6px">Each video's <b>title</b> and <b>description</b> are
     editable per row below — the fields above are the defaults. Description &amp; tags are remembered.</div>
@@ -655,10 +655,11 @@ $('batchReuse').addEventListener('focus', loadPast);
 $('batchReuse').onchange = () => {
   const v = pastVideos[$('batchReuse').value];
   if (!v) return;
+  $('batchTitle').value = v.title;
   $('batchDescription').value = v.description;
   $('batchTags').value = (v.tags || []).join(', ');
-  $('batchDescription').dispatchEvent(new Event('input'));  // persist
-  $('batchTags').dispatchEvent(new Event('input'));
+  // dispatch input so each flows into the rows (title & desc) and persists
+  [$('batchTitle'), $('batchDescription'), $('batchTags')].forEach(el => el.dispatchEvent(new Event('input')));
 };
 syncYt();
 const MAX_CLIP = 5, clips = [];
