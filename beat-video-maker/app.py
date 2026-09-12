@@ -813,22 +813,29 @@ function buildBatchRows() {
     desc.value = descTemplate(title.value);
     const date = document.createElement('input');
     date.type = 'datetime-local'; date.className = 'bdate'; date.style.cssText = fieldCss;
-    title.addEventListener('input', () => { if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
-    desc.addEventListener('input', () => desc.dataset.edited = '1');  // stop auto-syncing once hand-edited
+    // once a field is hand-edited it stops following the defaults above
+    title.addEventListener('input', () => { title.dataset.edited = '1';
+      if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
+    desc.addEventListener('input', () => desc.dataset.edited = '1');
     block.append(head, cap('Title'), title, cap('Description'), desc, cap('Publishes'), date);
     batchRows.appendChild(block);
   });
   fillBatchDates();
 }
-$('batchApplyDesc').onclick = () => {
+// push the default title/description into every row that hasn't been hand-edited.
+// reset=true (the Apply button) clears edits and re-applies to ALL rows.
+function syncBatchDefaults(reset) {
   const titles = [...batchRows.querySelectorAll('.btitle')];
   const descs = [...batchRows.querySelectorAll('.bdesc')];
   titles.forEach((t, i) => {
-    t.value = titleFor(t.dataset.stem);                 // re-apply title template
-    descs[i].value = descTemplate(t.value);             // then description, using the new title
-    delete descs[i].dataset.edited;
+    if (reset) { delete t.dataset.edited; delete descs[i].dataset.edited; }
+    if (!t.dataset.edited) t.value = titleFor(t.dataset.stem);
+    if (!descs[i].dataset.edited) descs[i].value = descTemplate(t.value);
   });
-};
+}
+$('batchTitle').addEventListener('input', () => syncBatchDefaults(false));
+$('batchDescription').addEventListener('input', () => syncBatchDefaults(false));
+$('batchApplyDesc').onclick = () => syncBatchDefaults(true);
 function fillBatchDates() {
   if (!batchStart.value) return;
   const start = new Date(batchStart.value), gap = Math.max(0, +batchInterval.value || 0);
