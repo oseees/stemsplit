@@ -8,6 +8,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
@@ -408,6 +410,24 @@ async def make(beat: UploadFile = File(...), media: list[UploadFile] = File(defa
                         background=BackgroundTask(shutil.rmtree, work, ignore_errors=True))
 
 
+@app.get("/suggest")
+def suggest(q: str) -> list:
+    """Live YouTube search autocomplete for `q` — real, demand-ordered completions.
+    Google's suggest endpoint (ds=yt) returns ["q",[suggestions...]]; it sends no CORS
+    headers so the browser can't call it directly, hence this thin server proxy."""
+    q = q.strip()[:80]
+    if not q:
+        return []
+    url = ("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=en&q="
+           + quote(q))
+    try:
+        with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=6) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        return data[1] if len(data) > 1 and isinstance(data[1], list) else []
+    except Exception:
+        return []  # research is a bonus — never break the generator if the pull fails
+
+
 @app.get("/youtube/videos")
 def youtube_videos():
     import youtube as yt  # local-only
@@ -567,10 +587,13 @@ _INDEX = """<!doctype html>
       <label style="font-weight:400;flex:1">BPM <input type="text" id="seoBpm" placeholder="140" style="width:100%"></label>
       <label style="font-weight:400;flex:1">Key <input type="text" id="seoKey" placeholder="C min" style="width:100%"></label>
     </div>
-    <button type="button" id="seoGo" class="mini" style="margin-top:12px">✨ Generate title &amp; tags</button>
+    <button type="button" id="seoGo" class="mini" style="margin-top:12px">✨ Generate from live searches</button>
     <div id="seoMsg" class="hint"></div>
-    <div class="hint">Builds the proven <b>[FREE] "Song" | Artist Type Beat | Genre Type Beat YEAR</b> title
-      plus ~30 search tags, and drops them into both Single and Batch. Tweak after.</div>
+    <div id="seoSuggest" style="margin-top:6px"></div>
+    <div class="hint">Pulls <b>live YouTube autocomplete</b> for your artist/genre — the real,
+      demand-ordered searches — uses them as tags, and builds the proven
+      <b>[FREE] "Song" | Artist Type Beat | Genre Type Beat YEAR</b> title. Drops both into
+      Single and Batch. The chips are what people actually type — retarget a less crowded one if the top is saturated.</div>
   </div>
 </details>
 
@@ -754,8 +777,32 @@ $('batchReuse').addEventListener('change', () => {
 });
 syncYt();
 
-// ---- Type-beat SEO: build the proven title + a fat tag set, drop into Single & Batch ----
-$('seoGo').onclick = () => {
+// ---- Type-beat SEO: pull LIVE YouTube autocomplete for real demand-ordered tags,
+// fall back to a built set if the pull fails, drop title+tags into Single & Batch. ----
+function fallbackTags(artists, genre, year, bpm, key) {  // offline / blocked path
+  const s = [];
+  artists.forEach(a => { const l = a.toLowerCase();
+    ['{} type beat', '{} type beat ' + year, 'free {} type beat', '{} instrumental', '{} beat']
+      .forEach(f => s.push(f.replace('{}', l))); });
+  if (genre) { const g = genre.toLowerCase();
+    ['{} type beat', '{} instrumental', '{} type beat ' + year, 'free {} type beat', '{} beat']
+      .forEach(f => s.push(f.replace('{}', g))); }
+  ['type beat', 'free type beat', 'type beat ' + year, 'free beat', 'instrumental',
+   'free instrumental', 'beats', 'freestyle beat', 'rap beat', 'trap beat'].forEach(x => s.push(x));
+  if (bpm) s.push(bpm + ' bpm'); if (key) s.push(key + ' type beat');
+  return s;
+}
+function joinTags(arr, cap) {  // dedupe (case-insensitive), keep order, stay under YouTube's ~500-char cap
+  const out = [], seen = new Set(); let len = 0;
+  for (const x of arr) { const v = String(x).trim(); const l = v.toLowerCase();
+    if (!v || seen.has(l)) continue;
+    const add = (out.length ? 2 : 0) + v.length;
+    if (len + add > cap) break;
+    out.push(v); seen.add(l); len += add;
+  }
+  return out.join(', ');
+}
+$('seoGo').onclick = async () => {
   const artists = $('seoArtist').value.split(',').map(s => s.trim()).filter(Boolean);
   const genre = $('seoGenre').value.trim(), song = $('seoSong').value.trim();
   const bpm = $('seoBpm').value.trim(), key = $('seoKey').value.trim();
@@ -766,21 +813,44 @@ $('seoGo').onclick = () => {
   if (a0) parts.push(a0 + (artists[1] ? ' x ' + artists[1] : '') + ' Type Beat');
   parts.push((genre ? genre + ' ' : '') + 'Type Beat ' + year);
   const t = ('[FREE] ' + parts.join(' | ')).slice(0, 100);
-  const tags_ = new Set();
-  artists.forEach(a => { const l = a.toLowerCase();
-    ['{} type beat', '{} type beat ' + year, 'free {} type beat', '{} instrumental', '{} beat']
-      .forEach(f => tags_.add(f.replace('{}', l))); });
-  if (genre) { const g = genre.toLowerCase();
-    ['{} type beat', '{} instrumental', '{} type beat ' + year, 'free {} type beat', '{} beat']
-      .forEach(f => tags_.add(f.replace('{}', g))); }
-  ['type beat', 'free type beat', 'type beat ' + year, 'free beat', 'instrumental',
-   'free instrumental', 'beats', 'freestyle beat', 'rap beat', 'trap beat'].forEach(x => tags_.add(x));
-  if (bpm) tags_.add(bpm + ' bpm'); if (key) tags_.add(key + ' type beat');
-  const tagStr = [...tags_].join(', ').slice(0, 480);  // YouTube caps total tag text ~500 chars
+
+  // seed the live autocomplete with the queries buyers actually type
+  const seeds = [];
+  artists.forEach(a => seeds.push(a + ' type beat'));
+  if (genre) seeds.push(genre + ' type beat');
+  if (a0 && song) seeds.push(a0 + ' type beat ' + song);
+  seeds.push('free type beat ' + year);
+  $('seoGo').disabled = true; $('seoMsg').textContent = 'Pulling live YouTube searches…';
+  let live = [];
+  try {
+    const lists = await Promise.all(seeds.map(q =>
+      fetch('/suggest?q=' + encodeURIComponent(q)).then(r => r.ok ? r.json() : []).catch(() => [])));
+    const seen = new Set();
+    lists.flat().forEach(x => { const v = String(x).trim();
+      if (v && !seen.has(v.toLowerCase())) { seen.add(v.toLowerCase()); live.push(v); } });
+  } catch (e) {}
+  $('seoGo').disabled = false;
+
+  // tags: real searches first (demand order) + a couple evergreen; fall back if the pull was empty
+  const pool = live.length
+    ? live.concat(['free type beat', 'type beat ' + year, bpm ? bpm + ' bpm' : ''].filter(Boolean))
+    : fallbackTags(artists, genre, year, bpm, key);
+  const tagStr = joinTags(pool, 480);
   title.value = t; tags.value = tagStr; saveYt();
   $('batchTitle').value = t; $('batchTags').value = tagStr;
   [$('batchTitle'), $('batchTags')].forEach(el => el.dispatchEvent(new Event('input')));
-  $('seoMsg').textContent = '✓ Applied to Single & Batch (' + tags_.size + ' tags). Edit anything below.';
+
+  // show the real demand-ordered searches as chips (informational — already folded into tags)
+  const box = $('seoSuggest'); box.innerHTML = '';
+  (live.length ? live : pool).slice(0, 24).forEach(s => {
+    const p = document.createElement('span'); p.textContent = s;
+    p.style.cssText = 'display:inline-block;background:#2a2a2c;border:1px solid #444;border-radius:14px;' +
+      'padding:3px 9px;margin:3px 3px 0 0;font-size:.75rem;color:#ddd';
+    box.appendChild(p);
+  });
+  $('seoMsg').textContent = live.length
+    ? '✓ ' + live.length + ' real YouTube searches pulled (chips = demand order) → used as tags in Single & Batch.'
+    : '⚠ Could not reach YouTube suggest (offline?). Used the standard tag set instead.';
 };
 
 // ---- Auto-Short toggle (single pane) ----
