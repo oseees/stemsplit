@@ -29,22 +29,30 @@ def _credentials() -> Credentials:
     return creds
 
 
-def list_recent(max_results: int = 20) -> list[dict]:
-    """Recent uploads on the user's channel with their title/description/tags, to reuse."""
+def list_recent(max_results: int = 2000) -> list[dict]:
+    """All uploads on the user's channel (newest first) with title/description/tags, to reuse.
+    Pages through the whole uploads playlist; capped at max_results as a safety ceiling."""
     yt = build_service("youtube", "v3", credentials=_credentials())
     chans = yt.channels().list(part="contentDetails", mine=True).execute().get("items", [])
     if not chans:
         return []
     uploads = chans[0]["contentDetails"]["relatedPlaylists"]["uploads"]
-    items = yt.playlistItems().list(
-        part="contentDetails", playlistId=uploads, maxResults=max_results).execute().get("items", [])
-    ids = [i["contentDetails"]["videoId"] for i in items]
-    if not ids:
-        return []
-    vids = yt.videos().list(part="snippet", id=",".join(ids)).execute().get("items", [])
-    return [{"id": v["id"], "title": v["snippet"]["title"],
-             "description": v["snippet"].get("description", ""),
-             "tags": v["snippet"].get("tags", [])} for v in vids]
+    ids, page = [], None
+    while len(ids) < max_results:
+        resp = yt.playlistItems().list(part="contentDetails", playlistId=uploads,
+                                       maxResults=50, pageToken=page).execute()
+        ids += [i["contentDetails"]["videoId"] for i in resp.get("items", [])]
+        page = resp.get("nextPageToken")
+        if not page:
+            break
+    ids = ids[:max_results]
+    out = []
+    for j in range(0, len(ids), 50):  # videos.list takes up to 50 ids per call
+        vids = yt.videos().list(part="snippet", id=",".join(ids[j:j + 50])).execute().get("items", [])
+        out += [{"id": v["id"], "title": v["snippet"]["title"],
+                 "description": v["snippet"].get("description", ""),
+                 "tags": v["snippet"].get("tags", [])} for v in vids]
+    return out
 
 
 def upload(path: Path, title: str, description: str = "", privacy: str = "private",
