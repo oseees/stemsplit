@@ -502,7 +502,8 @@ _INDEX = """<!doctype html>
 
 <div id="singlePane">
 <p class="hint">Upload a beat, then pick clips from a music video and/or add pictures. Drag &amp; drop works too.</p>
-<div class="card"><label>Beat (mp3 / wav)<input type="file" id="beat" accept="audio/*"></label></div>
+<div class="card"><label>Beat (mp3 / wav)<input type="file" id="beat" accept="audio/*"></label>
+  <audio id="beatAudio" controls style="width:100%;margin-top:10px;display:none"></audio></div>
 <div class="card">
   <label>Music video (clips are cut from this)<input type="file" id="source" accept="video/*"></label>
   <video id="player" controls playsinline style="width:100%;margin-top:10px;border-radius:8px;display:none"></video>
@@ -588,6 +589,11 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
   $('singlePane').hidden = t.dataset.pane !== 'single';
   $('batchPane').hidden = t.dataset.pane !== 'batch';
+});
+// preview the chosen beat inline
+$('beat').addEventListener('change', () => {
+  if ($('beat').files[0]) { $('beatAudio').src = URL.createObjectURL($('beat').files[0]);
+    $('beatAudio').style.display = 'block'; }
 });
 const beat = $('beat'), source = $('source'), media = $('media'), player = $('player'),
       pickrow = $('pickrow'), marks = $('marks'), cliplist = $('cliplist'),
@@ -807,6 +813,9 @@ function buildBatchRows() {
     const head = document.createElement('div');
     head.textContent = '🎵 ' + f.name;
     head.style.cssText = 'font-weight:600;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    const audio = document.createElement('audio');
+    audio.controls = true; audio.src = URL.createObjectURL(f);
+    audio.style.cssText = 'width:100%;margin-top:6px';
     const title = document.createElement('input');
     title.className = 'btitle'; title.dataset.stem = stem; title.value = titleFor(stem); title.style.cssText = fieldCss;
     const desc = document.createElement('textarea');
@@ -818,7 +827,7 @@ function buildBatchRows() {
     title.addEventListener('input', () => { title.dataset.edited = '1';
       if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
     desc.addEventListener('input', () => desc.dataset.edited = '1');
-    block.append(head, cap('Title'), title, cap('Description'), desc, cap('Publishes'), date);
+    block.append(head, audio, cap('Title'), title, cap('Description'), desc, cap('Publishes'), date);
     batchRows.appendChild(block);
   });
   fillBatchDates();
