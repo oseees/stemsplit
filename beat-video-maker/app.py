@@ -468,6 +468,7 @@ _INDEX = """<!doctype html>
   <button type="button" class="tab active" data-pane="single">🎬 Single video</button>
   <button type="button" class="tab" data-pane="batch">📅 Batch schedule</button>
 </div>
+<datalist id="pastList"></datalist>
 
 <details class="card">
   <summary>🎨 Look &amp; style <span class="hint">— format, filter, tag, visualizer</span></summary>
@@ -532,7 +533,7 @@ _INDEX = """<!doctype html>
     <option value="public">Yes — Public</option>
   </select>
   <div id="ytdetails" style="display:none">
-    <select id="reuseFrom" class="reuseSel"><option value="">↺ Copy details from a past video…</option></select>
+    <input id="reuseFrom" class="reuseInp" list="pastList" placeholder="🔎 Copy details from a past video (type to search)…">
     <input type="text" id="title" placeholder="Video title">
     <textarea id="description" rows="3" placeholder="Description"></textarea>
     <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
@@ -568,8 +569,8 @@ _INDEX = """<!doctype html>
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit;resize:vertical"></textarea>
   <input type="text" id="batchTags" placeholder="Tags for all (afrobeats, type beat, free beat)"
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
-  <select id="batchReuse" class="reuseSel" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
-    <option value="">↺ Copy title, description &amp; tags from a past video…</option></select>
+  <input id="batchReuse" class="reuseInp" list="pastList" placeholder="🔎 Copy title, description &amp; tags from a past video (type to search)…"
+    style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
   <button type="button" id="batchApplyDesc" class="mini" style="margin-top:8px">↻ Apply title &amp; description to every video below</button>
   <div style="color:#888;font-size:.8rem;margin-top:6px">Each video's <b>title</b> and <b>description</b> are
     editable per row below — the fields above are the defaults. Description &amp; tags are remembered.</div>
@@ -629,13 +630,16 @@ function syncYt() {
 }
 for (const el of Object.values(YT_FIELDS)) el.addEventListener('input', () => { saveYt(); syncYt(); });
 
-// pull title/description/tags from a video already on the channel and reuse them.
-// Any <select class="reuseSel"> gets filled — the single & batch dropdowns and each per-beat row.
-let pastVideos = [], loadedPast = false;
-function populateReuse(sel) {
-  while (sel.options.length > 1) sel.remove(1);  // keep the placeholder, refill the rest
-  pastVideos.forEach((v, i) => sel.appendChild(new Option((v.title || '(untitled)').slice(0, 70), String(i))));
-  if (!pastVideos.length) sel.appendChild(new Option('(no past videos found)', ''));
+// Reuse a past video's details. Every <input class="reuseInp"> is a search box backed by the
+// shared <datalist id="pastList"> — type to filter all channel uploads, pick one to apply.
+let pastVideos = [], loadedPast = false, titleMap = new Map();
+function fillDatalist() {
+  const dl = $('pastList'); dl.innerHTML = ''; titleMap = new Map();
+  pastVideos.forEach(v => {
+    const label = v.title || '(untitled)';
+    const o = document.createElement('option'); o.value = label; dl.appendChild(o);
+    titleMap.set(label, v);  // dup titles: last wins (cosmetic only)
+  });
 }
 async function loadPast() {
   if (loadedPast) return;
@@ -644,31 +648,23 @@ async function loadPast() {
     const r = await fetch('/youtube/videos');
     if (!r.ok) throw new Error(await r.text());
     pastVideos = await r.json();
-    document.querySelectorAll('.reuseSel').forEach(populateReuse);
-  } catch (e) {
-    loadedPast = false;  // let it retry next open
-    document.querySelectorAll('.reuseSel').forEach(s => s.appendChild(new Option('(could not load videos)', '')));
-  }
+    fillDatalist();
+  } catch (e) { loadedPast = false; }  // let it retry next focus
 }
-reuseFrom.onchange = () => {
-  const v = pastVideos[reuseFrom.value];
-  if (!v) return;
-  title.value = v.title;
-  description.value = v.description;
-  tags.value = (v.tags || []).join(', ');
-  saveYt();
-};
-// batch reuse: load the list on first focus, and copy just description + tags (titles are per-beat)
-$('batchReuse').addEventListener('focus', loadPast);
-$('batchReuse').onchange = () => {
-  const v = pastVideos[$('batchReuse').value];
-  if (!v) return;
-  $('batchTitle').value = v.title;
-  $('batchDescription').value = v.description;
+const pickedVideo = inp => titleMap.get(inp.value.trim());
+document.querySelectorAll('.reuseInp').forEach(inp => inp.addEventListener('focus', loadPast));
+reuseFrom.addEventListener('change', () => {
+  const v = pickedVideo(reuseFrom); if (!v) return;
+  title.value = v.title; description.value = v.description; tags.value = (v.tags || []).join(', ');
+  saveYt(); reuseFrom.value = '';  // reset the search box
+});
+$('batchReuse').addEventListener('change', () => {
+  const v = pickedVideo($('batchReuse')); if (!v) return;
+  $('batchTitle').value = v.title; $('batchDescription').value = v.description;
   $('batchTags').value = (v.tags || []).join(', ');
-  // dispatch input so each flows into the rows (title & desc) and persists
   [$('batchTitle'), $('batchDescription'), $('batchTags')].forEach(el => el.dispatchEvent(new Event('input')));
-};
+  $('batchReuse').value = '';
+});
 syncYt();
 const MAX_CLIP = 5, clips = [];
 let inPoint = null;
@@ -825,17 +821,17 @@ function buildBatchRows() {
     desc.value = descTemplate(title.value);
     const date = document.createElement('input');
     date.type = 'datetime-local'; date.className = 'bdate'; date.style.cssText = fieldCss;
-    // per-beat "copy from a past video" — fills just this row's title + description
-    const reuse = document.createElement('select');
-    reuse.className = 'reuseSel'; reuse.style.cssText = fieldCss;
-    reuse.appendChild(new Option('↺ Copy title & description from a past video…', ''));
-    if (loadedPast) populateReuse(reuse);
+    // per-beat "copy from a past video" — search box; fills just this row's title + description
+    const reuse = document.createElement('input');
+    reuse.className = 'reuseInp'; reuse.setAttribute('list', 'pastList');
+    reuse.placeholder = '🔎 Copy title & description from a past video…'; reuse.style.cssText = fieldCss;
     reuse.addEventListener('focus', loadPast);
-    reuse.onchange = () => {
-      const v = pastVideos[reuse.value]; if (!v) return;
+    reuse.addEventListener('change', () => {
+      const v = pickedVideo(reuse); if (!v) return;
       title.value = v.title; title.dataset.edited = '1';        // pin so batch defaults won't overwrite
       desc.value = v.description; desc.dataset.edited = '1';
-    };
+      reuse.value = '';
+    });
     // once a field is hand-edited it stops following the defaults above
     title.addEventListener('input', () => { title.dataset.edited = '1';
       if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
