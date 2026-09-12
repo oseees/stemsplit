@@ -532,7 +532,7 @@ _INDEX = """<!doctype html>
     <option value="public">Yes — Public</option>
   </select>
   <div id="ytdetails" style="display:none">
-    <select id="reuseFrom"><option value="">↺ Copy details from a past video…</option></select>
+    <select id="reuseFrom" class="reuseSel"><option value="">↺ Copy details from a past video…</option></select>
     <input type="text" id="title" placeholder="Video title">
     <textarea id="description" rows="3" placeholder="Description"></textarea>
     <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
@@ -568,7 +568,7 @@ _INDEX = """<!doctype html>
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit;resize:vertical"></textarea>
   <input type="text" id="batchTags" placeholder="Tags for all (afrobeats, type beat, free beat)"
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
-  <select id="batchReuse" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
+  <select id="batchReuse" class="reuseSel" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
     <option value="">↺ Copy title, description &amp; tags from a past video…</option></select>
   <button type="button" id="batchApplyDesc" class="mini" style="margin-top:8px">↻ Apply title &amp; description to every video below</button>
   <div style="color:#888;font-size:.8rem;margin-top:6px">Each video's <b>title</b> and <b>description</b> are
@@ -629,9 +629,14 @@ function syncYt() {
 }
 for (const el of Object.values(YT_FIELDS)) el.addEventListener('input', () => { saveYt(); syncYt(); });
 
-// pull title/description/tags from a video already on the channel and reuse them
+// pull title/description/tags from a video already on the channel and reuse them.
+// Any <select class="reuseSel"> gets filled — the single & batch dropdowns and each per-beat row.
 let pastVideos = [], loadedPast = false;
-const reuseTargets = [reuseFrom, $('batchReuse')];  // both dropdowns share one fetch
+function populateReuse(sel) {
+  while (sel.options.length > 1) sel.remove(1);  // keep the placeholder, refill the rest
+  pastVideos.forEach((v, i) => sel.appendChild(new Option((v.title || '(untitled)').slice(0, 70), String(i))));
+  if (!pastVideos.length) sel.appendChild(new Option('(no past videos found)', ''));
+}
 async function loadPast() {
   if (loadedPast) return;
   loadedPast = true;
@@ -639,13 +644,10 @@ async function loadPast() {
     const r = await fetch('/youtube/videos');
     if (!r.ok) throw new Error(await r.text());
     pastVideos = await r.json();
-    reuseTargets.forEach(sel => {
-      pastVideos.forEach((v, i) => sel.appendChild(new Option((v.title || '(untitled)').slice(0, 70), String(i))));
-      if (!pastVideos.length) sel.appendChild(new Option('(no past videos found)', ''));
-    });
+    document.querySelectorAll('.reuseSel').forEach(populateReuse);
   } catch (e) {
     loadedPast = false;  // let it retry next open
-    reuseTargets.forEach(sel => sel.appendChild(new Option('(could not load videos)', '')));
+    document.querySelectorAll('.reuseSel').forEach(s => s.appendChild(new Option('(could not load videos)', '')));
   }
 }
 reuseFrom.onchange = () => {
@@ -823,11 +825,23 @@ function buildBatchRows() {
     desc.value = descTemplate(title.value);
     const date = document.createElement('input');
     date.type = 'datetime-local'; date.className = 'bdate'; date.style.cssText = fieldCss;
+    // per-beat "copy from a past video" — fills just this row's title + description
+    const reuse = document.createElement('select');
+    reuse.className = 'reuseSel'; reuse.style.cssText = fieldCss;
+    reuse.appendChild(new Option('↺ Copy title & description from a past video…', ''));
+    if (loadedPast) populateReuse(reuse);
+    reuse.addEventListener('focus', loadPast);
+    reuse.onchange = () => {
+      const v = pastVideos[reuse.value]; if (!v) return;
+      title.value = v.title; title.dataset.edited = '1';        // pin so batch defaults won't overwrite
+      desc.value = v.description; desc.dataset.edited = '1';
+    };
     // once a field is hand-edited it stops following the defaults above
     title.addEventListener('input', () => { title.dataset.edited = '1';
       if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
     desc.addEventListener('input', () => desc.dataset.edited = '1');
-    block.append(head, audio, cap('Title'), title, cap('Description'), desc, cap('Publishes'), date);
+    block.append(head, audio, cap('Title'), title, cap('Description'), desc,
+                 cap('Or copy from a past video'), reuse, cap('Publishes'), date);
     batchRows.appendChild(block);
   });
   fillBatchDates();
