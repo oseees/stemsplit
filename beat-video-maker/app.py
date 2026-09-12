@@ -449,22 +449,69 @@ _INDEX = """<!doctype html>
   #ytdetails textarea{resize:vertical}
   ol{padding-left:20px} li{margin:6px 0}
   #msg{margin-top:12px;color:#aaa}
+  #tabs{display:flex;gap:8px;margin:14px 0 18px}
+  .tab{flex:1;background:#1c1c1e;color:#aaa;border:1px solid #333;padding:12px;font-size:.95rem}
+  .tab.active{background:#e0245e;color:#fff;border-color:#e0245e}
+  details.card>summary{cursor:pointer;font-weight:600;list-style:none;display:flex;
+    justify-content:space-between;align-items:center}
+  details.card>summary::-webkit-details-marker{display:none}
+  details.card>summary::after{content:'▸';color:#888;font-weight:400}
+  details.card[open]>summary::after{content:'▾'}
+  .sub{margin-top:14px} .sub>label:first-child{margin-top:0}
+  .hint{color:#888;font-size:.8rem;margin-top:6px;font-weight:400}
+  summary .hint{display:inline;margin:0}
+  label.chk{font-weight:400;margin-top:12px;display:block}
+  label.chk input{width:auto;margin-right:6px}
 </style>
 <h1>🎬 BeatVideo</h1>
-<p>Upload your beat, then pick short clips from a music video (max 5s each — keeps you safer
-from copyright strikes) and/or add your own pictures. Tip: you can also drag &amp; drop files
-onto the boxes below.</p>
+<div id="tabs">
+  <button type="button" class="tab active" data-pane="single">🎬 Single video</button>
+  <button type="button" class="tab" data-pane="batch">📅 Batch schedule</button>
+</div>
+
+<details class="card">
+  <summary>🎨 Look &amp; style <span class="hint">— format, filter, tag, visualizer</span></summary>
+  <div class="sub">
+    <label>Video format</label>
+    <select id="fmt">
+      <option value="landscape">YouTube — landscape 16:9 (1920×1080)</option>
+      <option value="vertical">Reels / TikTok / Shorts — vertical 9:16 (1080×1920)</option>
+      <option value="square">Instagram feed — square 1:1 (1080×1080)</option>
+    </select>
+    <div class="hint">Vertical &amp; square fill the frame (sides cropped) so there are no black bars.</div>
+    <label style="margin-top:14px">Filter</label>
+    <select id="filter">
+      <option value="none">None</option><option value="bw">Black &amp; white</option>
+      <option value="warm">Warm</option><option value="cool">Cool</option>
+      <option value="punch">Punchy (contrast + saturation)</option><option value="vhs">VHS / vintage</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="beatSync" checked>🥁 Cut clips on the beat (detects BPM)</label>
+    <label style="margin-top:14px">Producer tag / overlay text</label>
+    <input type="text" id="overlayText" placeholder="e.g. PROD. BY OSEABHI">
+    <label style="margin-top:14px">Tag font</label>
+    <select id="overlayFont">__FONT_OPTIONS__</select>
+    <label style="margin-top:14px">Audio visualizer</label>
+    <select id="visualizer">
+      <option value="none">None</option>
+      <option value="waveform">Waveform</option>
+      <option value="bars">Frequency bars</option>
+    </select>
+    <div class="hint">Tag sits bottom-right; visualizer animates along the bottom. Both are remembered.</div>
+  </div>
+</details>
+
+<div id="singlePane">
+<p class="hint">Upload a beat, then pick clips from a music video and/or add pictures. Drag &amp; drop works too.</p>
 <div class="card"><label>Beat (mp3 / wav)<input type="file" id="beat" accept="audio/*"></label></div>
 <div class="card">
   <label>Music video (clips are cut from this)<input type="file" id="source" accept="video/*"></label>
   <video id="player" controls playsinline style="width:100%;margin-top:10px;border-radius:8px;display:none"></video>
   <div id="pickrow" style="display:none;margin-top:10px">
-    <label style="font-weight:400"><input type="checkbox" id="autoPick" checked>
-      ✨ Auto-pick clips for me (uses the video's own scene cuts)</label>
+    <label class="chk"><input type="checkbox" id="autoPick" checked>✨ Auto-pick clips (uses the video's scene cuts)</label>
     <div id="autorow" style="margin-top:8px">
       <label style="font-weight:400">Skip intro <input type="number" id="headSkip" value="5" min="0" style="width:64px"> s</label>
       <label style="font-weight:400;margin-left:14px">Skip outro <input type="number" id="tailSkip" value="15" min="0" style="width:64px"> s</label>
-      <div style="color:#888;font-size:.8rem;margin-top:4px">Keeps producer tags / "Produced by" intros and end-credit screens out of the clips.</div>
+      <div class="hint">Keeps "Produced by" intros and end-credit screens out of the clips.</div>
     </div>
     <div class="row" id="manualrow">
       <button class="mini" id="markIn">⬇ Mark start</button>
@@ -476,35 +523,6 @@ onto the boxes below.</p>
 </div>
 <div class="card"><label>Extra pictures / clips (optional)
   <input type="file" id="media" accept="image/*,video/*" multiple></label></div>
-<div class="card"><label>Video format</label>
-  <select id="fmt">
-    <option value="landscape">YouTube — landscape 16:9 (1920×1080)</option>
-    <option value="vertical">Reels / TikTok / Shorts — vertical 9:16 (1080×1920)</option>
-    <option value="square">Instagram feed — square 1:1 (1080×1080)</option>
-  </select>
-  <div style="color:#888;font-size:.8rem;margin-top:6px">Vertical &amp; square fill the frame
-    (sides cropped) so there are no black bars.</div></div>
-<div class="card"><label>Filter</label>
-  <select id="filter">
-    <option value="none">None</option><option value="bw">Black &amp; white</option>
-    <option value="warm">Warm</option><option value="cool">Cool</option>
-    <option value="punch">Punchy (contrast + saturation)</option><option value="vhs">VHS / vintage</option>
-  </select>
-  <label style="font-weight:400;margin-top:10px"><input type="checkbox" id="beatSync" checked>
-    🥁 Cut clips on the beat (detects BPM, cuts land on the bar)</label></div>
-<div class="card"><label>Producer tag / overlay text (optional)</label>
-  <input type="text" id="overlayText" placeholder='e.g. PROD. BY OSEABHI'
-    style="width:100%;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
-  <label style="margin-top:14px">Tag font</label>
-  <select id="overlayFont">__FONT_OPTIONS__</select>
-  <label style="margin-top:14px">Audio visualizer</label>
-  <select id="visualizer">
-    <option value="none">None</option>
-    <option value="waveform">Waveform</option>
-    <option value="bars">Frequency bars</option>
-  </select>
-  <div style="color:#888;font-size:.8rem;margin-top:6px">Tag sits bottom-right; visualizer animates
-    along the bottom. Your tag is remembered.</div></div>
 <div class="card"><label>Upload to YouTube</label>
   <select id="youtube">
     <option value="off">No — just download the file</option>
@@ -534,12 +552,13 @@ onto the boxes below.</p>
 </div>
 <button id="go">Make video</button>
 <div id="msg"></div>
+</div><!-- /singlePane -->
 
-<div class="card" style="border:1px solid #333">
-  <label>📅 Batch schedule (many beats at once)</label>
-  <div style="color:#888;font-size:.8rem;margin-bottom:8px">Drop several beats + cover images (paired
-    in order; one cover works for all). Each becomes a video, uploaded Private and set to go Public on
-    its date. Uses the Format, Filter, Producer tag &amp; YouTube description/tags chosen above.</div>
+<div id="batchPane" hidden>
+<div class="card">
+  <div class="hint" style="margin:0 0 10px">Drop several beats + cover images (paired in order; one cover
+    works for all). Each becomes a video, uploaded Private and set to go Public on its date. Uses the
+    <b>Look &amp; style</b> section above.</div>
   <label style="font-weight:400">Beats (audio, multiple)<input type="file" id="batchBeats" accept="audio/*" multiple></label>
   <label style="font-weight:400;margin-top:8px">Cover images<input type="file" id="batchCovers" accept="image/*" multiple></label>
   <textarea id="batchDescription" rows="3" placeholder="Default description for every video — use {title} to insert each beat's title"
@@ -559,8 +578,15 @@ onto the boxes below.</p>
   <button id="batchGo" style="margin-top:12px;background:#1a7f4b">📤 Render &amp; schedule batch</button>
   <div id="batchMsg" style="margin-top:10px;color:#aaa"></div>
 </div>
+</div><!-- /batchPane -->
 <script>
 const $ = id => document.getElementById(id);
+// Single / Batch tabs — toggle which pane shows; the shared style section stays visible
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+  $('singlePane').hidden = t.dataset.pane !== 'single';
+  $('batchPane').hidden = t.dataset.pane !== 'batch';
+});
 const beat = $('beat'), source = $('source'), media = $('media'), player = $('player'),
       pickrow = $('pickrow'), marks = $('marks'), cliplist = $('cliplist'),
       markIn = $('markIn'), markOut = $('markOut'), go = $('go'),
