@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from app import (FORMATS, MAX_CLIP_SECONDS, auto_clips, best_window, build,
-                 detect_beats, duration, make_tag_png)
+                 detect_beats, duration, make_tag_png, rate_thumbnail)
 
 
 def main():
@@ -95,6 +95,18 @@ def main():
                     "aevalsrc=0.9*sin(2*PI*220*t)*gt(t\\,8):d=16", str(step)],
                    check=True, capture_output=True)
     assert best_window(step, 5.0) >= 7.5, best_window(step, 5.0)
+
+    # thumbnail rating: a bright, colorful, sharp 1280x720 image must out-score a dark blurry one
+    sharp = work / "sharp.png"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=1280x720:duration=1",
+                    "-frames:v", "1", str(sharp)], check=True, capture_output=True)
+    dark = work / "dark.png"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=0x101010:s=1280x720",
+                    "-frames:v", "1", "-vf", "boxblur=12", str(dark)], check=True, capture_output=True)
+    rs, rd = rate_thumbnail(sharp), rate_thumbnail(dark)
+    assert rs["score"] > rd["score"], (rs["score"], rd["score"])
+    assert rs["metrics"]["sharpness"] > rd["metrics"]["sharpness"], (rs["metrics"], rd["metrics"])
+    assert 0 <= rs["score"] <= 100 and len(rs["checks"]) == 7, rs
 
     # intro/outro skip: on a 30s video, no clip should start in the first 5s or last 10s
     long_src = work / "long.mp4"

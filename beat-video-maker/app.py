@@ -181,6 +181,58 @@ def best_window(beat: Path, length: float) -> float:
     return round(min(start, total - length), 2)
 
 
+def _label(score: int) -> str:
+    return ("Excellent" if score >= 85 else "Good" if score >= 70
+            else "Needs work" if score >= 50 else "Poor")
+
+
+def rate_thumbnail(path: Path) -> dict:
+    """Score a thumbnail on hard specs (size/ratio/filesize) + measurable click-quality
+    (bright, punchy, sharp). Honest heuristics — real image signals, NOT a CTR prediction.
+    Thresholds are tuned knobs; adjust if your channel's winners disagree."""
+    from PIL import Image
+    import numpy as np
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    size_mb = path.stat().st_size / 1e6
+    small = im.resize((640, max(1, round(640 * h / w)))) if w > 640 else im  # scale-stable metrics
+    a = np.asarray(small, dtype=np.float64)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    luma = 0.299 * r + 0.587 * g + 0.114 * b
+    brightness, contrast = float(luma.mean()), float(luma.std())
+    rg, yb = r - g, 0.5 * (r + g) - b  # Hasler-Süsstrunk colorfulness
+    colorfulness = float(np.hypot(rg.std(), yb.std()) + 0.3 * np.hypot(rg.mean(), yb.mean()))
+    lap = (luma[1:-1, 2:] + luma[1:-1, :-2] + luma[2:, 1:-1] + luma[:-2, 1:-1]
+           - 4 * luma[1:-1, 1:-1])  # variance of Laplacian = focus/sharpness
+    sharpness = float(lap.var())
+
+    checks = []
+    def add(label, state, detail, tip=""):
+        checks.append({"label": label, "state": state, "detail": detail, "tip": tip})
+    ar = w / h if h else 0
+    add("Resolution", "good" if w >= 1280 and h >= 720 else "warn", f"{w}×{h}",
+        "" if w >= 1280 and h >= 720 else "Use at least 1280×720.")
+    add("Aspect ratio", "good" if abs(ar - 16 / 9) < 0.06 else "warn", f"{ar:.2f}:1",
+        "" if abs(ar - 16 / 9) < 0.06 else "YouTube thumbnails are 16:9 (1.78:1).")
+    add("File size", "good" if size_mb < 2 else "warn", f"{size_mb:.1f} MB",
+        "" if size_mb < 2 else "Over 2MB — we auto-shrink it on upload.")
+    add("Brightness", "good" if 70 <= brightness <= 210 else "warn", f"{brightness:.0f}/255",
+        "" if 70 <= brightness <= 210 else
+        ("Dark thumbnails get fewer clicks — brighten it." if brightness < 70 else "Overexposed — pull it down."))
+    add("Contrast", "good" if contrast >= 45 else "warn", f"{contrast:.0f}",
+        "" if contrast >= 45 else "Flat — add tonal range so it pops in the feed.")
+    add("Colorfulness", "good" if colorfulness >= 25 else "warn", f"{colorfulness:.0f}",
+        "" if colorfulness >= 25 else "Dull — punchier colors stand out in search.")
+    add("Sharpness", "good" if sharpness >= 40 else "warn", f"{sharpness:.0f}",
+        "" if sharpness >= 40 else "Looks soft/blurry — use a crisp image.")
+
+    pts = {"good": 1.0, "warn": 0.5, "bad": 0.0}
+    score = round(100 * sum(pts[c["state"]] for c in checks) / len(checks))
+    return {"score": score, "label": _label(score), "checks": checks,
+            "metrics": {"brightness": round(brightness), "contrast": round(contrast),
+                        "colorfulness": round(colorfulness), "sharpness": round(sharpness)}}
+
+
 def normalize(src: Path, dst: Path, vf_extra: str = "", start: Optional[float] = None,
               length: Optional[float] = None, vf_base: str = VF) -> None:
     """Re-encode an image, video, or video slice into a uniform silent segment."""
@@ -428,6 +480,24 @@ def suggest(q: str) -> list:
         return []  # research is a bonus — never break the generator if the pull fails
 
 
+@app.post("/thumb_score")
+async def thumb_score(thumbnail: UploadFile = File(...)):
+    """Rate an uploaded thumbnail (specs + click-quality). See rate_thumbnail()."""
+    raw = await thumbnail.read()
+    if not raw:
+        raise HTTPException(400, "empty thumbnail")
+    work = Path(tempfile.mkdtemp(prefix="thumb_"))
+    try:
+        p = work / ("t" + Path(thumbnail.filename or "t.jpg").suffix)
+        p.write_bytes(raw)
+        try:
+            return rate_thumbnail(p)
+        except Exception:
+            raise HTTPException(400, "couldn't read that image")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 @app.get("/youtube/videos")
 def youtube_videos():
     import youtube as yt  # local-only
@@ -633,8 +703,12 @@ _INDEX = """<!doctype html>
     <input type="text" id="title" placeholder="Video title">
     <textarea id="description" rows="3" placeholder="Description"></textarea>
     <input type="text" id="tags" placeholder="Tags, comma separated (afrobeats, type beat, free beat)">
-    <label style="font-weight:400;margin-top:10px">Custom thumbnail (optional, JPG/PNG under 2MB)
+    <div style="margin-top:14px"><b style="font-size:.85rem">📊 SEO score</b>
+      <span class="hint">— live grade of your title, description &amp; tags</span></div>
+    <div id="seoScoreBox" style="margin-top:6px"></div>
+    <label style="font-weight:400;margin-top:12px">Custom thumbnail (optional, JPG/PNG under 2MB)
       <input type="file" id="thumbnail" accept="image/*"></label>
+    <div id="thumbScoreBox" style="margin-top:6px"></div>
     <select id="thumbFilter">
       <option value="none">Thumbnail filter: None</option>
       <option value="bw">Thumbnail: Black &amp; white</option>
@@ -851,7 +925,73 @@ $('seoGo').onclick = async () => {
   $('seoMsg').textContent = live.length
     ? '✓ ' + live.length + ' real YouTube searches pulled (chips = demand order) → used as tags in Single & Batch.'
     : '⚠ Could not reach YouTube suggest (offline?). Used the standard tag set instead.';
+  updateTextScore();  // reflect the freshly-generated title/tags in the score
 };
+
+// ---- SEO scorecard (TubeBuddy-style): live grade of title/description/tags + thumbnail ----
+const scoreColor = s => s >= 70 ? '#1a7f4b' : s >= 50 ? '#c99700' : '#e0245e';
+const scoreLabel = s => s >= 85 ? 'Excellent' : s >= 70 ? 'Good' : s >= 50 ? 'Needs work' : 'Poor';
+function renderScore(box, score, checks) {
+  const col = scoreColor(score), dot = st => st === 'good' ? '🟢' : st === 'warn' ? '🟡' : '🔴';
+  box.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+      '<b style="font-size:1.3rem;color:' + col + '">' + score + '</b>' +
+      '<span style="color:' + col + ';font-weight:600">' + scoreLabel(score) + '</span>' +
+      '<div style="flex:1;height:8px;background:#333;border-radius:4px;overflow:hidden">' +
+      '<div style="height:100%;width:' + score + '%;background:' + col + '"></div></div></div>' +
+    checks.map(c => '<div style="font-size:.8rem;margin:3px 0;color:#ccc">' + dot(c.state) + ' ' + c.label +
+      (c.detail ? ' <span style="color:#888">(' + c.detail + ')</span>' : '') +
+      (c.state !== 'good' && c.tip ? ' <span style="color:#888">— ' + c.tip + '</span>' : '') + '</div>').join('');
+}
+// weighted, transparent checks — the same factors YouTube search actually rewards
+const SEO_W = {ttbeat: 15, tlen: 10, intent: 5, dlen: 12, dtop: 10, drep: 6, dlink: 6, dhash: 3, dcta: 3,
+               tcount: 10, tbudget: 8, ttag: 7};
+function scoreText() {
+  const T = title.value.trim(), D = description.value, G = tags.value;
+  const arts = $('seoArtist').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const gen = $('seoGenre').value.trim().toLowerCase();
+  const kws = ['type beat', ...arts, ...(gen ? [gen] : [])];
+  const has = s => kws.some(k => s.toLowerCase().includes(k));
+  const kwCount = kws.reduce((n, k) => n + (D.toLowerCase().split(k).length - 1), 0);
+  const tagArr = G.split(',').map(s => s.trim()).filter(Boolean);
+  const tl = T.length, dl = D.length;
+  const c = [
+    ['ttbeat', 'Title has "type beat"', /type beat/i.test(T) ? 'good' : 'bad', '', 'Buyers search "&lt;artist&gt; type beat".'],
+    ['tlen', 'Title length', tl >= 30 && tl <= 70 ? 'good' : tl > 70 && tl <= 100 ? 'warn' : 'bad', tl + ' chars',
+      tl < 30 ? 'Too short — use the space.' : tl > 100 ? 'Over 100 gets cut off.' : tl > 70 ? '~70 is what shows in search.' : ''],
+    ['intent', 'Buyer intent (free / year)', /\\bfree\\b|\\b20\d\d\\b/i.test(T) ? 'good' : 'warn', '', 'Add [FREE] and the year.'],
+    ['dlen', 'Description length', dl >= 600 ? 'good' : dl >= 200 ? 'warn' : 'bad', dl + ' chars',
+      dl < 200 ? 'Write 3–5 lines minimum.' : dl < 600 ? 'Longer descriptions rank better.' : ''],
+    ['dtop', 'Keyword in first line', has(D.slice(0, 150)) ? 'good' : 'bad', '', 'Put "type beat"/artist up top.'],
+    ['drep', 'Keyword repeated', kwCount >= 2 ? 'good' : 'warn', kwCount + '×', 'Mention key terms 2–3×.'],
+    ['dlink', 'Has a link', /https?:\/\//i.test(D) ? 'good' : 'warn', '', 'Add your buy/lease + socials links.'],
+    ['dhash', 'Has hashtags', /#\w/.test(D) ? 'good' : 'warn', '', '3 hashtags show above the title.'],
+    ['dcta', 'Call to action', /(subscribe|buy|lease|purchase|\\bdm\\b|link in)/i.test(D) ? 'good' : 'warn', '', 'Tell them to buy/subscribe.'],
+    ['tcount', 'Tag count', tagArr.length >= 10 ? 'good' : tagArr.length >= 5 ? 'warn' : 'bad', tagArr.length + '',
+      tagArr.length < 10 ? 'Aim for 15+ (use the generator).' : ''],
+    ['tbudget', 'Tag budget used', G.length >= 300 ? 'good' : 'warn', G.length + '/500', 'Use more of the ~500-char budget.'],
+    ['ttag', '"type beat" in tags', /type beat/i.test(G) ? 'good' : 'bad', '', 'Include your core keyword as a tag.'],
+  ];
+  const pts = {good: 1, warn: 0.5, bad: 0};
+  let got = 0, max = 0;
+  const checks = c.map(([k, label, state, detail, tip]) => { const w = SEO_W[k]; got += w * pts[state]; max += w;
+    return {label, state, detail, tip}; });
+  return {score: Math.round(100 * got / max), checks};
+}
+const updateTextScore = () => { const {score, checks} = scoreText(); renderScore($('seoScoreBox'), score, checks); };
+[title, description, tags].forEach(el => el.addEventListener('input', updateTextScore));
+updateTextScore();
+$('thumbnail').addEventListener('change', async () => {
+  const f = $('thumbnail').files[0], box = $('thumbScoreBox');
+  if (!f) { box.innerHTML = ''; return; }
+  box.innerHTML = '<span class="hint">Rating thumbnail…</span>';
+  try {
+    const fd = new FormData(); fd.append('thumbnail', f);
+    const r = await fetch('/thumb_score', {method: 'POST', body: fd});
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json(); renderScore(box, j.score, j.checks);
+  } catch (e) { box.innerHTML = '<span class="hint">Could not rate thumbnail: ' + e.message + '</span>'; }
+});
 
 // ---- Auto-Short toggle (single pane) ----
 const alsoShort = $('alsoShort');
