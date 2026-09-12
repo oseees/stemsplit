@@ -632,14 +632,16 @@ const MAX_CLIP = 5, clips = [];
 let inPoint = null;
 const fmt = t => t.toFixed(1) + 's';
 
-// drag & drop onto any upload card — works even when Safari won't open the file dialog
-document.querySelectorAll('.card').forEach(card => {
-  const input = card.querySelector('input[type=file]');
-  if (!input) return;
-  card.addEventListener('dragover', e => { e.preventDefault(); card.style.outline = '2px dashed #e0245e'; });
-  card.addEventListener('dragleave', () => card.style.outline = '');
-  card.addEventListener('drop', e => {
-    e.preventDefault(); card.style.outline = '';
+// drag & drop onto each upload field — its own label is the drop zone, so cards with
+// several file inputs (the batch card: beats + covers) each get an independent target.
+// Works even when Safari won't open the file dialog.
+document.querySelectorAll('input[type=file]').forEach(input => {
+  const zone = input.closest('label') || input.closest('.card');
+  if (!zone) return;
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.outline = '2px dashed #e0245e'; });
+  zone.addEventListener('dragleave', () => zone.style.outline = '');
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.style.outline = '';
     input.files = e.dataTransfer.files;
     input.dispatchEvent(new Event('change'));
   });
