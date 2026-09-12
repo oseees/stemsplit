@@ -367,6 +367,7 @@ def youtube_videos():
 @app.post("/batch")
 async def batch(beats: list[UploadFile] = File(...), covers: list[UploadFile] = File(...),
                 titles: str = Form(default="[]"), schedule: str = Form(default="[]"),
+                descriptions: str = Form(default="[]"),
                 fmt: str = Form(default="landscape"), filter: str = Form(default="none"),
                 overlay_text: str = Form(default=""), overlay_font: str = Form(default=""),
                 visualizer: str = Form(default="none"), description: str = Form(default=""),
@@ -380,9 +381,10 @@ async def batch(beats: list[UploadFile] = File(...), covers: list[UploadFile] = 
     if visualizer not in ("none", *VISUALIZERS):
         raise HTTPException(400, "bad visualizer")
     try:
-        title_list, sched_list = json.loads(titles), json.loads(schedule)
+        title_list, sched_list, desc_list = (json.loads(titles), json.loads(schedule),
+                                             json.loads(descriptions))
     except ValueError:
-        raise HTTPException(400, "titles/schedule must be JSON arrays")
+        raise HTTPException(400, "titles/schedule/descriptions must be JSON arrays")
     if not beats or not covers:
         raise HTTPException(400, "need at least one beat and one cover")
     font_path, tag_list = FONTS.get(overlay_font), [t.strip() for t in tags.split(",") if t.strip()]
@@ -410,7 +412,9 @@ async def batch(beats: list[UploadFile] = File(...), covers: list[UploadFile] = 
             build(beat_path, [cover_path], out, vf_extra, fmt=fmt,
                   overlay_text=overlay_text.strip()[:60], visualizer=visualizer,
                   overlay_font=font_path)
-            desc = description.replace("{title}", title)  # personalize per video
+            # per-video description if the row sent one, else the shared default; {title} still expands
+            desc_src = desc_list[i] if i < len(desc_list) else description
+            desc = (desc_src or "").replace("{title}", title)
             video_id = yt.upload(out, title, description=desc, privacy="private",
                                  tags=tag_list, publish_at=pub or None)
             results.append({"title": title, "youtube_url": f"https://youtu.be/{video_id}",
@@ -538,19 +542,20 @@ onto the boxes below.</p>
     its date. Uses the Format, Filter, Producer tag &amp; YouTube description/tags chosen above.</div>
   <label style="font-weight:400">Beats (audio, multiple)<input type="file" id="batchBeats" accept="audio/*" multiple></label>
   <label style="font-weight:400;margin-top:8px">Cover images<input type="file" id="batchCovers" accept="image/*" multiple></label>
-  <textarea id="batchDescription" rows="3" placeholder="Description for every video — use {title} to insert each beat's title"
+  <textarea id="batchDescription" rows="3" placeholder="Default description for every video — use {title} to insert each beat's title"
     style="width:100%;margin-top:10px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box;font:inherit;resize:vertical"></textarea>
   <input type="text" id="batchTags" placeholder="Tags for all (afrobeats, type beat, free beat)"
     style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
   <select id="batchReuse" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box">
     <option value="">↺ Copy description &amp; tags from a past video…</option></select>
-  <div style="color:#888;font-size:.8rem;margin-top:6px">Each beat's <b>title</b> is editable in the table below
-    (defaults to the file name). Description &amp; tags are remembered.</div>
+  <button id="batchApplyDesc" class="mini" style="margin-top:8px">↻ Apply this description to every video below</button>
+  <div style="color:#888;font-size:.8rem;margin-top:6px">Each video's <b>title</b> and <b>description</b> are
+    editable per row below — the fields above are the defaults. Description &amp; tags are remembered.</div>
   <div class="row" style="margin-top:10px">
     <label style="font-weight:400;flex:2">Start date/time<input type="datetime-local" id="batchStart" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"></label>
     <label style="font-weight:400;flex:1">Every<input type="number" id="batchInterval" value="2" min="0" step="1" style="width:100%;padding:8px;border-radius:8px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"> day(s)</label>
   </div>
-  <table id="batchRows" style="width:100%;margin-top:10px;border-collapse:collapse;font-size:.85rem"></table>
+  <div id="batchRows" style="margin-top:10px"></div>
   <button id="batchGo" style="margin-top:12px;background:#1a7f4b">📤 Render &amp; schedule batch</button>
   <div id="batchMsg" style="margin-top:10px;color:#aaa"></div>
 </div>
@@ -752,19 +757,38 @@ for (const [id, key] of [['batchDescription', 'beatvideo_bdesc'], ['batchTags', 
   el.addEventListener('input', () => localStorage.setItem(key, el.value));
 }
 
+const fieldCss = 'padding:6px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box';
+const descTemplate = title => ($('batchDescription').value || '').split('{title}').join(title);
 function buildBatchRows() {
   batchRows.innerHTML = '';
-  [...batchBeats.files].forEach((f, i) => {
-    const tr = document.createElement('tr');
+  [...batchBeats.files].forEach(f => {
     const stem = f.name.replace(/\.[^.]+$/, '');
-    tr.innerHTML =
-      '<td style="padding:3px 4px 3px 0"><input class="btitle" value="' + stem.replace(/"/g, '&quot;') +
-        '" style="width:100%;padding:6px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444;box-sizing:border-box"></td>' +
-      '<td style="padding:3px 0"><input type="datetime-local" class="bdate" style="padding:6px;border-radius:6px;background:#2a2a2c;color:#eee;border:1px solid #444"></td>';
-    batchRows.appendChild(tr);
+    const block = document.createElement('div');
+    block.style.cssText = 'border:1px solid #333;border-radius:8px;padding:8px;margin-bottom:8px';
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    const title = document.createElement('input');
+    title.className = 'btitle'; title.value = stem; title.style.cssText = 'flex:2;' + fieldCss;
+    const date = document.createElement('input');
+    date.type = 'datetime-local'; date.className = 'bdate'; date.style.cssText = 'flex:1;' + fieldCss;
+    top.append(title, date);
+    const desc = document.createElement('textarea');
+    desc.className = 'bdesc'; desc.rows = 2; desc.placeholder = 'Description for this video';
+    desc.style.cssText = 'width:100%;font:inherit;resize:vertical;' + fieldCss;
+    desc.value = descTemplate(stem);
+    title.addEventListener('input', () => { if (!desc.dataset.edited) desc.value = descTemplate(title.value); });
+    desc.addEventListener('input', () => desc.dataset.edited = '1');  // stop auto-syncing once hand-edited
+    block.append(top, desc);
+    batchRows.appendChild(block);
   });
   fillBatchDates();
 }
+$('batchApplyDesc').onclick = () => {
+  const titles = [...batchRows.querySelectorAll('.btitle')];
+  batchRows.querySelectorAll('.bdesc').forEach((d, i) => {
+    d.value = descTemplate(titles[i] ? titles[i].value : ''); delete d.dataset.edited;
+  });
+};
 function fillBatchDates() {
   if (!batchStart.value) return;
   const start = new Date(batchStart.value), gap = Math.max(0, +batchInterval.value || 0);
@@ -783,6 +807,7 @@ batchGo.onclick = async () => {
   for (const f of batchBeats.files) fd.append('beats', f);
   for (const f of $('batchCovers').files) fd.append('covers', f);
   fd.append('titles', JSON.stringify([...batchRows.querySelectorAll('.btitle')].map(i => i.value)));
+  fd.append('descriptions', JSON.stringify([...batchRows.querySelectorAll('.bdesc')].map(i => i.value)));
   fd.append('schedule', JSON.stringify([...batchRows.querySelectorAll('.bdate')]
     .map(i => i.value ? new Date(i.value).toISOString() : '')));
   fd.append('fmt', $('fmt').value);
