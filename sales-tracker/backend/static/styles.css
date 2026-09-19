@@ -429,6 +429,31 @@ body.signed-out .appbar,
 body.signed-out .bottom-nav,
 body.signed-out .menu-sheet { display: none !important; }
 
+/* Floating bot launcher — fixed bottom-right, clear of the bottom nav, and
+   under the modal host (z-60) so the chat panel covers it once open. */
+.bot-fab {
+  position: fixed; right: 16px; z-index: 45;
+  bottom: calc(92px + env(safe-area-inset-bottom));   /* nav reserves 84px */
+  width: 54px; height: 54px; border-radius: 50%; border: 0; cursor: pointer;
+  background: var(--indigo); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  /* Neutral shadow, not a colour-matched glow: --indigo is the brand accent and
+     differs per theme, so a hardcoded tint would clash in one of them. */
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.bot-fab .ic { width: 26px; height: 26px; stroke-width: 2.2; }
+.bot-fab:active { transform: scale(.92); }
+@media (hover: hover) {
+  .bot-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+}
+/* Signed out there's no app to log into; attendants can't use the bot (the
+   endpoint isn't in their allowlist), so don't dangle a button at them. */
+body.signed-out .bot-fab,
+body.attendant .bot-fab { display: none !important; }
+/* Desktop turns the nav into a left sidebar, so the corner is free. */
+body.desktop:not(.signed-out) .bot-fab { bottom: 24px; right: 24px; }
+
 .auth-wrap { min-height: 100vh; display: flex; align-items: center;
   justify-content: center; padding: 24px 18px; }
 .auth-card { background: var(--card); border-radius: var(--radius);

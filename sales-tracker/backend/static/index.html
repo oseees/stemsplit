@@ -116,6 +116,12 @@
       <div class="sk sk-kpi"></div><div class="sk sk-kpi"></div></div>
     <div class="sk sk-card"></div><div class="sk sk-card"></div></div></main>
 
+  <!-- Floating bot launcher. Lives OUTSIDE #app because render() replaces that
+       element's contents wholesale, which would wipe the button on every view. -->
+  <button class="bot-fab" id="botFab" onclick="salesBot()" aria-label="Open SalesPal bot">
+    <svg class="ic"><use href="#i-chat"/></svg>
+  </button>
+
   <!-- Bottom navigation -->
   <nav class="bottom-nav">
     <button data-nav="home" class="active"><svg class="ic"><use href="#i-home"/></svg>Home</button>

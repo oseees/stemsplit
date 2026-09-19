@@ -1299,7 +1299,6 @@ async function viewHome() {
     </div>
     <div class="quick-acts">
       <button class="qa" onclick="newSaleModal()"><span class="qa-i">＋</span>New sale</button>
-      <button class="qa" onclick="salesBot()"><span class="qa-i"><svg class="ic"><use href="#i-chat"/></svg></span>Bot</button>
       <button class="qa" onclick="expenseModal()"><span class="qa-i"><svg class="ic"><use href="#i-sales"/></svg></span>Expense</button>
       <button class="qa" onclick="setView('products')"><span class="qa-i"><svg class="ic"><use href="#i-products"/></svg></span>Stock</button>
       <button class="qa" onclick="setView('insights')"><span class="qa-i"><svg class="ic"><use href="#i-insights"/></svg></span>Insights</button>
