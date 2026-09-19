@@ -56,6 +56,7 @@ _RATE_RULES = [
     ("/api/auth/register", 5, 60),
     ("/api/auth/reset", 5, 60),
     ("/api/voice/", 20, 60),
+    ("/api/chat/", 20, 60),   # same AI cost per call as voice
 ]
 
 
@@ -1285,6 +1286,89 @@ async def voice_transcribe_sale(audio: UploadFile = File(...), user=Depends(curr
     if not tr["ok"]:
         raise HTTPException(503, tr.get("error") or "Couldn't hear that — try again")
     return _voice_sale_from_transcript(user, tr["text"])
+
+
+class ChatEntryIn(BaseModel):
+    text: str
+
+
+@app.post("/api/chat/entry")
+def chat_entry(body: ChatEntryIn, user=Depends(current_user)):
+    """SalesPal bot: type what you sold or spent and it's recorded for you.
+    Reuses the voice free-use allowance (identical AI cost per message) and the
+    real create_invoice/create_expense paths, so stock, invoice numbering and
+    payments behave exactly like an entry made by hand."""
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Type what you sold or spent")
+    if not ai.available():
+        raise HTTPException(503, "The bot isn't available right now")
+
+    pro = is_pro(user)
+    month = _month_start()
+    with db.get_conn() as conn:
+        if not pro:
+            row = conn.execute("SELECT voice_month, voice_uses FROM users WHERE id=?",
+                               (user["id"],)).fetchone()
+            used = row["voice_uses"] if (row and row["voice_month"] == month) else 0
+            if used >= FREE_VOICE_USES_PER_MONTH:
+                raise HTTPException(402, f"You've used your {FREE_VOICE_USES_PER_MONTH} free AI "
+                                         "entries this month — Pro is unlimited")
+        sf, sp = _shop_and(_active_shop(user))
+        products = db.rows_to_list(conn.execute(
+            "SELECT id, name, unit_price, unit_cost FROM products WHERE user_id=?" + sf,
+            (user["id"], *sp)))
+        customers = [r["name"] for r in conn.execute(
+            "SELECT name FROM customers WHERE user_id=?" + sf, (user["id"], *sp))]
+    cur = db.get_settings(user["id"])["currency"]
+
+    res = ai.parse_entry(text, products, customers, cur)
+    if not res["ok"]:
+        raise HTTPException(503, res.get("text") or "Couldn't understand that — try again")
+    # Only a successful parse costs a free use (a flaky call never eats one).
+    if not pro:
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE users SET voice_uses = CASE WHEN voice_month=? THEN voice_uses+1 ELSE 1 END, "
+                "voice_month=? WHERE id=?", (month, month, user["id"]))
+
+    d = res["data"] or {}
+    if res["kind"] == "expense":
+        amt = round(float(d.get("amount") or 0), 2)
+        if amt <= 0:
+            raise HTTPException(400, "I couldn't tell how much that cost — include the amount")
+        cat = d.get("category") or "Other"
+        create_expense(ExpenseIn(amount=amt, category=cat,
+                                 description=d.get("description") or text), user)
+        return {"kind": "expense",
+                "reply": f"Recorded expense: {cur}{amt:,.0f} · {cat}"}
+
+    costs = {p["id"]: p["unit_cost"] for p in products}
+    items = [InvoiceItemIn(
+        # product_id 0 = "nothing in the catalog matched" → a custom line item.
+        product_id=(it.get("product_id") or None),
+        description=it.get("description") or "Item",
+        qty=float(it.get("qty") or 1),
+        unit_price=float(it.get("unit_price") or 0),
+        unit_cost=float(costs.get(it.get("product_id")) or 0),
+    ) for it in (d.get("items") or []) if it.get("description")]
+    if not items:
+        raise HTTPException(400, "I couldn't tell what was sold — include the item and price")
+
+    total = round(sum(i.qty * i.unit_price for i in items), 2)
+    pay = d.get("payment")
+    paid_now = pay in ("cash", "transfer") and total > 0
+    inv = create_invoice(InvoiceIn(
+        customer_name=(d.get("customer_name") or None),
+        items=items,
+        notes=("Customer owing" if pay == "owing" else f"Paid by {pay}" if paid_now else None),
+        payment=(PaymentIn(amount=total, method=pay) if paid_now else None),
+    ), user)
+    listed = ", ".join(f"{i.qty:g} × {i.description}" for i in items)
+    who = f" for {d['customer_name']}" if d.get("customer_name") else ""
+    tail = " (owing)" if pay == "owing" else (f" · paid {pay}" if paid_now else "")
+    return {"kind": "sale", "invoice_id": inv.get("id"),
+            "reply": f"Recorded sale: {listed}{who} — {cur}{total:,.0f}{tail}"}
 
 
 class PriceCheckIn(BaseModel):

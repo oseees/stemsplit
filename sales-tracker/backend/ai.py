@@ -300,6 +300,71 @@ def parse_sale(transcript: str, products: list, customers: list, currency: str) 
         return {"ok": False, "text": f"Couldn't understand that: {e}"}
 
 
+# Categories mirror the expense form's dropdown so the bot can only pick one the
+# app already knows.
+_EXPENSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "amount": {"type": "number", "description": "Amount spent, in the business currency"},
+        "category": {"type": "string",
+                     "enum": ["Transport", "Rent", "Utilities", "Marketing",
+                              "Salaries", "Stock / inventory", "Other"]},
+        "description": {"type": "string", "description": "Short note of what it was for"},
+    },
+    "required": ["amount", "category", "description"],
+    "additionalProperties": False,
+}
+
+
+def parse_entry(text: str, products: list, customers: list, currency: str) -> dict:
+    """Typed chat entry → a sale OR an expense. Same catalog grounding as
+    parse_sale; Claude picks which tool fits what they typed."""
+    client = _client()
+    if client is None:
+        return {"ok": False, "text": "AI is not set up on this server."}
+    if _over_cap():
+        return {"ok": False, "text": _CAP_MSG}
+
+    catalog = "\n".join(f"- id {p['id']}: {p['name']} @ {p['unit_price']}" for p in products) or "(no products yet)"
+    names = ", ".join(customers) or "(none yet)"
+    prompt = (
+        "A Nigerian shop owner typed a message into their bookkeeping app. It is either "
+        "a SALE they made or an EXPENSE they paid. Record it with the matching tool.\n\n"
+        f"Their product catalog (id: name @ usual price, in {currency}):\n{catalog}\n\n"
+        f"Their existing customers: {names}\n\n"
+        f'They typed: "{text}"\n\n'
+        "Rules:\n"
+        "- Money they RECEIVED for goods/services = record_sale. Money they SPENT = record_expense.\n"
+        "- Match sale items to the catalog loosely (plurals, partial names). Use the catalog id "
+        "and its usual price UNLESS they gave a different price.\n"
+        "- If nothing in the catalog matches, use product_id 0, the item as typed, and the price "
+        "they gave (0 if none).\n"
+        "- Quantity defaults to 1. Interpret amounts naturally ('5k' = 5000).\n"
+        "- payment: 'cash' or 'transfer' if stated, 'owing' if the customer will pay later, else 'unknown'.\n"
+        "- Only record what they actually said — never invent."
+    )
+    try:
+        resp = client.messages.create(
+            model=FAST_MODEL,
+            max_tokens=1000,
+            tools=[
+                {"name": "record_sale", "description": "Record a sale the shop owner made.",
+                 "input_schema": _SALE_SCHEMA},
+                {"name": "record_expense", "description": "Record money the shop owner spent.",
+                 "input_schema": _EXPENSE_SCHEMA},
+            ],
+            tool_choice={"type": "any"},   # Claude must call one of them, and picks which
+            messages=[{"role": "user", "content": prompt}],
+        )
+        for b in resp.content:
+            if getattr(b, "type", "") == "tool_use":
+                return {"ok": True, "kind": "sale" if b.name == "record_sale" else "expense",
+                        "data": b.input}
+        return {"ok": False, "text": "Couldn't understand that — no structured result."}
+    except Exception as e:
+        return {"ok": False, "text": f"Couldn't understand that: {e}"}
+
+
 def _call(client, prompt: str) -> dict:
     if _over_cap():
         return {"ok": False, "text": _CAP_MSG}

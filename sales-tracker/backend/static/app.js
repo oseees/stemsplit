@@ -1299,6 +1299,7 @@ async function viewHome() {
     </div>
     <div class="quick-acts">
       <button class="qa" onclick="newSaleModal()"><span class="qa-i">＋</span>New sale</button>
+      <button class="qa" onclick="salesBot()"><span class="qa-i"><svg class="ic"><use href="#i-chat"/></svg></span>Bot</button>
       <button class="qa" onclick="expenseModal()"><span class="qa-i"><svg class="ic"><use href="#i-sales"/></svg></span>Expense</button>
       <button class="qa" onclick="setView('products')"><span class="qa-i"><svg class="ic"><use href="#i-products"/></svg></span>Stock</button>
       <button class="qa" onclick="setView('insights')"><span class="qa-i"><svg class="ic"><use href="#i-insights"/></svg></span>Insights</button>
@@ -2360,6 +2361,57 @@ async function saveExpense() {
   closeModal(); toast("Expense added"); render();
 }
 function delExpense(id) { toast("Deleted"); _optimistic(() => api.send(`/api/expenses/${id}`, "DELETE")); }
+
+// ---------- SalesPal bot: type a sale or an expense, it gets recorded --------
+// The server does the catalog-grounded parse (same one voice uses) AND the save,
+// so this is just a transcript + an input box. Log is in-memory: a chat history
+// nobody asked for is a table and a sync problem. ponytail: add when asked.
+let _botLog = [];
+
+function salesBot() {
+  if (!requireShop()) return;
+  openModal(`<h2>SalesPal bot</h2>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Type what you sold or spent — I'll record it.</p>
+    <div id="botLog" class="card" style="max-height:44vh;overflow:auto"></div>
+    <div class="field" style="margin-top:10px"><input id="botInput"
+      placeholder="Sold 3 bags of rice 5000 cash" autocomplete="off" enterkeyhint="send"></div>
+    <button class="btn" onclick="botSend()">Send</button>`);
+  renderBotLog();
+  const i = document.getElementById("botInput");
+  if (i) { i.focus(); i.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); botSend(); } }; }
+}
+
+function renderBotLog() {
+  const el = document.getElementById("botLog");
+  if (!el) return;
+  el.innerHTML = _botLog.length
+    ? _botLog.map(m => `<div class="list-row"><div class="main" style="${
+        m.you ? "font-weight:600" : "color:var(--muted)"}">${m.you ? "" : "🤖 "}${esc(m.text)}</div></div>`).join("")
+    : `<div class="empty">Try “sold 2 crates of eggs 3500 cash”<br>or “spent 2000 on transport”</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function botSend() {
+  const i = document.getElementById("botInput");
+  const text = ((i && i.value) || "").trim();
+  if (!text) return;
+  i.value = "";
+  _botLog.push({ you: true, text }, { you: false, text: "…" });
+  renderBotLog();
+  try {
+    const r = await api.send("/api/chat/entry", "POST", { text });
+    _botLog.pop();
+    _botLog.push({ you: false, text: r.reply });
+  } catch (e) {
+    _botLog.pop();
+    if (e.message === "__auth__" || e.message === "__upgrade__") { renderBotLog(); return; }
+    _botLog.push({ you: false, text: e.message || "Couldn't understand that — try again" });
+    renderBotLog();
+    return;
+  }
+  renderBotLog();
+  render();   // already saved server-side — refresh the dashboard behind the chat
+}
 
 // One debtor row — a customer and everything they owe across invoices. Shared by
 // the Owed tab and the dashboard's Owed card, so the two can't drift apart.
@@ -3579,7 +3631,7 @@ async function _sharePayLinkFallback(id) {
 // expose handlers used in inline onclick
 Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModal, saveEditedSale, shareInvoice, markPaid, markUnpaid, settleCustomer, openOwed, paymentModal,
   savePayment, addProductItem, addCustomItem, pickProduct, updItem, removeItem,
-  saveSale, voiceSale, expenseModal, expCatChanged, saveExpense, delExpense, productModal, saveProduct,
+  saveSale, voiceSale, salesBot, botSend, expenseModal, expCatChanged, saveExpense, delExpense, productModal, saveProduct,
   delProduct, addSupplierRow, callSupplier, priceCheckModal, pcNudge, runPriceCheck, customerModal, saveCustomer, delCustomer, saveSettings, loadAdvice, forceUpdate, referralModal, shareReferral, promoModal, sharePromo, uploadProductPhoto,
   filterCustomerSuggest, pickCustomerSuggest, hideCustomerSuggest,
   goalModal, saveGoal, goalTips,
