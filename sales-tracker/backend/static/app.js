@@ -2371,10 +2371,13 @@ function salesBot() {
   if (!requireShop()) return;
   openModal(`<h2>SalesPal bot</h2>
     <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Type what you sold or spent — I'll record it.</p>
-    <div id="botLog" class="card" style="max-height:44vh;overflow:auto"></div>
-    <div class="field" style="margin-top:10px"><input id="botInput"
-      placeholder="Sold 3 bags of rice 5000 cash" autocomplete="off" enterkeyhint="send"></div>
-    <button class="btn" onclick="botSend()">Send</button>`);
+    <div id="botLog" class="bot-log"></div>
+    <div class="field-row" style="align-items:center;margin-top:10px">
+      <div class="field" style="margin-bottom:0"><input id="botInput"
+        placeholder="Sold 3 bags of rice 5000 cash" autocomplete="off" enterkeyhint="send"></div>
+      <button class="bot-send" onclick="botSend()" aria-label="Send">
+        <svg class="ic"><use href="#i-send"/></svg></button>
+    </div>`);
   renderBotLog();
   const i = document.getElementById("botInput");
   if (i) { i.focus(); i.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); botSend(); } }; }
@@ -2384,8 +2387,8 @@ function renderBotLog() {
   const el = document.getElementById("botLog");
   if (!el) return;
   el.innerHTML = _botLog.length
-    ? _botLog.map(m => `<div class="list-row"><div class="main" style="${
-        m.you ? "font-weight:600" : "color:var(--muted)"}">${m.you ? "" : "🤖 "}${esc(m.text)}</div></div>`).join("")
+    ? `<div class="bot-thread">${_botLog.map(m => `<div class="bot-msg ${m.you ? "you" : "bot"}">${
+        m.typing ? `<span class="bot-typing"><i></i><i></i><i></i></span>` : esc(m.text)}</div>`).join("")}</div>`
     : `<div class="empty">Try “sold 2 crates of eggs 3500 cash”<br>or “spent 2000 on transport”</div>`;
   el.scrollTop = el.scrollHeight;
 }
@@ -2395,7 +2398,7 @@ async function botSend() {
   const text = ((i && i.value) || "").trim();
   if (!text) return;
   i.value = "";
-  _botLog.push({ you: true, text }, { you: false, text: "…" });
+  _botLog.push({ you: true, text }, { you: false, typing: true });
   renderBotLog();
   try {
     const r = await api.send("/api/chat/entry", "POST", { text });
