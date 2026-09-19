@@ -1225,6 +1225,34 @@ class VoiceSaleIn(BaseModel):
     transcript: str
 
 
+# A shop that has traded for years accumulates thousands of one-off walk-in
+# names (every free-text customer on a sale auto-creates one). Sending them all
+# to ground an AI parse made the prompt — and its per-message cost — grow without
+# limit: ~24x for a 4-year-old shop vs a new one. Products are naturally bounded,
+# so only this list needs capping.
+AI_CUSTOMER_LIMIT = 100
+
+
+def _ai_customer_names(conn, user_id, sf, sp, text=""):
+    """Customer names used to ground an AI parse, capped so cost stays flat.
+    The most recent AI_CUSTOMER_LIMIT cover almost every real match; an older
+    customer is still included when their name appears in what was said/typed,
+    so naming a long-lost customer explicitly still matches them."""
+    names = [r["name"] for r in conn.execute(
+        "SELECT name FROM customers WHERE user_id=?" + sf + " ORDER BY id DESC LIMIT ?",
+        (user_id, *sp, AI_CUSTOMER_LIMIT))]
+    if text:
+        seen = {n.lower() for n in names}
+        # length>=3 so a customer saved as "A" doesn't match every message.
+        for r in conn.execute(
+                "SELECT name FROM customers WHERE user_id=?" + sf +
+                " AND length(name) >= 3 AND lower(?) LIKE '%' || lower(name) || '%' LIMIT 20",
+                (user_id, *sp, text)):
+            if r["name"].lower() not in seen:
+                names.append(r["name"])
+    return names
+
+
 def _voice_sale_from_transcript(user, transcript):
     """Shared core: a spoken-sale transcript → structured items grounded in the
     user's own catalog. Pro feature with a monthly free taste; the counter only
@@ -1247,8 +1275,7 @@ def _voice_sale_from_transcript(user, transcript):
         products = db.rows_to_list(conn.execute(
             "SELECT id, name, unit_price FROM products WHERE user_id=?" + sf,
             (user["id"], *sp)))
-        customers = [r["name"] for r in conn.execute(
-            "SELECT name FROM customers WHERE user_id=?" + sf, (user["id"], *sp))]
+        customers = _ai_customer_names(conn, user["id"], sf, sp, transcript)
     settings = db.get_settings(user["id"])
 
     result = ai.parse_sale(transcript, products, customers, settings["currency"])
@@ -1318,8 +1345,7 @@ def chat_entry(body: ChatEntryIn, user=Depends(current_user)):
         products = db.rows_to_list(conn.execute(
             "SELECT id, name, unit_price, unit_cost FROM products WHERE user_id=?" + sf,
             (user["id"], *sp)))
-        customers = [r["name"] for r in conn.execute(
-            "SELECT name FROM customers WHERE user_id=?" + sf, (user["id"], *sp))]
+        customers = _ai_customer_names(conn, user["id"], sf, sp, text)
     cur = db.get_settings(user["id"])["currency"]
 
     res = ai.parse_entry(text, products, customers, cur)

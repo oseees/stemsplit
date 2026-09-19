@@ -73,4 +73,22 @@ assert len(c.get("/api/invoices", headers=h).json()) == 2, "no junk invoice crea
 assert len(c.get("/api/expenses", headers=h).json()) == 1, "no junk expense created"
 print("junk rejected OK")
 
+
+# --- the customer list is capped so prompt cost stays flat as a shop ages ------
+uid = c.get("/api/auth/me", headers=h).json()["id"]
+with main.db.get_conn() as conn:
+    for i in range(1, 151):
+        conn.execute("INSERT INTO customers(user_id,name,created_at) VALUES(?,?,?)",
+                     (uid, f"Walkin {i}", main.db.now_iso()))
+sf, sp = main._shop_and(0)
+with main.db.get_conn() as conn:
+    plain = main._ai_customer_names(conn, uid, sf, sp)
+    named = main._ai_customer_names(conn, uid, sf, sp, "sold rice to Walkin 3 today")
+assert len(plain) == main.AI_CUSTOMER_LIMIT, ("capped", len(plain))
+assert "Walkin 150" in plain, "must keep the most recent"
+assert "Walkin 3" not in plain, "an old walk-in shouldn't be sent by default"
+assert "Walkin 3" in named, "but must come back when the message names them"
+assert len(named) == len(set(n.lower() for n in named)), "no duplicates"
+print(f"customer cap OK -> {len(plain)} names from 151, old match pulled in on mention")
+
 print("\nall chat-entry checks passed")
