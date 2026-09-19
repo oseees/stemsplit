@@ -2393,6 +2393,22 @@ function renderBotLog() {
   el.scrollTop = el.scrollHeight;
 }
 
+// One silent retry before giving up. The bot can't use the offline write queue
+// (it needs a live AI round-trip, and replaying it later would create records at
+// a time the owner never expected), so a single dropped request on mobile data
+// is otherwise a dead end. Matching the offline string is how api.send reports a
+// network failure on a non-queued path — server errors (402/429/400) must NOT
+// retry, so only that case does.
+async function _botPost(text) {
+  try {
+    return await api.send("/api/chat/entry", "POST", { text });
+  } catch (e) {
+    if (!/offline/i.test(e.message || "")) throw e;
+    await new Promise(r => setTimeout(r, 900));
+    return api.send("/api/chat/entry", "POST", { text });
+  }
+}
+
 async function botSend() {
   const i = document.getElementById("botInput");
   const text = ((i && i.value) || "").trim();
@@ -2401,13 +2417,21 @@ async function botSend() {
   _botLog.push({ you: true, text }, { you: false, typing: true });
   renderBotLog();
   try {
-    const r = await api.send("/api/chat/entry", "POST", { text });
+    const r = await _botPost(text);
     _botLog.pop();
     _botLog.push({ you: false, text: r.reply });
   } catch (e) {
     _botLog.pop();
     if (e.message === "__auth__" || e.message === "__upgrade__") { renderBotLog(); return; }
-    _botLog.push({ you: false, text: e.message || "Couldn't understand that — try again" });
+    // Hand the message back — a dropped request shouldn't cost them their typing.
+    if (i) i.value = text;
+    const net = /offline/i.test(e.message || "");
+    _botLog.push({ you: false, text: !net ? (e.message || "Couldn't understand that — try again")
+      : navigator.onLine
+        // Don't claim they're offline when the browser says they aren't — a
+        // failed POST is just as often the server restarting mid-deploy.
+        ? "Couldn't reach the bot just then. Your message is back in the box — tap send to try again."
+        : "You're offline. Your message is back in the box — send it once you're back on." });
     renderBotLog();
     return;
   }
