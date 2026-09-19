@@ -2361,7 +2361,7 @@ async function saveExpense() {
 }
 function delExpense(id) { toast("Deleted"); _optimistic(() => api.send(`/api/expenses/${id}`, "DELETE")); }
 
-// ---------- SalesPal bot: type a sale or an expense, it gets recorded --------
+// ---------- SalesPadi: type a sale or an expense, it gets recorded ----------
 // The server does the catalog-grounded parse (same one voice uses) AND the save,
 // so this is just a transcript + an input box. Log is in-memory: a chat history
 // nobody asked for is a table and a sync problem. ponytail: add when asked.
@@ -2369,7 +2369,7 @@ let _botLog = [];
 
 function salesBot() {
   if (!requireShop()) return;
-  openModal(`<h2>SalesPal bot</h2>
+  openModal(`<h2>SalesPadi</h2>
     <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Type what you sold or spent — I'll record it.</p>
     <div id="botLog" class="bot-log"></div>
     <div class="field-row" style="align-items:center;margin-top:10px">
@@ -2430,7 +2430,7 @@ async function botSend() {
       : navigator.onLine
         // Don't claim they're offline when the browser says they aren't — a
         // failed POST is just as often the server restarting mid-deploy.
-        ? "Couldn't reach the bot just then. Your message is back in the box — tap send to try again."
+        ? "Couldn't reach SalesPadi just then. Your message is back in the box — tap send to try again."
         : "You're offline. Your message is back in the box — send it once you're back on." });
     renderBotLog();
     return;

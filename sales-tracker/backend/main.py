@@ -1321,7 +1321,7 @@ class ChatEntryIn(BaseModel):
 
 @app.post("/api/chat/entry")
 def chat_entry(body: ChatEntryIn, user=Depends(current_user)):
-    """SalesPal bot: type what you sold or spent and it's recorded for you.
+    """SalesPadi: type what you sold or spent and it's recorded for you.
     Reuses the voice free-use allowance (identical AI cost per message) and the
     real create_invoice/create_expense paths, so stock, invoice numbering and
     payments behave exactly like an entry made by hand."""
@@ -1329,7 +1329,7 @@ def chat_entry(body: ChatEntryIn, user=Depends(current_user)):
     if not text:
         raise HTTPException(400, "Type what you sold or spent")
     if not ai.available():
-        raise HTTPException(503, "The bot isn't available right now")
+        raise HTTPException(503, "SalesPadi isn't available right now")
 
     pro = is_pro(user)
     month = _month_start()
