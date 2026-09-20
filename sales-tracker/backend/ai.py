@@ -316,6 +316,34 @@ _EXPENSE_SCHEMA = {
 }
 
 
+# Chat can express a part payment ("she paid 5000 of the 15000"), which the
+# spoken flow can't — so extend the shared sale shape here and leave voice's
+# _SALE_SCHEMA untouched.
+_CHAT_SALE_SCHEMA = {
+    **_SALE_SCHEMA,
+    "properties": {
+        **_SALE_SCHEMA["properties"],
+        "amount_paid": {"type": "number", "description":
+                        "How much the customer handed over NOW: the full total if paid in "
+                        "full, 0 if it's all owed, or the part amount for a part payment."},
+    },
+    "required": _SALE_SCHEMA["required"] + ["amount_paid"],
+}
+
+# Money coming in against a debt the customer ALREADY owes — no new goods sold.
+_PAYMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "customer_name": {"type": "string", "description":
+                          "Who paid. Match an existing customer when it's clearly them."},
+        "amount": {"type": "number", "description": "How much they paid"},
+        "method": {"type": "string", "enum": ["cash", "transfer", "unknown"]},
+    },
+    "required": ["customer_name", "amount", "method"],
+    "additionalProperties": False,
+}
+
+
 def parse_entry(text: str, products: list, customers: list, currency: str) -> dict:
     """Typed chat entry → a sale OR an expense. Same catalog grounding as
     parse_sale; Claude picks which tool fits what they typed."""
@@ -328,13 +356,19 @@ def parse_entry(text: str, products: list, customers: list, currency: str) -> di
     catalog = "\n".join(f"- id {p['id']}: {p['name']} @ {p['unit_price']}" for p in products) or "(no products yet)"
     names = ", ".join(customers) or "(none yet)"
     prompt = (
-        "A Nigerian shop owner typed a message into their bookkeeping app. It is either "
-        "a SALE they made or an EXPENSE they paid. Record it with the matching tool.\n\n"
+        "A Nigerian shop owner typed a message into their bookkeeping app. It is a SALE "
+        "they made, an EXPENSE they paid, or a PAYMENT a customer made against money they "
+        "already owed. Record it with the matching tool.\n\n"
         f"Their product catalog (id: name @ usual price, in {currency}):\n{catalog}\n\n"
         f"Their existing customers: {names}\n\n"
         f'They typed: "{text}"\n\n'
         "Rules:\n"
-        "- Money they RECEIVED for goods/services = record_sale. Money they SPENT = record_expense.\n"
+        "- Goods/services sold NOW = record_sale. Money they SPENT = record_expense.\n"
+        "- A customer clearing money they ALREADY owed, with no new goods "
+        "('Mrs Okoro paid 5000', 'Musa settled 2k of his debt') = record_payment.\n"
+        "- On a sale, amount_paid is what the customer handed over NOW: the full total when "
+        "paid in full, 0 when it's all owed, the part amount when they paid some "
+        "('sold rice 15000, she paid 5000' -> amount_paid 5000, payment 'cash').\n"
         "- Match sale items to the catalog loosely (plurals, partial names). Use the catalog id "
         "and its usual price UNLESS they gave a different price.\n"
         "- If nothing in the catalog matches, use product_id 0, the item as typed, and the price "
@@ -349,17 +383,20 @@ def parse_entry(text: str, products: list, customers: list, currency: str) -> di
             max_tokens=1000,
             tools=[
                 {"name": "record_sale", "description": "Record a sale the shop owner made.",
-                 "input_schema": _SALE_SCHEMA},
+                 "input_schema": _CHAT_SALE_SCHEMA},
                 {"name": "record_expense", "description": "Record money the shop owner spent.",
                  "input_schema": _EXPENSE_SCHEMA},
+                {"name": "record_payment", "description":
+                    "Record a customer paying off money they already owed (no new goods).",
+                 "input_schema": _PAYMENT_SCHEMA},
             ],
             tool_choice={"type": "any"},   # Claude must call one of them, and picks which
             messages=[{"role": "user", "content": prompt}],
         )
+        kinds = {"record_sale": "sale", "record_expense": "expense", "record_payment": "payment"}
         for b in resp.content:
             if getattr(b, "type", "") == "tool_use":
-                return {"ok": True, "kind": "sale" if b.name == "record_sale" else "expense",
-                        "data": b.input}
+                return {"ok": True, "kind": kinds.get(b.name, "sale"), "data": b.input}
         return {"ok": False, "text": "Couldn't understand that — no structured result."}
     except Exception as e:
         return {"ok": False, "text": f"Couldn't understand that: {e}"}

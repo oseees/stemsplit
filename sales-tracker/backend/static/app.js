@@ -2388,7 +2388,9 @@ function renderBotLog() {
   if (!el) return;
   el.innerHTML = _botLog.length
     ? `<div class="bot-thread">${_botLog.map(m => `<div class="bot-msg ${m.you ? "you" : "bot"}">${
-        m.typing ? `<span class="bot-typing"><i></i><i></i><i></i></span>` : esc(m.text)}</div>`).join("")}</div>`
+        m.typing ? `<span class="bot-typing"><i></i><i></i><i></i></span>` : esc(m.text)
+        }${m.receipt ? `<button class="bot-receipt" onclick="receiptOffer(${m.receipt})">Send receipt</button>` : ""
+        }</div>`).join("")}</div>`
     : `<div class="empty">Try “sold 2 crates of eggs 3500 cash”<br>or “spent 2000 on transport”</div>`;
   el.scrollTop = el.scrollHeight;
 }
@@ -2419,7 +2421,9 @@ async function botSend() {
   try {
     const r = await _botPost(text);
     _botLog.pop();
-    _botLog.push({ you: false, text: r.reply });
+    // invoice_id comes back for sales and payments — offer the receipt inline
+    // rather than hijacking the chat with the receipt sheet.
+    _botLog.push({ you: false, text: r.reply, receipt: r.invoice_id || null });
   } catch (e) {
     _botLog.pop();
     if (e.message === "__auth__" || e.message === "__upgrade__") { renderBotLog(); return; }

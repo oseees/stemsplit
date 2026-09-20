@@ -29,6 +29,10 @@ def stub(kind, data):
 
 
 h = auth("bot@test.local")
+# Pro: this suite makes more than the 5 free AI entries a month, and the
+# quota isn't what these checks are for.
+with main.db.get_conn() as conn:
+    conn.execute("UPDATE users SET plan='pro' WHERE email=?", ("bot@test.local",))
 pid = c.post("/api/products", json={"name": "Rice", "unit_price": 5000,
                                     "unit_cost": 3000, "stock_qty": 10}, headers=h).json()["id"]
 
@@ -90,5 +94,36 @@ assert "Walkin 3" not in plain, "an old walk-in shouldn't be sent by default"
 assert "Walkin 3" in named, "but must come back when the message names them"
 assert len(named) == len(set(n.lower() for n in named)), "no duplicates"
 print(f"customer cap OK -> {len(plain)} names from 151, old match pulled in on mention")
+
+# --- part payment on a new sale -----------------------------------------------
+stub("sale", {"items": [{"product_id": pid, "description": "Rice", "qty": 3, "unit_price": 5000}],
+              "customer_name": "Ada Part", "payment": "cash", "amount_paid": 5000})
+r = c.post("/api/chat/entry", json={"text": "sold 3 rice to Ada Part, she paid 5000"}, headers=h)
+assert r.status_code == 200, r.text
+inv = c.get(f"/api/invoices/{r.json()['invoice_id']}", headers=h).json()
+assert (inv["total"], inv["paid"], inv["balance"]) == (15000, 5000, 10000), inv
+assert inv["status"] == "partial", inv["status"]
+print("part payment on sale OK ->", r.json()["reply"])
+
+# --- a customer paying down an existing debt ----------------------------------
+stub("payment", {"customer_name": "Ada Part", "amount": 4000, "method": "cash"})
+r = c.post("/api/chat/entry", json={"text": "Ada Part paid 4000"}, headers=h)
+assert r.status_code == 200 and r.json()["kind"] == "payment", r.text
+inv = c.get(f"/api/invoices/{r.json()['invoice_id']}", headers=h).json()
+assert (inv["paid"], inv["balance"]) == (9000, 6000), (inv["paid"], inv["balance"])
+print("debt payment OK ->", r.json()["reply"])
+
+# --- overpaying records only what was owed, and says so -----------------------
+stub("payment", {"customer_name": "Ada Part", "amount": 10000, "method": "cash"})
+r = c.post("/api/chat/entry", json={"text": "Ada Part paid 10000"}, headers=h)
+inv = c.get(f"/api/invoices/{r.json()['invoice_id']}", headers=h).json()
+assert inv["balance"] == 0 and inv["status"] == "paid", (inv["balance"], inv["status"])
+assert "more than they owed" in r.json()["reply"], r.json()["reply"]
+print("overpay OK ->", r.json()["reply"])
+
+# --- paying when nothing is outstanding is refused ----------------------------
+stub("payment", {"customer_name": "Ada Part", "amount": 1000, "method": "cash"})
+assert c.post("/api/chat/entry", json={"text": "Ada Part paid 1000"}, headers=h).status_code == 400
+print("no-debt payment refused OK")
 
 print("\nall chat-entry checks passed")

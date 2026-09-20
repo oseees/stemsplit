@@ -471,6 +471,12 @@ body.desktop:not(.signed-out) .bot-fab { bottom: 24px; right: 24px; }
 .bot-msg.bot { align-self: flex-start; background: var(--tint); color: var(--ink);
   border-bottom-left-radius: 5px; }
 
+.bot-receipt {
+  display: block; margin-top: 8px; padding: 6px 12px; border: 0; border-radius: 999px;
+  background: var(--card); color: var(--indigo); font-size: 13px; font-weight: 700;
+  cursor: pointer;
+}
+
 .bot-send {
   flex: 0 0 auto; width: 44px; height: 44px; border: 0; border-radius: 50%;
   background: var(--indigo); color: #fff; cursor: pointer;

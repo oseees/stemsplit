@@ -1369,6 +1369,9 @@ def chat_entry(body: ChatEntryIn, user=Depends(current_user)):
         return {"kind": "expense",
                 "reply": f"Recorded expense: {cur}{amt:,.0f} · {cat}"}
 
+    if res["kind"] == "payment":
+        return _chat_record_payment(user, d, cur)
+
     costs = {p["id"]: p["unit_cost"] for p in products}
     items = [InvoiceItemIn(
         # product_id 0 = "nothing in the catalog matched" → a custom line item.
@@ -1383,18 +1386,92 @@ def chat_entry(body: ChatEntryIn, user=Depends(current_user)):
 
     total = round(sum(i.qty * i.unit_price for i in items), 2)
     pay = d.get("payment")
-    paid_now = pay in ("cash", "transfer") and total > 0
+    # What they actually handed over. "owing" means nothing yet; a stated method
+    # with no amount means paid in full; anything else is taken as a part payment.
+    paid_now = round(float(d.get("amount_paid") or 0), 2)
+    if pay == "owing":
+        paid_now = 0.0
+    elif pay in ("cash", "transfer") and paid_now <= 0:
+        paid_now = total
+    paid_now = max(0.0, min(paid_now, total))   # never record more than the sale
+    method = pay if pay in ("cash", "transfer") else None
+
     inv = create_invoice(InvoiceIn(
         customer_name=(d.get("customer_name") or None),
         items=items,
-        notes=("Customer owing" if pay == "owing" else f"Paid by {pay}" if paid_now else None),
-        payment=(PaymentIn(amount=total, method=pay) if paid_now else None),
+        notes=("Customer owing" if paid_now <= 0 else
+               (f"Paid by {method}" if method and paid_now >= total else None)),
+        payment=(PaymentIn(amount=paid_now, method=method) if paid_now > 0 else None),
     ), user)
+
     listed = ", ".join(f"{i.qty:g} × {i.description}" for i in items)
     who = f" for {d['customer_name']}" if d.get("customer_name") else ""
-    tail = " (owing)" if pay == "owing" else (f" · paid {pay}" if paid_now else "")
+    bal = round(total - paid_now, 2)
+    if paid_now <= 0:
+        tail = " — all owing"
+    elif bal > 0.01:
+        tail = f" — paid {cur}{paid_now:,.0f}, {cur}{bal:,.0f} still owing"
+    else:
+        tail = f" · paid{' ' + method if method else ''}"
     return {"kind": "sale", "invoice_id": inv.get("id"),
             "reply": f"Recorded sale: {listed}{who} — {cur}{total:,.0f}{tail}"}
+
+
+def _chat_record_payment(user, d, cur):
+    """A customer clearing what they already owe. Applies the money to their
+    outstanding invoices oldest-first (how a debt actually gets paid down), so
+    one payment can settle an old invoice and part-pay the next."""
+    name = (d.get("customer_name") or "").strip()
+    amt = round(float(d.get("amount") or 0), 2)
+    if not name:
+        raise HTTPException(400, "Who paid? Include the customer's name")
+    if amt <= 0:
+        raise HTTPException(400, "How much did they pay?")
+    method = d.get("method") if d.get("method") in ("cash", "transfer") else None
+
+    with db.get_conn() as conn:
+        sf, sp = _shop_and(_active_shop(user))
+        cust = conn.execute(
+            "SELECT id, name FROM customers WHERE user_id=? AND lower(name)=lower(?)" + sf,
+            (user["id"], name, *sp)).fetchone() or conn.execute(
+            "SELECT id, name FROM customers WHERE user_id=? AND lower(name) LIKE '%'||lower(?)||'%'"
+            + sf + " ORDER BY id DESC LIMIT 1", (user["id"], name, *sp)).fetchone()
+        if not cust:
+            raise HTTPException(400, f"I couldn't find a customer called {name}")
+
+        sfi, spi = _shop_and(_active_shop(user), "i")
+        invs = conn.execute(
+            "SELECT id, invoice_no, total FROM invoices i WHERE customer_id=? AND user_id=?"
+            + sfi + " ORDER BY date, id", [cust["id"], user["id"]] + spi).fetchall()
+
+        left, applied, cleared = amt, [], []
+        for inv in invs:
+            bal = inv["total"] - paid_for(conn, inv["id"])
+            if bal <= 0.01:
+                continue
+            take = round(min(bal, left), 2)
+            if take <= 0.01:
+                break
+            conn.execute("INSERT INTO payments(invoice_id,amount,date,method,note) "
+                         "VALUES(?,?,?,?,?)", (inv["id"], take, today(), method or "Paid", None))
+            conn.execute("UPDATE invoices SET status=? WHERE id=?",
+                         (status_for(inv["total"], paid_for(conn, inv["id"])), inv["id"]))
+            applied.append(inv)
+            if take >= bal - 0.01:
+                cleared.append(inv["invoice_no"])
+            left = round(left - take, 2)
+            if left <= 0.01:
+                break
+
+    if not applied:
+        raise HTTPException(400, f"{cust['name']} has nothing outstanding")
+    used = round(amt - left, 2)
+    msg = f"Recorded {cur}{used:,.0f} from {cust['name']}"
+    if cleared:
+        msg += f" · cleared {', '.join(cleared)}"
+    if left > 0.01:   # say so rather than silently swallowing the difference
+        msg += f" · {cur}{left:,.0f} was more than they owed, not recorded"
+    return {"kind": "payment", "invoice_id": applied[0]["id"], "reply": msg}
 
 
 class PriceCheckIn(BaseModel):
