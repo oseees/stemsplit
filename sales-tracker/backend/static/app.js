@@ -1946,7 +1946,11 @@ async function _shareFile(url, filename, mime, title, text) {
  let blob = null;
  // r.ok matters: a 401 or offline-503 body would otherwise be shared as a .pdf
  // full of JSON. Skipping the blob falls through to the plain download link.
- try { const r = await fetch(url); if (r.ok) blob = await r.blob(); } catch (e) {}
+    let r = null;
+    try { r = await fetch(url); } catch (e) {}
+    if (r && r.ok) blob = await r.blob();
+    // Server answered with an error → say why; never save the error body as the file.
+    else if (r) { let m = ""; try { m = (await r.json()).detail; } catch (e) {} toast(m || "Couldn't prepare the file"); return; }
 
  // 1) Native app bridge → real Android share sheet WITH the file.
  // Test only object PRESENCE (reliable); reading a method as a property can
@@ -1993,6 +1997,8 @@ async function shareInvoiceImage(id, fmt) {
 
 async function shareReceipt(id, fmt) {
  const inv = await api.get(`/api/invoices/${id}`);
+  // Nothing paid yet (sale on credit) → no receipt exists; send the invoice instead.
+  if (!(inv.paid > 0)) return shareInvoiceImage(id, fmt);
  const biz = state.settings.business_name || "SalesPal";
  // On a part-payment, the caption urges settling the balance; else a thank-you.
  const due = inv.balance > 0.01
