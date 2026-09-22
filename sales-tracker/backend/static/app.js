@@ -2389,7 +2389,7 @@ function renderBotLog() {
   el.innerHTML = _botLog.length
     ? `<div class="bot-thread">${_botLog.map(m => `<div class="bot-msg ${m.you ? "you" : "bot"}">${
         m.typing ? `<span class="bot-typing"><i></i><i></i><i></i></span>` : esc(m.text)
-        }${m.receipt ? `<button class="bot-receipt" onclick="receiptOffer(${m.receipt})">Send receipt</button>` : ""
+        }${m.receipt ? `<button class="bot-receipt" onclick="shareReceipt(${m.receipt},'png')">Send receipt</button>` : ""
         }</div>`).join("")}</div>`
     : `<div class="empty">Try “sold 2 crates of eggs 3500 cash”<br>or “spent 2000 on transport”</div>`;
   el.scrollTop = el.scrollHeight;
