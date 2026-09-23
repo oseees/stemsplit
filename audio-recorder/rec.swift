@@ -841,8 +841,27 @@ final class Recorder: NSObject, NSApplicationDelegate, SCStreamOutput, SCStreamD
             }
             let hit = Recorder.parseSpliceTag(cg)
             log("win \(winID) \(cg.width)x\(cg.height) -> name=\(hit?.name ?? "nil") tag=\(hit?.tag ?? "nil")")
+            if hit?.name == nil { Recorder.keepMiss(tmp, tag: hit?.tag) }
             done(hit)
         }
+    }
+
+    // Every take that came out unnamed keeps the Splice screenshot that failed, so the next parser fix
+    // starts from real failures instead of guessed ones. Replay one with `--splicetag <png>`.
+    static let missDir = FileManager.default.homeDirectoryForCurrentUser
+        .appending(path: "Library/Application Support/Mac Audio Recorder/misses")
+
+    static func keepMiss(_ png: URL, tag: String?) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: missDir, withIntermediateDirectories: true)
+        let stamp = DateFormatter()
+        stamp.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let dest = missDir.appending(path: "\(stamp.string(from: Date())) — \(tag ?? "no tag").png")
+        try? fm.copyItem(at: png, to: dest)
+        // ponytail: newest 50 only — full-res captures are ~5 MB each; raise if more history helps.
+        let all = ((try? fm.contentsOfDirectory(at: missDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "png" }.sorted { $0.lastPathComponent > $1.lastPathComponent }
+        all.dropFirst(50).forEach { try? fm.removeItem(at: $0) }
     }
 
     // Pull "102bpm G#min" out of a Splice screenshot. The bottom transport bar (fixed position,
