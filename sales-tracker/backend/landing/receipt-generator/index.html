@@ -36,31 +36,7 @@
     {"@type":"Question","name":"How do I send a receipt on WhatsApp?","acceptedAnswer":{"@type":"Answer","text":"Tap Send on WhatsApp to send a text receipt, or tap Download PDF, save it, and attach the PDF in the customer's WhatsApp chat."}},
     {"@type":"Question","name":"What if the customer only paid part?","acceptedAnswer":{"@type":"Answer","text":"This free tool makes full-payment receipts. The free SalesPal app records part payments and makes a receipt that shows the balance the customer still owes."}}]}
   </script>
-  <style>
-    .tool { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin: 24px 0; }
-    .tool label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin: 10px 0 4px; }
-    .tool input, .tool select, .tool textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
-    .item { display: grid; grid-template-columns: 1fr 64px 110px 32px; gap: 6px; margin-bottom: 6px; }
-    .item button { border: 0; background: none; color: var(--faint); font-size: 20px; cursor: pointer; }
-    .row-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-    /* the document itself — always light, it's what gets printed */
-    #doc { background: #fff; color: #111; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin: 20px 0; font-size: 14px; line-height: 1.5; }
-    #doc h2 { margin: 0; font-size: 22px; color: #0b7a4f; letter-spacing: .04em; }
-    #doc .top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
-    #doc table { width: 100%; border-collapse: collapse; margin: 14px 0; }
-    #doc th { text-align: left; font-size: 12px; color: #6b7280; border-bottom: 2px solid #0b7a4f; padding: 6px 4px; }
-    #doc td { border-bottom: 1px solid #eee; padding: 8px 4px; }
-    #doc .num { text-align: right; white-space: nowrap; }
-    #doc .total { font-size: 18px; font-weight: 800; text-align: right; }
-    #doc .foot { color: #6b7280; font-size: 12px; margin-top: 18px; }
-    @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } .item { grid-template-columns: 1fr 52px 90px 28px; } }
-    @media print {
-      body { background: #fff; }
-      body > *:not(.wrap), .wrap > *:not(article), article > *:not(#doc) { display: none !important; }
-      #doc { border: 0; margin: 0; padding: 0; }
-    }
-  </style>
+  <link rel="stylesheet" href="/generator.css" />
 </head>
 <body>
 </head>
@@ -79,8 +55,8 @@
       <div class="tool">
         <div class="grid2">
           <div><label for="kind">Document</label>
-            <select id="kind"><option>Receipt</option><option>Invoice</option></select></div>
-          <div><label for="no">Receipt number</label><input id="no" value="RCT-001" /></div>
+            <select id="kind" data-default="Receipt"></select></div>
+          <div><label for="no">Receipt number</label><input id="no" /></div>
           <div><label for="biz">Your business name</label><input id="biz" placeholder="e.g. Ada Fabrics" /></div>
           <div><label for="phone">Your phone</label><input id="phone" inputmode="tel" placeholder="080..." /></div>
           <div><label for="cust">Customer name</label><input id="cust" placeholder="e.g. Mr Bello" /></div>
@@ -130,6 +106,9 @@
 
       <div class="related">
         <h2>See also</h2>
+        <a href="/proforma-invoice-generator/">Free proforma invoice generator →</a>
+        <a href="/quotation-generator/">Free quotation generator →</a>
+        <a href="/waybill-generator/">Free waybill generator →</a>
         <a href="/invoice-generator/">Free invoice generator — ask a customer to pay →</a>
         <a href="/receipt-app/">Receipt app — keep every receipt, send on WhatsApp →</a>
         <a href="/guides/how-to-send-receipt-on-whatsapp/">Guide: how to send a receipt on WhatsApp →</a>
@@ -143,57 +122,6 @@
     <nav><a href="/">Home</a><a href="/guides/">Guides</a><a href="/invoice-generator/">Invoice generator</a><a href="/receipt-generator/">Receipt generator</a><a href="/app/?utm_source=receipt-generator#signup">Open app</a></nav>
   </div></footer>
 
-<script>
-const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const naira = n => "₦" + (Math.round(n * 100) / 100).toLocaleString("en-NG");
-const SAVED = ["biz", "phone"];
-
-function addItem(d = "", q = 1, p = "") {
-  const r = document.createElement("div");
-  r.className = "item";
-  r.innerHTML = `<input placeholder="Item" value="${esc(d)}"><input type="number" min="0" inputmode="decimal" value="${q}"><input type="number" min="0" inputmode="decimal" placeholder="0" value="${p}"><button type="button" aria-label="Remove item">×</button>`;
-  r.querySelector("button").onclick = () => { r.remove(); render(); };
-  $("items").append(r);
-  render();
-}
-function items() {
-  return [...document.querySelectorAll(".item")].map(r => {
-    const [d, q, p] = r.querySelectorAll("input");
-    return { d: d.value.trim(), q: +q.value || 0, p: +p.value || 0 };
-  }).filter(i => i.d || i.p);
-}
-function render() {
-  const its = items(), total = its.reduce((s, i) => s + i.q * i.p, 0);
-  const receipt = $("kind").value === "Receipt";
-  const date = $("date").value ? new Date($("date").value).toLocaleDateString("en-NG", { day: "numeric", month: "short", year: "numeric" }) : "";
-  $("doc").innerHTML = `<div class="top"><div><strong style="font-size:17px">${esc($("biz").value || "Your business")}</strong><br>${esc($("phone").value)}</div>
-    <div style="text-align:right"><h2>${receipt ? "RECEIPT" : "INVOICE"}</h2>${esc($("no").value)}<br>${date}</div></div>
-    <div>${receipt ? "Received from" : "Bill to"}: <strong>${esc($("cust").value || "—")}</strong></div>
-    <table><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr>
-    ${its.map(i => `<tr><td>${esc(i.d)}</td><td class="num">${i.q}</td><td class="num">${naira(i.p)}</td><td class="num">${naira(i.q * i.p)}</td></tr>`).join("")}</table>
-    <div class="total">${receipt ? "Amount paid" : "Total due"}: ${naira(total)}</div>
-    ${receipt ? `<p><strong>Paid by:</strong> ${esc($("method").value)}</p>` : ""}
-    <p class="foot">${receipt ? "Thank you for your business!" : "Thank you for your patronage."} · Made free with SalesPal — salespal.online</p>`;
-  try { SAVED.forEach(k => localStorage.setItem("ig_" + k, $(k).value)); } catch (e) {}
-}
-function sendWA() {
-  const its = items(), total = its.reduce((s, i) => s + i.q * i.p, 0);
-  const t = `*${$("kind").value.toUpperCase()} ${$("no").value}* — ${$("biz").value}\n`
-    + its.map(i => `• ${i.d} × ${i.q} = ${naira(i.q * i.p)}`).join("\n")
-    + `\n*Total: ${naira(total)}*` + ($("kind").value === "Receipt" ? `\nPaid by: ${$("method").value}` : "");
-  open("https://wa.me/?text=" + encodeURIComponent(t), "_blank");
-}
-// Carry what they typed into the app: /app reads salespal_draft on #new after signup.
-function saveToApp() {
-  try { localStorage.setItem("salespal_draft", JSON.stringify({ customer: $("cust").value, items: items() })); } catch (e) {}
-  location.href = "/app/?utm_source=receipt-generator#new";
-}
-function nudge() { $("nudge").hidden = false; }
-try { SAVED.forEach(k => { const v = localStorage.getItem("ig_" + k); if (v) $(k).value = v; }); } catch (e) {}
-$("date").valueAsDate = new Date();
-document.querySelector(".tool").addEventListener("input", render);
-addItem();
-</script>
+<script src="/generator.js"></script>
 </body>
 </html>

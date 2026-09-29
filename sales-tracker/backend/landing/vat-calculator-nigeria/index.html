@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a5236" />
+  <title>VAT Calculator Nigeria (7.5%) — Add or Remove VAT from a Price | SalesPal</title>
+  <meta name="description" content="Free Nigerian VAT calculator. Add 7.5% VAT to a price or remove VAT from a VAT-inclusive amount in one step, with the formula and worked examples in Naira." />
+  <link rel="canonical" href="https://salespal.online/vat-calculator-nigeria/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="VAT Calculator Nigeria — 7.5%" />
+  <meta property="og:description" content="Add or remove 7.5% VAT from any Naira amount in one step." />
+  <meta property="og:url" content="https://salespal.online/vat-calculator-nigeria/" />
+  <meta property="og:image" content="https://salespal.online/og-image.png" />
+  <link rel="icon" href="/icons/favicon-64.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <script>(function(){try{var p=localStorage.getItem('salespal_theme');var d=p==='dark'||(!p&&matchMedia('(prefers-color-scheme:dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();</script>
+  <link rel="stylesheet" href="/guides.css" />
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebApplication", "name": "SalesPal VAT calculator", "applicationCategory": "FinanceApplication", "operatingSystem": "Any", "browserRequirements": "Requires JavaScript", "url": "https://salespal.online/vat-calculator-nigeria/", "description": "Free Nigerian VAT calculator. Add 7.5% VAT to a price or remove VAT from a VAT-inclusive amount in one step, with the formula and worked examples in Naira.", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "NGN"}, "publisher": {"@type": "Organization", "name": "SalesPal", "logo": {"@type": "ImageObject", "url": "https://salespal.online/icons/icon-512.png"}}}</script>
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://salespal.online/"}, {"@type": "ListItem", "position": 2, "name": "VAT calculator", "item": "https://salespal.online/vat-calculator-nigeria/"}]}</script>
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is the VAT rate in Nigeria?", "acceptedAnswer": {"@type": "Answer", "text": "The standard VAT rate in Nigeria is 7.5%."}}, {"@type": "Question", "name": "How do I add 7.5% VAT to a price?", "acceptedAnswer": {"@type": "Answer", "text": "Multiply the price by 1.075. For example, ₦20,000 × 1.075 = ₦21,500, which includes ₦1,500 VAT."}}, {"@type": "Question", "name": "How do I remove VAT from a price?", "acceptedAnswer": {"@type": "Answer", "text": "Divide the VAT-inclusive price by 1.075. For example, ₦21,500 ÷ 1.075 = ₦20,000, so the VAT is ₦1,500."}}, {"@type": "Question", "name": "Does every business in Nigeria have to charge VAT?", "acceptedAnswer": {"@type": "Answer", "text": "No. Small businesses below the turnover threshold set in the tax law are generally not required to, and some goods and services are exempt or zero-rated. Confirm with the Nigeria Revenue Service or an accountant."}}]}</script>
+  <style>
+    .tool { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin: 24px 0; }
+    .tool label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin: 10px 0 4px; }
+    .tool input, .tool select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    .out { background: var(--tint); border-radius: 12px; padding: 14px 16px; margin-top: 16px; }
+    .out div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
+    .out .big { font-size: 20px; font-weight: 800; }
+    .tool h3 { margin: 18px 0 0; font-size: 16px; }
+    @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="nav"><div class="nav-row">
+    <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="28" height="28" />SalesPal</a>
+    <a class="btn btn-primary" href="/app/?utm_source=vat-calculator-nigeria#signup">Get Started Free</a>
+  </div></header>
+
+  <div class="wrap">
+    <p class="crumb"><a href="/">Home</a> › VAT calculator</p>
+    <article>
+      <h1>VAT calculator Nigeria (7.5%)</h1>
+      <p class="lede">Add VAT to a price, or find the VAT inside a price that already includes it. Works in Naira at Nigeria's 7.5% rate.</p>
+      <p class="byline">SalesPal · updated September 2026</p>
+
+      <div class="tool">
+        <div class="grid2">
+          <div><label for="amt">Amount (₦)</label><input id="amt" type="number" inputmode="decimal" value="10000" /></div>
+          <div><label for="mode">This amount…</label>
+            <select id="mode"><option value="add">does NOT include VAT (add VAT)</option><option value="remove">already includes VAT (remove VAT)</option></select></div>
+          <div><label for="rate">VAT rate (%)</label><input id="rate" type="number" inputmode="decimal" value="7.5" step="0.1" /></div>
+        </div>
+        <div class="out" aria-live="polite">
+          <div><span>Price before VAT</span><strong id="oNet"></strong></div>
+          <div><span>VAT</span><strong id="oVat"></strong></div>
+          <div class="big"><span>Price including VAT</span><span id="oGross"></span></div>
+        </div>
+      </div>
+
+      <h2>How to calculate VAT in Nigeria</h2>
+      <p>Nigeria's standard VAT rate is <strong>7.5%</strong>.</p>
+      <ul>
+        <li><strong>Adding VAT:</strong> multiply the price by 0.075 to get the VAT, or by 1.075 to get the total. ₦10,000 × 1.075 = <strong>₦10,750</strong> (₦750 VAT).</li>
+        <li><strong>Removing VAT</strong> from a price that already includes it: divide by 1.075. ₦10,750 ÷ 1.075 = <strong>₦10,000</strong>, so the VAT inside is ₦750.</li>
+      </ul>
+      <p class="tip">A common mistake: taking 7.5% off a VAT-inclusive price. 7.5% of ₦10,750 is ₦806, not ₦750. Always divide by 1.075 to remove VAT.</p>
+
+      <h2>Do I need to charge VAT?</h2>
+      <p>Not every business has to. Small businesses below the turnover threshold in the tax law are generally not required to charge VAT, and some goods and services are exempt or zero-rated (for example many basic food items, medical products and educational materials). The rules were updated in the 2025 tax reforms, so confirm your position with the Nigeria Revenue Service (formerly FIRS) or an accountant.</p>
+
+      <div class="cta-box">
+        <h3>Know your numbers before tax time</h3>
+        <p>SalesPal tracks your sales, expenses and profit all year, so your yearly totals are ready when you need them. Free to start.</p>
+        <a class="btn btn-primary" href="/app/?utm_source=vat-calculator-nigeria#signup">Try SalesPal free</a>
+      </div>
+
+      <h2>Frequently asked questions</h2>
+      <h3>What is the VAT rate in Nigeria?</h3>
+      <p>The standard VAT rate in Nigeria is 7.5%.</p>
+      <h3>How do I add 7.5% VAT to a price?</h3>
+      <p>Multiply the price by 1.075. For example, ₦20,000 × 1.075 = ₦21,500, which includes ₦1,500 VAT.</p>
+      <h3>How do I remove VAT from a price?</h3>
+      <p>Divide the VAT-inclusive price by 1.075. For example, ₦21,500 ÷ 1.075 = ₦20,000, so the VAT is ₦1,500.</p>
+      <h3>Does every business in Nigeria have to charge VAT?</h3>
+      <p>No. Small businesses below the turnover threshold set in the tax law are generally not required to, and some goods and services are exempt or zero-rated. Confirm with the Nigeria Revenue Service or an accountant.</p>
+
+      <div class="related">
+        <h2>See also</h2>
+        <a href="/invoice-generator/">Free invoice generator →</a>
+        <a href="/pos-business-profit-calculator/">POS business profit calculator →</a>
+        <a href="/guides/track-shop-profit/">Guide: how to know your real profit →</a>
+        <a href="/invoice-app/">Invoice app for Nigeria →</a>
+      </div>
+    </article>
+  </div>
+
+  <footer><div class="wrap">
+    <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="22" height="22" />SalesPal</a>
+    <nav><a href="/">Home</a><a href="/guides/">Guides</a><a href="/invoice-generator/">Invoice generator</a><a href="/vat-calculator-nigeria/">VAT calculator</a><a href="/app/">Open app</a></nav>
+  </div></footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const naira = n => (n < 0 ? "-₦" : "₦") + Math.abs(Math.round(n * 100) / 100).toLocaleString("en-NG", { maximumFractionDigits: 2 });
+const num = id => Math.max(0, +$(id).value || 0);
+function calc() {
+  const a = num("amt"), r = num("rate") / 100;
+  const net = $("mode").value === "add" ? a : a / (1 + r);
+  const vat = net * r;
+  $("oNet").textContent = naira(net); $("oVat").textContent = naira(vat); $("oGross").textContent = naira(net + vat);
+}
+document.querySelector(".tool").addEventListener("input", calc);
+calc();
+</script>
+</body>
+</html>

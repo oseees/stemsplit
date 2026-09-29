@@ -1,0 +1,25 @@
+/* Shared by the free document generators (invoice, receipt, proforma, quotation, waybill). */
+.tool { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin: 24px 0; }
+.tool label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin: 10px 0 4px; }
+.tool input, .tool select, .tool textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.item { display: grid; grid-template-columns: 1fr 64px 110px 32px; gap: 6px; margin-bottom: 6px; }
+.item button { border: 0; background: none; color: var(--faint); font-size: 20px; cursor: pointer; }
+.row-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+/* the document itself — always light, it's what gets printed */
+#doc { background: #fff; color: #111; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin: 20px 0; font-size: 14px; line-height: 1.5; }
+#doc h2 { margin: 0; font-size: 22px; color: #0b7a4f; letter-spacing: .04em; }
+#doc .top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+#doc table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+#doc th { text-align: left; font-size: 12px; color: #6b7280; border-bottom: 2px solid #0b7a4f; padding: 6px 4px; }
+#doc td { border-bottom: 1px solid #eee; padding: 8px 4px; }
+#doc .num { text-align: right; white-space: nowrap; }
+#doc .total { font-size: 18px; font-weight: 800; text-align: right; }
+#doc .foot { color: #6b7280; font-size: 12px; margin-top: 18px; }
+@media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } .item { grid-template-columns: 1fr 52px 90px 28px; } }
+@media print {
+  body { background: #fff; }
+  body > *:not(.wrap), .wrap > *:not(article), article > *:not(#doc) { display: none !important; }
+  #doc { border: 0; margin: 0; padding: 0; }
+}
+.noprice .item input:nth-child(3) { visibility: hidden; }
