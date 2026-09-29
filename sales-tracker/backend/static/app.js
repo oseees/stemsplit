@@ -3349,6 +3349,10 @@ async function viewSettings() {
       <button class="btn" onclick="changePassword()">Change password</button>
       <button class="btn danger" onclick="logout()" style="margin-top:10px">Log out</button>
     </div>
+    <div class="card"><div class="section-title"><svg class="ic"><use href="#i-download"/></svg> Your records</div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 12px">Download everything — sales, payments, expenses, products and customers — as spreadsheets that open in Excel or Google Sheets. Your records are yours.</p>
+      <a class="btn secondary" href="/api/export" download>Download my records</a>
+    </div>
     <div class="card"><div class="section-title">App version</div>
       <p style="font-size:13px;color:var(--muted);margin:0 0 12px">You're running <strong id="appVer">…</strong>. New features arrive on their own — use this if one seems missing.</p>
       <button class="btn secondary" onclick="forceUpdate(this)">Get the latest version</button>

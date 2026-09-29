@@ -1,6 +1,6 @@
 // SalesPal service worker — instant loads via stale-while-revalidate.
 // Scoped to /app/ (the dashboard); the marketing page at / is not cached here.
-const CACHE = "salespal-v127";
+const CACHE = "salespal-v128";
 // Separate cache for API GET responses so the app shows last-known data offline
 // (network-first: fresh when online, cached copy when the connection is gone).
 const API_CACHE = "salespal-api-v1";
@@ -92,6 +92,9 @@ self.addEventListener("fetch", (e) => {
   const { request } = e;
   if (request.method !== "GET") return; // POST/PUT/DELETE always hit the network
   const url = new URL(request.url);
+
+  // The records export is a zip of the whole business: never keep a copy in the cache.
+  if (url.pathname === "/api/export") return;
 
   // API reads: network-first with an offline cache fallback so the dashboard and
   // lists still render (from the last sync) when there's no connection.

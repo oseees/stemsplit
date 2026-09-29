@@ -5,6 +5,9 @@ Multi-tenant: every data endpoint is scoped to the signed-in user via the
 """
 import os
 import re
+import io
+import csv
+import zipfile
 import hmac
 import json
 import asyncio
@@ -57,6 +60,7 @@ _RATE_RULES = [
     ("/api/auth/reset", 5, 60),
     ("/api/voice/", 20, 60),
     ("/api/chat/", 20, 60),   # same AI cost per call as voice
+    ("/api/export", 5, 60),   # builds a zip of every record — heavy
 ]
 
 
@@ -2177,6 +2181,59 @@ def invoice_receipt(iid: int, fmt: str = "png", download: int = 0, user=Depends(
         payload, latest, payload["customer"], settings,
         payload["paid"], payload["balance"], fmt)
     return _img_response(data, f"Receipt-{inv['invoice_no']}.{fmt}", fmt, download)
+
+
+# ----------------------------- Export ---------------------------------------
+# One CSV per record type, zipped. Every query is scoped by the owner's user_id
+# (payments/items via their invoice), so nothing of another tenant can leak in.
+_PAID_SQL = "COALESCE((SELECT SUM(amount) FROM payments p WHERE p.invoice_id=i.id),0)"
+_EXPORT_SQL = {
+    "sales": "SELECT invoice_no, date, due_date, shop, customer, status, total, cost_total, "
+             "total - cost_total AS profit, paid, total - paid AS balance, notes FROM ("
+             "SELECT i.*, s.name AS shop, c.name AS customer, " + _PAID_SQL + " AS paid "
+             "FROM invoices i LEFT JOIN customers c ON c.id=i.customer_id "
+             "LEFT JOIN shops s ON s.id=i.shop_id WHERE i.user_id=?) ORDER BY date, id",
+    "sale_items": "SELECT i.invoice_no, i.date, it.description, it.qty, it.unit_price, it.unit_cost, "
+                  "it.qty * it.unit_price AS line_total FROM invoice_items it "
+                  "JOIN invoices i ON i.id=it.invoice_id WHERE i.user_id=? ORDER BY i.date, i.id, it.id",
+    "payments": "SELECT i.invoice_no, p.date, p.amount, p.method, p.note FROM payments p "
+                "JOIN invoices i ON i.id=p.invoice_id WHERE i.user_id=? ORDER BY p.date, p.id",
+    "expenses": "SELECT e.date, s.name AS shop, e.category, e.description, e.amount FROM expenses e "
+                "LEFT JOIN shops s ON s.id=e.shop_id WHERE e.user_id=? ORDER BY e.date, e.id",
+    "products": "SELECT p.name, p.sku, s.name AS shop, p.unit_price, p.unit_cost, p.stock_qty, "
+                "p.low_stock_at FROM products p LEFT JOIN shops s ON s.id=p.shop_id "
+                "WHERE p.user_id=? ORDER BY p.name",
+    "customers": "SELECT c.name, c.phone, c.email, c.address, COALESCE((SELECT SUM(i.total - "
+                 + _PAID_SQL + ") FROM invoices i WHERE i.customer_id=c.id AND i.user_id=c.user_id),0) "
+                 "AS balance_owed FROM customers c WHERE c.user_id=? ORDER BY c.name",
+}
+
+
+def _csv_safe(v):
+    """A text cell starting with = + - @ runs as a formula when opened in Excel,
+    and customer names can come from the public order link — neutralise it."""
+    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + v
+    return v
+
+
+@app.get("/api/export")
+def export_records(user=Depends(current_user)):
+    """All the owner's records as spreadsheet-ready CSVs in one zip — their data
+    stays theirs, whatever happens to SalesPal."""
+    _require_owner(user)
+    buf = io.BytesIO()
+    with db.get_conn() as conn, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, sql in _EXPORT_SQL.items():
+            cur = conn.execute(sql, (user["id"],))
+            out = io.StringIO()
+            w = csv.writer(out)
+            w.writerow([d[0] for d in cur.description])
+            w.writerows([_csv_safe(v) for v in row] for row in cur)
+            z.writestr(f"{name}.csv", "\ufeff" + out.getvalue())  # BOM: Excel reads ₦ and names right
+    fname = f"salespal-records-{date.today().isoformat()}.zip"
+    return RawResponse(content=buf.getvalue(), media_type="application/zip",
+                       headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 # -------------------- Online payments (invoice collection) ------------------
