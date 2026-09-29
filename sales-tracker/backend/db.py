@@ -286,6 +286,10 @@ def init_db():
         # public storefront (orders): each shop has its own share link + on/off.
         _ensure_column(conn, "shops", "order_token", "TEXT")
         _ensure_column(conn, "shops", "orders_enabled", "INTEGER NOT NULL DEFAULT 0")
+        # mini-store: a readable link name (/s/<slug>) and a one-line description
+        _ensure_column(conn, "shops", "slug", "TEXT")
+        _ensure_column(conn, "shops", "tagline", "TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shops_slug ON shops(slug)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_shop ON orders(shop_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)")
         # attendant logins: a session may belong to a staff member (still under

@@ -3021,9 +3021,13 @@ async function viewOrders() {
  <p style="font-size:14px;color:var(--muted);margin:0">Open a specific shop (tap the name at the top) to share its order link — each shop has its own.</p></div>`;
  } else if (st.enabled && st.url) {
  linkCard = `<div class="card">
- <div class="section-title">Your order link is live</div>
- <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Customers at <strong>${esc(activeShopName())}</strong> order from your in-stock items.</p>
+ <div class="section-title">Your online store is live</div>
+ <p style="font-size:13px;color:var(--muted);margin:0 0 10px">Customers see <strong>${esc(activeShopName())}</strong>'s in-stock items with photos and order in a minute.${st.tagline ? "" : " Add a short description so customers know what you sell."}</p>
  <div class="orderlink">${esc(st.url)}</div>
+ <div class="btn-row" style="margin-top:12px">
+ <button class="btn outline" onclick="openExternal(state.orders.url)">Preview store</button>
+ <button class="btn outline" onclick="storeModal()">Edit store</button>
+ </div>
  <div class="btn-row" style="margin-top:12px">
  <button class="btn whatsapp" onclick="shareOrderLink('whatsapp')">Share on WhatsApp</button>
  <button class="btn secondary" onclick="shareOrderLink('copy')">Copy link</button>
@@ -3035,7 +3039,7 @@ async function viewOrders() {
  linkCard = `<div class="card">
  <div class="section-title">Take orders online</div>
  <p style="font-size:14px;color:var(--muted);margin:0 0 12px">Turn on a shareable link for <strong>${esc(activeShopName())}</strong>. Customers order from what's in stock and it arrives here to fulfil.</p>
-      <button class="btn" onclick="enableOrders()">Create my order link</button>
+      <button class="btn" onclick="enableOrders()">Create my online store</button>
     </div>`;
   }
 
@@ -3128,7 +3132,7 @@ async function declineOrder(id) {
 async function enableOrders() {
  try {
  state.orders = await api.send("/api/orders/enable", "POST");
- toast("Order link is live"); render();
+ toast("Your store is live"); render();
  pushSubscribe(false); // ask to allow new-order alerts (user just tapped → gesture ok)
  } catch (e) { if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't turn on orders"); }
 }
@@ -3181,10 +3185,36 @@ async function disableOrders() {
 }
 // Share the storefront link. WhatsApp opens a chat (they pick a contact/group);
 // copy/native-share suits any channel. Synchronous → deep-links reliably.
+// Store link name + one-line description (shows on the store and in the
+// WhatsApp link preview).
+function storeModal() {
+  const st = state.orders || {};
+  openModal(`<h2>Edit your store</h2>
+    <div class="field"><label>Store link</label>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--muted);font-size:14px;white-space:nowrap">${esc(location.host)}/s/</span>
+        <input id="stSlug" value="${esc(st.slug || "")}" autocapitalize="none" autocomplete="off" spellcheck="false"></div>
+      <p style="font-size:12px;color:var(--muted);margin:6px 0 0">Changing it means links you've already shared stop working.</p></div>
+    <div class="field"><label>Short description (optional)</label>
+      <input id="stTag" maxlength="140" value="${esc(st.tagline || "")}" placeholder="e.g. Ankara & Aso-ebi · delivery across Lagos"></div>
+    <button class="btn" onclick="saveStore(this)">Save</button>`);
+}
+async function saveStore(btn) {
+  const slug = document.getElementById("stSlug").value.trim().toLowerCase().replace(/\s+/g, "-");
+  btn.disabled = true;
+  try {
+    state.orders = await api.send("/api/orders/store", "POST",
+      { slug, tagline: document.getElementById("stTag").value.trim() });
+    closeModal(); toast("Store updated"); render();
+  } catch (e) {
+    btn.disabled = false;
+    if (e.message !== "__upgrade__" && e.message !== "__auth__") toast(e.message || "Couldn't save");
+  }
+}
 function shareOrderLink(how) {
  const url = state.orders && state.orders.url;
  if (!url) return;
- const msg = `Order from ${activeShopName()}! Browse what's in stock and place your order here:\n${url}`;
+ const msg = `Shop from ${activeShopName()} online! See what's in stock and order here:\n${url}`;
   if (how === "whatsapp") { openExternal(`https://wa.me/?text=${encodeURIComponent(msg)}`); return; }
   if (navigator.share) { navigator.share({ title: activeShopName(), text: msg, url }).catch(() => {}); return; }
   if (navigator.clipboard) navigator.clipboard.writeText(url);
@@ -3708,7 +3738,7 @@ Object.assign(window, { newSaleModal, invoiceDetail, deleteInvoice, editSaleModa
   transferModal, saveTransfer, disableTransfer, confirmClaim, dismissClaim,
   addAccountModal, saveNewAccount, makeDefaultAccount, removeAccount,
   bankSwitcherHtml, setInvoiceAccount, bankPickerFieldHtml, saleBankAccountId,
-  viewOrders, orderDetail, fulfillOrder, declineOrder, enableOrders, disableOrders, shareOrderLink,
+  viewOrders, orderDetail, fulfillOrder, declineOrder, enableOrders, disableOrders, shareOrderLink, storeModal, saveStore,
   pushSubscribe, pushTest, backupTest,
   supplierOrder, supplierOrderTotal, sendSupplierOrder, copySupplierOrder,
   attendantSaleModal, attendantSaveSale, setPayMode, attendantInvoice, attendantPay,

@@ -25,4 +25,6 @@ EXPOSE 8000
 
 # Railway injects $PORT at runtime; default to 8000 locally. Shell form so ${PORT}
 # expands. Bind 0.0.0.0 so it's reachable from outside the container.
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Trust Railway's proxy headers so request.base_url is https:// — every link we
+# build (store/pay links, link previews, Paystack callback) comes out right.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

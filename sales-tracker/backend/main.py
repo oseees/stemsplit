@@ -7,6 +7,7 @@ import os
 import re
 import io
 import csv
+import html as html_lib
 import zipfile
 import hmac
 import json
@@ -2720,8 +2721,25 @@ def _order_payload(conn, o):
     return o
 
 
-def _order_link(request, token):
-    return f"{str(request.base_url).rstrip('/')}/order/{token}"
+def _order_link(request, token, slug=None):
+    base = str(request.base_url).rstrip('/')
+    return f"{base}/s/{slug}" if slug else f"{base}/order/{token}"
+
+
+_SLUG_RX = re.compile(r"^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$")
+
+
+def _slugify(name):
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")[:40].strip("-")
+    return s if len(s) >= 3 else (s + "-shop").strip("-")
+
+
+def _free_slug(conn, base, shop_id):
+    """base, or base-2, base-3… — the first no other shop has."""
+    slug, n = base, 2
+    while conn.execute("SELECT 1 FROM shops WHERE slug=? AND id<>?", (slug, shop_id)).fetchone():
+        slug, n = f"{base[:36]}-{n}", n + 1
+    return slug
 
 
 @app.get("/api/orders/status")
@@ -2734,7 +2752,7 @@ def orders_status(request: Request, user=Depends(current_user)):
             "SELECT COUNT(*) c FROM orders WHERE user_id=? AND status='pending'" + sf,
             [user["id"]] + sp).fetchone()["c"]
         row = conn.execute(
-            "SELECT orders_enabled, order_token FROM shops WHERE id=? AND user_id=?",
+            "SELECT orders_enabled, order_token, slug, tagline FROM shops WHERE id=? AND user_id=?",
             (shop, user["id"])).fetchone() if shop else None
         enabled = bool(row and row["orders_enabled"] and row["order_token"])
         token = row["order_token"] if (row and enabled) else None
@@ -2742,7 +2760,9 @@ def orders_status(request: Request, user=Depends(current_user)):
         "shop_id": shop,
         "is_pro": is_pro(user),
         "enabled": enabled,
-        "url": _order_link(request, token) if token else None,
+        "url": _order_link(request, token, row["slug"]) if token else None,
+        "slug": row["slug"] if row else None,
+        "tagline": row["tagline"] if row else None,
         "pending": pending,
     }
 
@@ -2758,14 +2778,15 @@ def enable_orders(request: Request, user=Depends(current_user)):
         row = db.get_shop(conn, shop, user["id"])
         if not row:
             raise HTTPException(404, "Shop not found")
-        token = conn.execute(
-            "SELECT order_token FROM shops WHERE id=?", (shop,)).fetchone()["order_token"]
+        cur = conn.execute("SELECT order_token, slug FROM shops WHERE id=?", (shop,)).fetchone()
+        token, slug = cur["order_token"], cur["slug"]
         if not token:
             import secrets as _secrets
             token = _secrets.token_urlsafe(9)
-        conn.execute("UPDATE shops SET orders_enabled=1, order_token=? WHERE id=? AND user_id=?",
-                     (token, shop, user["id"]))
-    return {"enabled": True, "url": _order_link(request, token)}
+        slug = slug or _free_slug(conn, _slugify(row["name"]), shop)
+        conn.execute("UPDATE shops SET orders_enabled=1, order_token=?, slug=? WHERE id=? AND user_id=?",
+                     (token, slug, shop, user["id"]))
+    return orders_status(request, user)
 
 
 @app.post("/api/orders/disable")
@@ -2776,6 +2797,33 @@ def disable_orders(user=Depends(current_user)):
             conn.execute("UPDATE shops SET orders_enabled=0 WHERE id=? AND user_id=?",
                          (shop, user["id"]))
     return {"enabled": False}
+
+
+class StoreIn(BaseModel):
+    slug: str
+    tagline: Optional[str] = None
+
+
+@app.post("/api/orders/store")
+def update_store(data: StoreIn, request: Request, user=Depends(current_user)):
+    """Owner sets the store's link name (/s/<slug>) and one-line description."""
+    if not is_pro(user):
+        raise HTTPException(402, "Your online store is a Pro feature.")
+    shop = _active_shop(user)
+    if not shop:
+        raise HTTPException(400, "Open a specific shop to edit its store")
+    slug = (data.slug or "").strip().lower()
+    if not _SLUG_RX.match(slug):
+        raise HTTPException(400, "Link name: 3–40 letters, numbers or dashes (no spaces)")
+    tagline = (data.tagline or "").strip()[:140] or None
+    with db.get_conn() as conn:
+        if not db.get_shop(conn, shop, user["id"]):
+            raise HTTPException(404, "Shop not found")
+        if conn.execute("SELECT 1 FROM shops WHERE slug=? AND id<>?", (slug, shop)).fetchone():
+            raise HTTPException(400, "That link name is taken — try another")
+        conn.execute("UPDATE shops SET slug=?, tagline=? WHERE id=? AND user_id=?",
+                     (slug, tagline, shop, user["id"]))
+    return orders_status(request, user)
 
 
 @app.get("/api/orders")
@@ -2942,9 +2990,11 @@ def push_test(user=Depends(current_user)):
 
 
 # -- Public (no auth): the customer-facing storefront reads/writes by shop token --
-def _shop_by_order_token(conn, token):
+def _shop_by_order_token(conn, key):
+    """A store's public key is its random token (old links) or its link name."""
     return conn.execute(
-        "SELECT * FROM shops WHERE order_token=? AND orders_enabled=1", (token,)).fetchone()
+        "SELECT * FROM shops WHERE (order_token=? OR slug=?) AND orders_enabled=1",
+        (key, key.lower())).fetchone()
 
 
 @app.get("/api/shop/{token}")
@@ -2961,6 +3011,7 @@ def public_shop(token: str):
             (shop["user_id"], shop["id"])).fetchall()
     return {
         "business_name": shop["name"] or settings.get("business_name") or "Our shop",
+        "tagline": shop["tagline"] or "",
         "currency": settings.get("currency") or "₦",
         # so a customer can chase their order on WhatsApp instead of just waiting
         "phone": settings.get("phone") or "",
@@ -2987,6 +3038,35 @@ def public_product_photo(token: str, pid: int):
         raise HTTPException(404, "No photo")
     return FileResponse(path, media_type="image/jpeg",
                         headers={"Cache-Control": "public, max-age=86400"})
+
+
+def _shop_products_for_flyer(conn, shop):
+    rows = conn.execute(
+        "SELECT name, unit_price, stock_qty, low_stock_at, photo FROM products "
+        "WHERE user_id=? AND shop_id=? AND stock_qty > 0 ORDER BY name LIMIT 12",
+        (shop["user_id"], shop["id"])).fetchall()
+    products = db.rows_to_list(rows)
+    for p in products:
+        path = os.path.join(PHOTOS_DIR, p["photo"]) if p.get("photo") else None
+        p["photo_path"] = path if (path and os.path.exists(path)) else None
+    return products
+
+
+@app.get("/api/shop/{token}/card.jpg")
+def public_shop_card(token: str):
+    """WhatsApp/Facebook link-preview image for a store: its in-stock flyer."""
+    with db.get_conn() as conn:
+        shop = _shop_by_order_token(conn, token)
+        if not shop:
+            raise HTTPException(404, "Shop not found")
+        products = _shop_products_for_flyer(conn, shop)
+    if not products:
+        return RedirectResponse("/og-image.png")
+    settings = dict(db.get_settings(shop["user_id"]))
+    settings["business_name"] = shop["name"] or settings.get("business_name")
+    # ponytail: rendered per request, cached an hour by crawlers; cache on disk if it shows up in load
+    return RawResponse(content=imgdoc.build_promo_image(products, settings, "jpg"),
+                       media_type="image/jpeg", headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.post("/api/shop/{token}/order")
@@ -3760,6 +3840,32 @@ def pay_page(token: str):
 def order_page(token: str):
     """Public storefront: customers order from a shop's in-stock products."""
     return FileResponse(os.path.join(PAYPAGE_DIR, "order.html"))
+
+
+@app.get("/s/{slug}", include_in_schema=False)
+def store_page(slug: str, request: Request):
+    """The same storefront under its readable link, with the shop's own title
+    and WhatsApp link preview, and open to search engines (the /order/<token>
+    form stays noindex)."""
+    with open(os.path.join(PAYPAGE_DIR, "order.html"), encoding="utf-8") as f:
+        page = f.read()
+    with db.get_conn() as conn:
+        shop = _shop_by_order_token(conn, slug)
+    if shop:
+        e = html_lib.escape
+        name = shop["name"] or "Our shop"
+        desc = shop["tagline"] or f"Order from {name} online — see what's in stock and order in a minute."
+        url = f"{str(request.base_url).rstrip('/')}/s/{shop['slug']}"
+        meta = (f'<title>{e(name)} — order online</title>\n'
+                f'  <meta name="description" content="{e(desc)}" />\n'
+                f'  <link rel="canonical" href="{e(url)}" />\n'
+                f'  <meta property="og:type" content="website" />\n'
+                f'  <meta property="og:title" content="{e(name)}" />\n'
+                f'  <meta property="og:description" content="{e(desc)}" />\n'
+                f'  <meta property="og:url" content="{e(url)}" />\n'
+                f'  <meta property="og:image" content="{e(url.replace("/s/", "/api/shop/", 1))}/card.jpg" />')
+        page = page.replace('<meta name="robots" content="noindex" />\n  <title>Place an order</title>', meta, 1)
+    return RawResponse(content=page, media_type="text/html")
 
 
 @app.get("/sw.js", include_in_schema=False)
