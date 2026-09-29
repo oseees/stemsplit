@@ -2751,11 +2751,14 @@ def orders_status(request: Request, user=Depends(current_user)):
         pending = conn.execute(
             "SELECT COUNT(*) c FROM orders WHERE user_id=? AND status='pending'" + sf,
             [user["id"]] + sp).fetchone()["c"]
-        row = conn.execute(
-            "SELECT orders_enabled, order_token, slug, tagline FROM shops WHERE id=? AND user_id=?",
-            (shop, user["id"])).fetchone() if shop else None
+        q = "SELECT name, orders_enabled, order_token, slug, tagline FROM shops WHERE id=? AND user_id=?"
+        row = conn.execute(q, (shop, user["id"])).fetchone() if shop else None
         enabled = bool(row and row["orders_enabled"] and row["order_token"])
         token = row["order_token"] if (row and enabled) else None
+        if enabled and not row["slug"]:  # stores opened before link names existed
+            conn.execute("UPDATE shops SET slug=? WHERE id=?",
+                         (_free_slug(conn, _slugify(row["name"]), shop), shop))
+            row = conn.execute(q, (shop, user["id"])).fetchone()
     return {
         "shop_id": shop,
         "is_pro": is_pro(user),

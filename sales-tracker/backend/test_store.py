@@ -73,10 +73,16 @@ c.post("/api/orders/store", headers=b, json={"slug": "evil-shop", "tagline": '">
 evil = c.get("/s/evil-shop").text
 assert "<script>alert(1)" not in evil and "<img src=x" not in evil, "meta injection!"
 
+# a store opened before link names existed gets one the next time the owner looks
+with main.db.get_conn() as conn:
+    conn.execute("UPDATE shops SET slug=NULL WHERE slug='ada-fabrics'")
+st = c.get("/api/orders/status", headers=a).json()
+assert st["slug"] == "ada-fabrics-co" and st["url"].endswith("/s/ada-fabrics-co"), st
+
 # turned off → gone; free plan can't open a store
 c.post("/api/orders/disable", headers=a)
-assert c.get("/api/shop/ada-fabrics").status_code == 404
-assert 'content="noindex"' in c.get("/s/ada-fabrics").text, "a closed store isn't indexable"
+assert c.get("/api/shop/ada-fabrics-co").status_code == 404
+assert 'content="noindex"' in c.get("/s/ada-fabrics-co").text, "a closed store isn't indexable"
 free = auth("f@test.local", "Free", pro=False)
 assert c.post("/api/orders/enable", headers=free).status_code == 402
 assert c.post("/api/orders/store", headers=free, json={"slug": "free-shop"}).status_code == 402
