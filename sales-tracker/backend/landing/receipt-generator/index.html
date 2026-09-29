@@ -67,7 +67,7 @@
 <body>
   <header class="nav"><div class="nav-row">
     <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="28" height="28" />SalesPal</a>
-    <a class="btn btn-primary" href="/app/">Get Started Free</a>
+    <a class="btn btn-primary" href="/app/?utm_source=receipt-generator#signup">Get Started Free</a>
   </div></header>
 
   <div class="wrap">
@@ -92,9 +92,12 @@
         <label for="method">Paid by</label>
         <select id="method"><option>Transfer</option><option>Cash</option><option>POS</option></select>
         <div class="row-btns">
-          <button class="btn btn-primary" type="button" onclick="print()">Download PDF</button>
-          <button class="btn btn-ghost" type="button" onclick="sendWA()">Send on WhatsApp</button>
+          <button class="btn btn-primary" type="button" onclick="print(); nudge()">Download PDF</button>
+          <button class="btn btn-ghost" type="button" onclick="sendWA(); nudge()">Send on WhatsApp</button>
+          <button class="btn btn-ghost" type="button" onclick="saveToApp()">Save to SalesPal (free)</button>
         </div>
+        <div id="nudge" class="tip" hidden><strong>Keep a record of this payment.</strong> Save it to SalesPal — free. It adds up your daily sales and shows your real profit.<br>
+          <button class="btn btn-primary" type="button" onclick="saveToApp()" style="margin-top:10px">Save it to SalesPal — free</button></div>
       </div>
 
       <div id="doc"></div>
@@ -102,7 +105,7 @@
       <div class="cta-box">
         <h3>Customer paid only part?</h3>
         <p>The free SalesPal app records part payments, makes a receipt showing the balance still owed, and reminds you who hasn't finished paying.</p>
-        <a class="btn btn-primary" href="/app/">Try the free SalesPal app</a>
+        <a class="btn btn-primary" href="/app/?utm_source=receipt-generator#signup">Try the free SalesPal app</a>
       </div>
 
       <h2>What to put on a receipt</h2>
@@ -123,7 +126,7 @@
       <h3>How do I send a receipt on WhatsApp?</h3>
       <p>Tap <strong>Send on WhatsApp</strong> for a text receipt, or tap <strong>Download PDF</strong>, choose <strong>Save as PDF</strong>, and attach it in the customer's chat.</p>
       <h3>What if the customer only paid part?</h3>
-      <p>This tool makes full-payment receipts. The <a href="/app/">free SalesPal app</a> records part payments and makes a receipt showing the balance still owed.</p>
+      <p>This tool makes full-payment receipts. The <a href="/app/?utm_source=receipt-generator#signup">free SalesPal app</a> records part payments and makes a receipt showing the balance still owed.</p>
 
       <div class="related">
         <h2>See also</h2>
@@ -137,7 +140,7 @@
 
   <footer><div class="wrap">
     <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="22" height="22" />SalesPal</a>
-    <nav><a href="/">Home</a><a href="/guides/">Guides</a><a href="/invoice-generator/">Invoice generator</a><a href="/receipt-generator/">Receipt generator</a><a href="/app/">Open app</a></nav>
+    <nav><a href="/">Home</a><a href="/guides/">Guides</a><a href="/invoice-generator/">Invoice generator</a><a href="/receipt-generator/">Receipt generator</a><a href="/app/?utm_source=receipt-generator#signup">Open app</a></nav>
   </div></footer>
 
 <script>
@@ -181,6 +184,12 @@ function sendWA() {
     + `\n*Total: ${naira(total)}*` + ($("kind").value === "Receipt" ? `\nPaid by: ${$("method").value}` : "");
   open("https://wa.me/?text=" + encodeURIComponent(t), "_blank");
 }
+// Carry what they typed into the app: /app reads salespal_draft on #new after signup.
+function saveToApp() {
+  try { localStorage.setItem("salespal_draft", JSON.stringify({ customer: $("cust").value, items: items() })); } catch (e) {}
+  location.href = "/app/?utm_source=receipt-generator#new";
+}
+function nudge() { $("nudge").hidden = false; }
 try { SAVED.forEach(k => { const v = localStorage.getItem("ig_" + k); if (v) $(k).value = v; }); } catch (e) {}
 $("date").valueAsDate = new Date();
 document.querySelector(".tool").addEventListener("input", render);

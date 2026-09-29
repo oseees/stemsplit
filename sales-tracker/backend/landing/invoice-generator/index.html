@@ -66,7 +66,7 @@
 <body>
   <header class="nav"><div class="nav-row">
     <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="28" height="28" />SalesPal</a>
-    <a class="btn btn-primary" href="/app/">Get Started Free</a>
+    <a class="btn btn-primary" href="/app/?utm_source=invoice-generator#signup">Get Started Free</a>
   </div></header>
 
   <div class="wrap">
@@ -91,9 +91,12 @@
         <label for="bank">How to pay you (optional)</label>
         <input id="bank" placeholder="e.g. GTBank 0123456789 — Ada Fabrics" />
         <div class="row-btns">
-          <button class="btn btn-primary" type="button" onclick="print()">Download PDF</button>
-          <button class="btn btn-ghost" type="button" onclick="sendWA()">Send on WhatsApp</button>
+          <button class="btn btn-primary" type="button" onclick="print(); nudge()">Download PDF</button>
+          <button class="btn btn-ghost" type="button" onclick="sendWA(); nudge()">Send on WhatsApp</button>
+          <button class="btn btn-ghost" type="button" onclick="saveToApp()">Save to SalesPal (free)</button>
         </div>
+        <div id="nudge" class="tip" hidden><strong>Sent? Now make sure you get paid.</strong> Save this invoice to SalesPal — free. It shows who still owes you and reminds you to follow up.<br>
+          <button class="btn btn-primary" type="button" onclick="saveToApp()" style="margin-top:10px">Save it to SalesPal — free</button></div>
       </div>
 
       <div id="doc"></div>
@@ -101,7 +104,7 @@
       <div class="cta-box">
         <h3>Want every invoice saved automatically?</h3>
         <p>SalesPal keeps all your invoices, shows who still owes you, sends reminders and works out your profit — free to start, works offline.</p>
-        <a class="btn btn-primary" href="/app/">Try the free SalesPal app</a>
+        <a class="btn btn-primary" href="/app/?utm_source=invoice-generator#signup">Try the free SalesPal app</a>
       </div>
 
       <h2>What to put on an invoice in Nigeria</h2>
@@ -114,7 +117,7 @@
       </ul>
 
       <h2>Invoice or receipt: which one do I send?</h2>
-      <p>Send an <strong>invoice</strong> before you're paid: it asks the customer to pay. Send a <strong>receipt</strong> after you're paid: it proves the money came in. If a customer paid part, the <a href="/app/">SalesPal app</a> makes a receipt that shows the balance still owed.</p>
+      <p>Send an <strong>invoice</strong> before you're paid: it asks the customer to pay. Send a <strong>receipt</strong> after you're paid: it proves the money came in. If a customer paid part, the <a href="/app/?utm_source=invoice-generator#signup">SalesPal app</a> makes a receipt that shows the balance still owed.</p>
 
       <h2>Frequently asked questions</h2>
       <h3>Is this invoice generator really free?</h3>
@@ -124,7 +127,7 @@
       <h3>Can I make a receipt instead of an invoice?</h3>
       <p>Yes. Switch <strong>Document</strong> to Receipt.</p>
       <h3>Does it keep a record of my invoices?</h3>
-      <p>This tool only remembers your business details on your device. To keep every invoice, track debts and see your profit, use the <a href="/app/">free SalesPal app</a>.</p>
+      <p>This tool only remembers your business details on your device. To keep every invoice, track debts and see your profit, use the <a href="/app/?utm_source=invoice-generator#signup">free SalesPal app</a>.</p>
 
       <div class="related">
         <h2>See also</h2>
@@ -139,7 +142,7 @@
 
   <footer><div class="wrap">
     <a class="logo" href="/"><img src="/icons/icon-192.png" alt="" width="22" height="22" />SalesPal</a>
-    <nav><a href="/">Home</a><a href="/guides/">Guides</a><a href="/invoice-generator/">Invoice generator</a><a href="/receipt-generator/">Receipt generator</a><a href="/app/">Open app</a></nav>
+    <nav><a href="/">Home</a><a href="/guides/">Guides</a><a href="/invoice-generator/">Invoice generator</a><a href="/receipt-generator/">Receipt generator</a><a href="/app/?utm_source=invoice-generator#signup">Open app</a></nav>
   </div></footer>
 
 <script>
@@ -183,6 +186,12 @@ function sendWA() {
     + `\n*Total: ${naira(total)}*` + ($("bank").value && $("kind").value === "Invoice" ? `\nPay to: ${$("bank").value}` : "");
   open("https://wa.me/?text=" + encodeURIComponent(t), "_blank");
 }
+// Carry what they typed into the app: /app reads salespal_draft on #new after signup.
+function saveToApp() {
+  try { localStorage.setItem("salespal_draft", JSON.stringify({ customer: $("cust").value, items: items() })); } catch (e) {}
+  location.href = "/app/?utm_source=invoice-generator#new";
+}
+function nudge() { $("nudge").hidden = false; }
 try { SAVED.forEach(k => { const v = localStorage.getItem("ig_" + k); if (v) $(k).value = v; }); } catch (e) {}
 $("date").valueAsDate = new Date();
 document.querySelector(".tool").addEventListener("input", render);

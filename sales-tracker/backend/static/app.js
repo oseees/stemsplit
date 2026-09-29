@@ -343,8 +343,16 @@ function requireAuthUI() {
     setAuthMode("login");
     return;
   }
+  // Came from a free generator page (#signup, or a draft to save) → straight to
+  // the free signup, not the paid-plans page. #new stays for after signup.
+  if (location.hash === "#signup" || _hasDraft()) {
+    if (location.hash === "#signup") history.replaceState({}, "", location.pathname);
+    startFree();
+    return;
+  }
   renderLanding();
 }
+function _hasDraft() { try { return !!localStorage.getItem("salespal_draft"); } catch (e) { return false; } }
 
 // ---------- landing / pricing (pre-login) ----------
 async function renderLanding() {
@@ -490,7 +498,7 @@ function renderAuth() {
   const reset = mode === "reset";
   const buy = _buyPlanInfo();             // set when a paid plan was picked on the landing
   const tagline = buy ? `You're getting <strong>${buy.label}</strong>`
- : signup ? "Create your free account"
+ : signup ? (_hasDraft() ? "Create your free account to save your invoice" : "Create your free account")
  : reset ? "Reset your password" : "Welcome back";
  const btnLabel = buy ? `Continue to payment →`
  : signup ? "Create account" : reset ? "Set new password" : "Log in";
@@ -574,6 +582,9 @@ async function doAuth(ev) {
 // ---------- one-tap "Add to Home Screen" (shown once, right after login) ----------
 function maybePromptInstall() {
  if (document.body.classList.contains("signed-out")) return;
+ // Don't cover a sheet that's already up (e.g. the pre-filled sale from the
+ // generator pages); the offer comes back on a later login.
+ if (document.getElementById("modalHost").classList.contains("open")) return;
  let done = null;
  try { done = localStorage.getItem("salespal_install_prompt_done"); } catch (e) {}
  if (done) return;
@@ -831,10 +842,23 @@ function _consumeDeepLink() {
     salesStatus = "overdue";
     setView("sales");
   }
-  if (location.hash === "#new") { // hustle nudge → straight into recording a sale
+  if (location.hash === "#new") { // hustle nudge / generator pages → straight into recording a sale
     history.replaceState({}, "", location.pathname);
-    newSaleModal();
+    newSaleModal().then(_applyGeneratorDraft);
   }
+}
+
+// The free invoice/receipt generator pages (same origin) leave what the visitor
+// typed in localStorage; prefill the new sale with it so signing up keeps their work.
+function _applyGeneratorDraft() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem("salespal_draft") || "null"); localStorage.removeItem("salespal_draft"); } catch (e) {}
+  if (!d || !Array.isArray(d.items) || !d.items.length || !document.getElementById("saleItems")) return;
+  document.getElementById("saleCustomer").value = d.customer || "";
+  saleItems = d.items.map(i => ({ product_id: null, description: String(i.d || ""), qty: +i.q || 1,
+                                  unit_price: +i.p || 0, unit_cost: 0, custom: true }));
+  renderSaleItems();
+  toast("Your invoice is here — tap Save to keep it");
 }
 
 // ================= SHOP ATTENDANT (limited login) =========================
